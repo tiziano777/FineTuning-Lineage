@@ -1,0 +1,51 @@
+services:
+  neo4j:
+    image: neo4j:5-community
+    container_name: envelope-neo4j
+    restart: unless-stopped
+    ports:
+      - "7474:7474"   # HTTP browser
+      - "7687:7687"   # Bolt protocol
+    environment:
+      NEO4J_AUTH: neo4j/envelope_dev
+      NEO4J_PLUGINS: '["apoc"]'
+      NEO4J_dbms_security_procedures_unrestricted: apoc.*
+      NEO4J_apoc_trigger_enabled: "true"
+      NEO4J_initial_dbms_default__database: neo4j
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+      - ./graph_lineage/neo4j_client/01-schema.cypher:/var/lib/neo4j/import/01-schema.cypher:ro
+      - ./graph_lineage/neo4j_client/02-triggers.cypher:/var/lib/neo4j/import/02-triggers.cypher:ro
+
+  streamlit:
+    build:
+      context: .
+      dockerfile: graph_lineage/streamlit_ui/Dockerfile
+    container_name: envelope-ui
+    restart: unless-stopped
+    ports:
+      - "8501:8501"
+    environment:
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USER: neo4j
+      NEO4J_PASSWORD: envelope_dev
+      MASTER_API_URL: http://localhost:8000
+    depends_on:
+      - neo4j
+
+  openlit:
+    image: ghcr.io/openlit/openlit:latest
+    container_name: envelope-openlit
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - openlit_data:/app/data
+    environment:
+      - INIT_DB_PASSWORD=openlit
+
+volumes:
+  neo4j_data:
+  neo4j_logs:
+  openlit_data:

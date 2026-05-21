@@ -1,0 +1,6 @@
+[theme]
+primaryColor = "#68BF40"
+backgroundColor = "#1E2628" # darker, matte 'dirty' panel
+secondaryBackgroundColor = "#121617" # very dark, muted panel for cards/banks
+textColor = "#E6EEF3" # light text for contrast
+font = "sans serif"

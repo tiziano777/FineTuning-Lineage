@@ -1,0 +1,10 @@
+file_modified: "{filename} modified"
+no_changes: "no codebase changes"
+non_critical_changes: "codebase changes, but not in critical files"
+retry: "RETRY FROM {exp_id}"
+resume: "RESUME FROM {exp_id}, checkpoint {ckp_id}"
+critical_files:
+  - config.yaml
+  - prepare.py
+  - train.py
+  - requirements.txt
