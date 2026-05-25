@@ -46,6 +46,33 @@ def find_parent_experiment(uri: str) -> Experiment | None:
     return Experiment.model_validate(data)
 
 
+async def _find_experiment_by_id_async(experiment_id: str) -> dict[str, Any] | None:
+    """Query Neo4j for an experiment by its unique ID."""
+    driver = await get_driver()
+    query = "MATCH (e:Experiment {id: $exp_id}) RETURN e LIMIT 1"
+    async with driver.session() as session:
+        result = await session.run(query, {"exp_id": experiment_id})
+        record = await result.single()
+        if record is None:
+            return None
+        return dict(record["e"])
+
+
+def find_experiment_by_id(experiment_id: str) -> Experiment | None:
+    """Find an experiment by its unique ID.
+
+    Args:
+        experiment_id: Experiment UUID to look up.
+
+    Returns:
+        Experiment instance or None if not found.
+    """
+    data = asyncio.run(_find_experiment_by_id_async(experiment_id))
+    if data is None:
+        return None
+    return Experiment.model_validate(data)
+
+
 async def _create_experiment_node_async(exp: Experiment) -> str:
     """Create an Experiment node in Neo4j."""
     driver = await get_driver()

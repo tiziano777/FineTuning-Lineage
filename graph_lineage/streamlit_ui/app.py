@@ -129,12 +129,6 @@ def main() -> None:
         st.error(f"Error loading page: {str(e)}")
         st.exception(e)
 
-    # Footer
-    st.sidebar.divider()
-    st.sidebar.caption(f"API: {st.session_state.config.master_api_url}")
-    st.sidebar.caption(f"Neo4j: {st.session_state.config.neo4j_uri}")
-
-
 def cleanup_resources() -> None:
     """Cleanup database and API connections on app exit.
 

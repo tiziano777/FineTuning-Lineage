@@ -19,6 +19,7 @@ from graph_lineage.diff.snapshot import CodebaseSnapshot, capture_snapshot
 from graph_lineage.lineage.neo4j_ops import (
     create_edge,
     create_experiment_node,
+    find_experiment_by_id,
     find_parent_experiment,
     update_experiment_status,
 )
@@ -94,7 +95,18 @@ def _pre_execution(
         snapshot = capture_snapshot(project_root)
 
         # 6. Query Neo4j for parent experiment
-        parent = find_parent_experiment(config.experiment.uri)
+        if config.experiment.base_experiment_id:
+            parent = find_experiment_by_id(config.experiment.base_experiment_id)
+            if parent is None:
+                logger.error(
+                    "base_experiment_id '%s' not found in DB",
+                    config.experiment.base_experiment_id,
+                )
+                if blocking:
+                    sys.exit(6)
+                return None
+        else:
+            parent = find_parent_experiment(config.experiment.uri)
 
         # 7. Detect run type
         run_result = detect_run_type(config, snapshot, parent)
@@ -131,9 +143,22 @@ def _pre_execution(
                 edge_props["diff_patch"] = str(run_result.diff_patch)
             create_edge(exp_id, run_result.parent_exp_id, edge_type, edge_props or None)
 
-        # 11. Write back experiment.id to config
+        # 11. Write back experiment metadata to config
+        old_id = config.experiment.id
         config.experiment.id = exp_id
         config.experiment.status = "RUNNING"
+
+        if run_result.strategy == "BRANCH" or run_result.strategy == "RETRY":
+            if config.experiment.base and config.experiment.base_experiment_id:
+                # Branch/retry from base: mark as derived
+                config.experiment.base = False
+                config.experiment.previous_experiment_id = config.experiment.base_experiment_id
+            else:
+                # Chain: old id becomes the previous
+                config.experiment.previous_experiment_id = old_id
+        elif run_result.strategy == "RESUME":
+            config.experiment.previous_experiment_id = old_id
+
         save_config(config, config_path, storage)
 
         logger.info(

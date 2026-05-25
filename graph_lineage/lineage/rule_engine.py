@@ -42,13 +42,14 @@ def detect_run_type(
     Decision order:
     1. model_merging.enabled → MERGE
     2. checkpoint_resume_from set → RESUME
-    3. No parent experiment → NEW
-    4. Compare hashes: all match → RETRY, any differ → BRANCH
+    3. previous_experiment_id == id (explicit signal) → RETRY
+    4. No parent experiment → NEW
+    5. Compare hashes: all match → RETRY, any differ → BRANCH
 
     Args:
         config: Parsed LineageConfig.
         current_snapshot: Current codebase snapshot with file hashes.
-        parent_experiment: Most recent Experiment for this URI from DB, or None.
+        parent_experiment: Parent Experiment from DB, or None.
 
     Returns:
         RunTypeResult with strategy and relevant context.
@@ -69,11 +70,19 @@ def detect_run_type(
             parent_ckp_id=ckp_ref,
         )
 
-    # 3. NEW: no parent experiment in DB for this URI
+    # 3. RETRY explicit: previous_experiment_id == id (user signal)
+    exp = config.experiment
+    if exp.previous_experiment_id and exp.id and exp.previous_experiment_id == exp.id:
+        return RunTypeResult(
+            strategy="RETRY",
+            parent_exp_id=exp.id,
+        )
+
+    # 4. NEW: no parent experiment in DB
     if parent_experiment is None:
         return RunTypeResult(strategy="NEW")
 
-    # 4. Compare hashes to decide RETRY vs BRANCH
+    # 5. Compare hashes to decide RETRY vs BRANCH
     current_hashes = current_snapshot.hashes()
     parent_hashes = {
         "config.yaml": parent_experiment.config_hash,

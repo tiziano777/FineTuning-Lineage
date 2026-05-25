@@ -15,8 +15,8 @@ services:
     volumes:
       - neo4j_data:/data
       - neo4j_logs:/logs
-      - ./graph_lineage/neo4j_client/01-schema.cypher:/var/lib/neo4j/import/01-schema.cypher:ro
-      - ./graph_lineage/neo4j_client/02-triggers.cypher:/var/lib/neo4j/import/02-triggers.cypher:ro
+      - ./graph_lineage/neo4j_client/01-schema.cypher:/var/lib/neo4j/import/01-schema.cypher
+      - ./graph_lineage/neo4j_client/02-triggers.cypher:/var/lib/neo4j/import/02-triggers.cypher
 
   streamlit:
     build:

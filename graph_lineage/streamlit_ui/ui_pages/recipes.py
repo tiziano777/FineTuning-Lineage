@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
-
 import logging
 import streamlit as st
 
@@ -60,24 +58,18 @@ async def is_recipe_deletable_async(recipe_id: str) -> bool:
     return await repo.is_deletable(recipe_id=recipe_id)
 
 
-async def upsert_recipe_by_uri_async(
-    uri: str, name: str, description: str = "",
-    scope: str = "", tasks: list[str] | None = None,
-    tags: list[str] | None = None,
-) -> dict:
-    """Upsert recipe by URI asynchronously."""
+async def get_recipe_by_id_async(recipe_id: str) -> dict | None:
+    """Check if recipe exists by ID."""
     db_client = get_neo4j_client()
     repo = RecipeRepository(db_client)
-    return await repo.upsert_by_uri(
-        uri=uri, name=name, description=description,
-        scope=scope, tasks=tasks, tags=tags,
-    )
+    return await repo.get_by_id(recipe_id)
+
 
 def run() -> None:
     """Run recipe management page."""
     st.title("Recipe Management")
 
-    tab1, tab2, tab3 = st.tabs(["Upload", "Upsert by URI", "Browse"])
+    tab1, tab2 = st.tabs(["Upload", "Browse"])
 
     with tab1:
         st.subheader("Upload YAML Recipe")
@@ -108,80 +100,63 @@ def run() -> None:
                     except Exception:
                         logger.exception("Failed to inspect config entries after validation")
 
-                    if st.button("Save Recipe", disabled=st.session_state.get("saving_recipe", False)):
-                        st.session_state.saving_recipe = True
+                    # Check if recipe with this ID already exists
+                    existing_recipe = None
+                    if yaml_id:
+                        existing_recipe = run_async(get_recipe_by_id_async(str(yaml_id)))
 
-                        try:
-                            logger.info("Creating recipe from upload: filename=%s", uploaded_file.name)
-                            logger.info(f"[INFO] YAML content: {yaml_content}")
-                            result = run_async(
-                                create_recipe_async(
-                                    yaml_content=yaml_content,
-                                    description=yaml_description or ""
+                    if existing_recipe:
+                        st.warning(f"⚠️ A recipe with ID `{yaml_id}` already exists: **{existing_recipe.get('name')}**")
+                        if st.button("Confirm Overwrite", key="confirm_overwrite_recipe"):
+                            st.session_state["overwrite_recipe_confirmed"] = True
+
+                    # Determine if we can proceed with save
+                    can_save = not existing_recipe or st.session_state.get("overwrite_recipe_confirmed", False)
+
+                    if can_save:
+                        if st.button("Save Recipe", disabled=st.session_state.get("saving_recipe", False)):
+                            st.session_state.saving_recipe = True
+
+                            try:
+                                # If overwriting, delete existing first
+                                if existing_recipe:
+                                    logger.info("Overwriting existing recipe: id=%s", yaml_id)
+                                    run_async(delete_recipe_async(recipe_id=str(yaml_id)))
+
+                                logger.info("Creating recipe from upload: filename=%s", uploaded_file.name)
+                                logger.info(f"[INFO] YAML content: {yaml_content}")
+                                result = run_async(
+                                    create_recipe_async(
+                                        yaml_content=yaml_content,
+                                        description=yaml_description or ""
+                                    )
                                 )
-                            )
-                            logger.debug("Create recipe result: %s", result)
-                            # Entry count confirmation
-                            entry_count = len(result.get('entries', {})) if result.get('entries') else 0
-                            st.success(f"✓ Recipe '{result.get('name')}' created successfully! ({entry_count} entries)")
-                            st.toast("Recipe saved!", icon="✅")
+                                logger.debug("Create recipe result: %s", result)
+                                # Entry count confirmation
+                                entry_count = len(result.get('entries', {})) if result.get('entries') else 0
+                                action = "overwritten" if existing_recipe else "created"
+                                st.success(f"✓ Recipe '{result.get('name')}' {action} successfully! ({entry_count} entries)")
+                                st.toast("Recipe saved!", icon="✅")
+                                # Reset overwrite state
+                                st.session_state.pop("overwrite_recipe_confirmed", None)
 
-                        except DuplicateRecipeError as e:
-                            st.error(f"Error: {e.user_message}")
-                            st.caption(e.details)
-                            st.info("💡 To resolve: Rename the YAML file (e.g., 'my_recipe_v2.yaml') and re-upload.")
+                            except DuplicateRecipeError as e:
+                                st.error(f"Error: {e.user_message}")
+                                st.caption(e.details)
+                                st.info("💡 To resolve: Rename the YAML file (e.g., 'my_recipe_v2.yaml') and re-upload.")
 
-                        except UIError as e:
-                            st.error(f"Error: {e.user_message}")
-                            st.caption(e.details)
+                            except UIError as e:
+                                st.error(f"Error: {e.user_message}")
+                                st.caption(e.details)
 
-                        finally:
-                            st.session_state.saving_recipe = False
+                            finally:
+                                st.session_state.saving_recipe = False
                 else:
                     st.error("✗ Recipe validation failed")
                     for error in errors:
                         st.error(f"  • {error}")
 
     with tab2:
-        st.subheader("Upsert Recipe by URI")
-        st.info("Recipe will be created if the URI is new, or updated if a recipe with this URI already exists.")
-        with st.form("upsert_recipe_form"):
-            upsert_uri = st.text_input("Recipe URI", placeholder="hf://datasets/my-org/my-dataset")
-            upsert_name = st.text_input("Recipe Name", placeholder="my_recipe")
-            upsert_description = st.text_area("Description", value="")
-            upsert_scope = st.text_input("Scope", value="", placeholder="sft")
-            upsert_tasks_str = st.text_input("Tasks (comma-separated)", value="")
-            upsert_tags_str = st.text_input("Tags (comma-separated)", value="")
-            upsert_submitted = st.form_submit_button("Upload Recipe")
-
-            if upsert_submitted:
-                if not upsert_uri.strip():
-                    st.error("URI is required")
-                elif not upsert_name.strip():
-                    st.error("Name is required")
-                else:
-                    try:
-                        tasks_list = [t.strip() for t in upsert_tasks_str.split(",") if t.strip()] if upsert_tasks_str.strip() else None
-                        tags_list = [t.strip() for t in upsert_tags_str.split(",") if t.strip()] if upsert_tags_str.strip() else None
-                        result = run_async(
-                            upsert_recipe_by_uri_async(
-                                uri=upsert_uri,
-                                name=upsert_name,
-                                description=upsert_description,
-                                scope=upsert_scope,
-                                tasks=tasks_list,
-                                tags=tags_list,
-                            )
-                        )
-                        st.success(f"Recipe '{result.get('name')}' saved successfully!")
-                        st.toast("Recipe saved!", icon="✅")
-                    except UIError as e:
-                        st.error(f"Error: {e.user_message}")
-                    except Exception as e:
-                        st.error(f"Unexpected error: {str(e)}")
-                        logger.exception("Uncaught exception in upsert_recipe_by_uri")
-
-    with tab3:
         st.subheader("Browse & Manage Recipes")
 
         search_query = st.text_input("Search by name", value="", key="search_recipes")

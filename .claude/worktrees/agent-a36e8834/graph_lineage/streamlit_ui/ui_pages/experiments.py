@@ -96,10 +96,7 @@ def run() -> None:
                         if exp.get("notes"):
                             st.markdown(f"**Notes:** {exp.get('notes')}")
             else:
-                st.info(
-                    "No experiments found",
-                    icon=":material/science:",
-                )
+                st.info("🔬 No experiments found")
                 st.caption(
                     "Experiments are created automatically when you run a "
                     "training function with @envelope.tracker()."
