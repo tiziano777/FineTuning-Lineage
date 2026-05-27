@@ -1,7 +1,6 @@
-"""Lineage tracking module — envelope namespace for hook/tracker system."""
+"""Lineage tracking module — rule engine and Neo4j operations.
 
-from __future__ import annotations
-
-from graph_lineage.lineage.tracker import envelope
-
-__all__ = ["envelope"]
+The client-server decorator (@lineage_tracker) lives in the Client SDK
+at setups/_base/modules/lineage/. This module provides the server-side
+logic: run-type detection (rule_engine) and Neo4j writes (neo4j_ops).
+"""

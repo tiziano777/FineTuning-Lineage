@@ -1,0 +1,7 @@
+# .lineage/server.yml — lineage server connection config
+# This file tells the client SDK where the lineage server is running.
+url: "http://localhost:8000"
+protocol: http
+timeout: 30
+retries: 3
+blocking: true

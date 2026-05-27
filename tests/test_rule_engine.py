@@ -29,7 +29,7 @@ def _make_config(
             uri="/tmp/test-project",
             checkpoint_resume_from=checkpoint_resume_from,
         ),
-        model={"model_name": "llama-7b", "framework": "pytorch"},
+        model={"model_uri": "/nfs/models/llama-7b", "model_id": "llama-7b_abc123"},
         output=OutputConfig(output_dir="/tmp/output"),
         model_merging=ModelMergingConfig(
             enabled=merging_enabled,

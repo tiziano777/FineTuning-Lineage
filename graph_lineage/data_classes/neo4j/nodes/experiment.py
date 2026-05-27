@@ -19,11 +19,11 @@ class Experiment(BaseEntity):
     exit_msg: Optional[str] = None
     strategy: str = Field("", description="NEW | RESUME | BRANCH | RETRY")
 
+    model_uri: str = Field("", description="model_uri used for this run")
+    model_id: str = Field("", description="model_id used for entire lineage experimentations")
+
     codebase: dict = Field(default_factory=dict, description="base=True: full snapshot dict[str, str]; base=False: unified diff dict")
-    config_hash: str = Field("", description="SHA-256 of config.yaml")
-    prepare_hash: str = Field("", description="SHA-256 of prepare.py")
-    train_hash: str = Field("", description="SHA-256 of train.py")
-    requirements_hash: str = Field("", description="SHA-256 of requirements.txt")
+    changed_files: list[str] = Field(default_factory=list, description="List of filenames that changed (for non-base experiments)")
 
     usable: bool = Field(True, description="Is experiment usable")
     manual_save: bool = Field(False, description="Manually saved")

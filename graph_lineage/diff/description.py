@@ -1,50 +1,45 @@
-"""Description message generation from changed files and strategy."""
+"""Auto-generate experiment description from strategy and changed files."""
 
 from __future__ import annotations
 
-from graph_lineage.config_file.commit_msg.loader import load_messages
-
 
 def generate_description(
+    strategy: str,
     changed_files: list[str] | None = None,
-    strategy: str = "BRANCH",
-    messages: dict | None = None,
     exp_id: str | None = None,
     ckp_id: str | None = None,
 ) -> str:
-    """Generate a human-readable description for a lineage entry.
+    """Generate a human-readable description for an experiment.
 
     Args:
-        changed_files: List of filenames that changed between snapshots.
-        strategy: One of BRANCH, RETRY, RESUME.
-        messages: Optional pre-loaded message templates dict.
-        exp_id: Experiment ID (required for RETRY/RESUME).
-        ckp_id: Checkpoint ID (required for RESUME).
+        strategy: One of NEW, BRANCH, RETRY, RESUME, MERGE.
+        changed_files: List of filenames that changed (for BRANCH).
+        exp_id: Parent experiment ID (for RETRY/RESUME).
+        ckp_id: Checkpoint ID or model_uri (for RESUME).
 
     Returns:
         Formatted description string.
     """
-    if messages is None:
-        messages = load_messages()
-
-    if changed_files is None:
-        changed_files = []
+    if strategy == "NEW":
+        return "Initial experiment (base)"
 
     if strategy == "RETRY":
-        return messages["retry"].format(exp_id=exp_id)
+        return f"Retry of experiment {exp_id}" if exp_id else "Retry (same codebase)"
 
     if strategy == "RESUME":
-        return messages["resume"].format(exp_id=exp_id, ckp_id=ckp_id)
+        if ckp_id and exp_id:
+            return f"Resume from checkpoint '{ckp_id}' (parent: {exp_id})"
+        if ckp_id:
+            return f"Resume from checkpoint '{ckp_id}'"
+        return "Resume from checkpoint"
 
-    if not changed_files:
-        return messages["no_changes"]
+    if strategy == "MERGE":
+        return f"Model merge (parent: {exp_id})" if exp_id else "Model merge"
 
-    critical_files = messages.get("critical_files", [])
-    critical_changed = sorted(f for f in changed_files if f in critical_files)
+    if strategy == "BRANCH":
+        if changed_files:
+            files_str = ", ".join(changed_files)
+            return f"files changed: {files_str}"
+        return "Branch (codebase modified)"
 
-    if not critical_changed:
-        return messages["non_critical_changes"]
-
-    return ", ".join(
-        messages["file_modified"].format(filename=f) for f in critical_changed
-    )
+    return f"Unknown strategy: {strategy}"

@@ -1,22 +1,22 @@
 ---
 gsd_state_version: 1.0
 milestone: v1.0
-milestone_name: milestone
-status: Executing Phase 05
-last_updated: "2026-05-12T13:05:45.161Z"
+milestone_name: Core Lineage Tracking System
+status: "Phase 05 — COMPLETE. Phase 6 next."
+last_updated: "2026-05-26T18:00:00.000Z"
 progress:
   total_phases: 9
-  completed_phases: 2
+  completed_phases: 5
   total_plans: 11
-  completed_plans: 4
-  percent: 36
+  completed_plans: 11
+  percent: 91
 ---
 
 # STATE.md — Milestone Workflow State
 
 **Milestone**: Core Lineage Tracking System v1.0
 **Started**: 2026-04-20T15:45:00Z
-**Status**: PLANNING (ready for PHASE 1 execution)
+**Status**: Phase 5 COMPLETE, Phase 6 next
 
 ---
 
@@ -26,11 +26,16 @@ progress:
 |-------|--------|------|-------|
 | Questioning | ✅ COMPLETE | 2026-04-20 | Gathered all requirements via Q&A |
 | Requirements | ✅ COMPLETE | 2026-04-20 | REQUIREMENTS.md written |
-| Roadmap | ✅ COMPLETE | 2026-04-20 | ROADMAP.md with 8 phases |
-| Phase 1 Planning | ⏳ PENDING | TBD | Run `/gsd-plan-phase 1` |
-| Phase 1 Execution | ⏳ PENDING | TBD | After plan approval |
-| Phase 2-8 Execution | ⏳ PENDING | TBD | Sequential after each phase |
-| Final Review | ⏳ PENDING | TBD | After all phases complete |
+| Roadmap | ✅ COMPLETE | 2026-04-20 | ROADMAP.md with 9 phases |
+| Phase 1 (Infrastructure) | ✅ COMPLETE | 2026-04-21 | Imports fixed, StorageProvider, tests pass |
+| Phase 2 (Config Schema) | ✅ COMPLETE | 2026-04-22 | Pydantic models, validation, atomic write-back |
+| Phase 3 (DiffManager) | ✅ COMPLETE | 2026-05-08 | Snapshot, differ, reconstructor, messages |
+| Phase 4 (Hook/Decorator) | ✅ COMPLETE | 2026-05-11 | RuleEngine, tracker, neo4j_ops, observability |
+| Phase 5 (Streamlit UI) | ✅ COMPLETE | 2026-05-12 | 8 pages, 5 plans executed, all verified |
+| Phase 6 (Integration E2E) | ⏳ PENDING | — | Next |
+| Phase 7 (Documentation) | ⏳ PENDING | — | — |
+| Phase 8 (Polish) | ⏳ PENDING | — | — |
+| Phase 9 (Commit & PR) | ⏳ PENDING | — | — |
 
 ---
 
@@ -41,8 +46,12 @@ progress:
 3. **Config YAML**: Write-back pattern with atomic file updates
 4. **Storage**: Abstraction from day 1 (even though only local FS implemented)
 5. **DiffManager**: Core decision engine for all branching logic
-6. **Test Coverage**: >80% on core modules (envelope/lineage/ + envelope/diff/)
+6. **Test Coverage**: >80% on core modules (graph_lineage/lineage/ + graph_lineage/diff/)
 7. **Error Handling**: 6 exit codes (0,1,2,3,4,5) with clear messages
+8. **UI Pattern**: Async repository pattern with nest_asyncio + streamlit-agraph
+
+9. **Split Config Mode**: .lineage/experiment.yml + config.yml separation (TrainingConfig)
+10. **Setups Templates**: SFT, DPO, Continual scaffolding in graph_lineage/setups/
 
 ---
 
@@ -50,69 +59,34 @@ progress:
 
 | Risk | Status | Mitigation |
 |------|--------|-----------|
-| Neo4j unavailable during testing | ⚠️ | docker-compose handles setup |
-| Config write-back atomicity | ⚠️ | Backup original, write new, verify |
-| DiffManager logic complexity | ⚠️ | Unit tests cover all paths |
-| Storage snapshot scope (too large?) | ⚠️ | Only 4 critical files (train.py, ...) |
+| Neo4j unavailable during testing | ✅ Resolved | docker-compose handles setup |
+| Config write-back atomicity | ✅ Resolved | Backup original, write new, verify |
+| DiffManager logic complexity | ✅ Resolved | Unit tests cover all paths |
+| Storage snapshot scope | ✅ Resolved | Only 4 critical files |
+| UI asyncio antipattern | ✅ Resolved | nest_asyncio + run_async helper |
 
 ---
 
 ## Next Actions
 
-**Immediate** (now):
+**Immediate**:
+- [ ] Plan Phase 6: Integration & E2E Testing
 
-- [ ] Confirm ROADMAP.md approval
-- [ ] Run `/gsd-plan-phase 1` for detailed PHASE 1 plan
-
-**After PHASE 1 complete**:
-
-- [ ] Review PHASE 1 deliverables
-- [ ] Run `/gsd-execute-phase 1`
-- [ ] Move to PHASE 2
-
-**After all 8 phases**:
-
-- [ ] Run final code review
-- [ ] Merge to main
-- [ ] Tag as v1.0-beta
-- [ ] Prepare for v1.1 (async refactor)
+**After Phase 6**:
+- [ ] Write documentation (Phase 7)
+- [ ] Polish + coverage (Phase 8)
+- [ ] Atomic commits + PR (Phase 9)
 
 ---
 
 ## Communication Log
 
 ### 2026-04-20
+- Requirements gathered, ROADMAP created, 9 phases planned
 
-**User Requirements**:
-
-- Hook/decorator system for observability
-- Config YAML with lineage metadata
-- DiffManager for RETRY vs BRANCH decision logic
-- 4 run types (NEW, RETRY, BRANCH, RESUME) + MERGE
-- Local Neo4j support initially
-- Storage abstraction for future SSH/remote support
-- Error handling with 6 exit codes
-- >80% unit test coverage
-
-**Timeline Answer**:
-
-- User asked: "Timeline per essere perfetto, almeno per unit tests"
-- Estimate: 25-30 hours (16-17h code + 6-7h tests + 2-3h manual)
-- = 4-8 days @ 4h/day
-
-**Branching Strategy**:
-
-- User preference: "uno per fase" (one branch per phase)
-- Decision: Single feature branch with 9 atomic commits (one per phase group)
-- Reason: Simpler PR management, atomic history
-
----
-
-## Approvals Needed
-
-- [ ] ROADMAP.md approval (8 phases, 25-30h estimate)
-- [ ] Start PHASE 1
-
----
-
-**Ready to proceed?** → Respond with ✅ and I'll run `/gsd-plan-phase 1`
+### 2026-05-26
+- Phase 5 verified complete (all 8 pages functional)
+- Split config mode (TrainingConfig + ExperimentConfig) implemented
+- Setups templates added (SFT, DPO, Continual fine-tuning)
+- 154 unit tests passing
+- Audit: identified asyncio.run() event loop conflict + _find_project_root fragility

@@ -1,7 +1,9 @@
 """Thin async wrapper functions for Neo4j operations used by the tracker.
 
-All public functions are sync — they use asyncio.run() internally to call
-the async Neo4j driver.
+All public functions are sync — they detect the event loop state and
+use the appropriate strategy:
+- No running loop: asyncio.run() (standard)
+- Running loop (Jupyter, Streamlit, FastAPI): nest_asyncio + run_until_complete
 """
 
 from __future__ import annotations
@@ -10,10 +12,38 @@ import asyncio
 import logging
 from typing import Any
 
+import nest_asyncio
+
 from graph_lineage.data_classes.neo4j.nodes.experiment import Experiment
 from graph_lineage.neo4j_client.client import get_driver
 
 logger = logging.getLogger(__name__)
+
+_nest_asyncio_applied = False
+
+
+def _run_sync(coro) -> Any:
+    """Run an async coroutine from sync context, compatible with existing event loops.
+
+    If an event loop is already running (Jupyter, Streamlit, FastAPI),
+    patches it with nest_asyncio and uses run_until_complete.
+    Otherwise, uses standard asyncio.run().
+    """
+    global _nest_asyncio_applied
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop is not None and loop.is_running():
+        # Event loop already running — apply nest_asyncio (idempotent) and reuse it
+        if not _nest_asyncio_applied:
+            nest_asyncio.apply()
+            _nest_asyncio_applied = True
+        return loop.run_until_complete(coro)
+    else:
+        return asyncio.run(coro)
 
 
 async def _find_parent_experiment_async(uri: str) -> dict[str, Any] | None:
@@ -40,7 +70,9 @@ def find_parent_experiment(uri: str) -> Experiment | None:
     Returns:
         Experiment instance or None if no prior experiment exists.
     """
-    data = asyncio.run(_find_parent_experiment_async(uri))
+    if not uri:
+        return None
+    data = _run_sync(_find_parent_experiment_async(uri))
     if data is None:
         return None
     return Experiment.model_validate(data)
@@ -67,7 +99,7 @@ def find_experiment_by_id(experiment_id: str) -> Experiment | None:
     Returns:
         Experiment instance or None if not found.
     """
-    data = asyncio.run(_find_experiment_by_id_async(experiment_id))
+    data = _run_sync(_find_experiment_by_id_async(experiment_id))
     if data is None:
         return None
     return Experiment.model_validate(data)
@@ -100,7 +132,7 @@ def create_experiment_node(exp: Experiment) -> str:
     Returns:
         The experiment ID.
     """
-    return asyncio.run(_create_experiment_node_async(exp))
+    return _run_sync(_create_experiment_node_async(exp))
 
 
 async def _create_edge_async(
@@ -139,7 +171,7 @@ def create_edge(
         rel_type: Relationship type (DERIVED_FROM, RETRY_OF, STARTED_FROM).
         properties: Optional relationship properties.
     """
-    asyncio.run(_create_edge_async(from_id, to_id, rel_type, properties))
+    _run_sync(_create_edge_async(from_id, to_id, rel_type, properties))
 
 
 async def _update_experiment_status_async(
@@ -173,4 +205,4 @@ def update_experiment_status(
         status: New status (COMPLETED, FAILED, etc.).
         exit_msg: Optional exit/error message.
     """
-    asyncio.run(_update_experiment_status_async(exp_id, status, exit_msg))
+    _run_sync(_update_experiment_status_async(exp_id, status, exit_msg))

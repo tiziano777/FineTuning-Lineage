@@ -266,13 +266,34 @@ CALL apoc.trigger.install('neo4j', 'validateCheckpointHasExperiment', '
 - La UI disabilita "Resume" e "Download" per nodi con `uri = NULL`.
 - Le metriche sono comunque accessibili in un mount specifico
 
-### 5.2 Server depedent architecture
+### 5.2 Server dependent architecture — ✅ IMPLEMENTATA (Phase 6)
 
 **Problema**: Worker (GPU train) e Master (sistema che salva lineage) possono essere macchine separate, necessitano di metodi di connessione, e ovviamente che il middleware possa inviare gli update attrverso essa
 
-**Soluzione**:
-- Hook cattura e invia lineage, bisogna però definire una classe base + estensioni per supportare connesisioni (ssh, tcp, http..)
--  e un protocollo API in modo che middleware di observability lineage possa inviare le modifiche ikn automatico. (CRUD operation on neo4j graph!) 
+**Soluzione implementata**:
+
+Il sistema ora supporta un'architettura client-server completa:
+
+```
+┌─────────────────────────────┐         ┌─────────────────────────────┐
+│  GPU WORKER (remoto)        │   HTTP  │  LINEAGE SERVER             │
+│                             │ ──────► │                             │
+│  modules/lineage/           │         │  graph_lineage/server/      │
+│  ├── @lineage_tracker()     │         │  ├── /health                │
+│  ├── LineageClient          │         │  ├── /api/v1/pre            │
+│  ├── HttpConnector          │         │  └── /api/v1/post           │
+│  └── capture_codebase()     │         │                             │
+│                             │         │  rule_engine + neo4j_ops    │
+│  .lineage/server.yml        │         │  Neo4j (container)          │
+└─────────────────────────────┘         └─────────────────────────────┘
+```
+
+**Componenti**:
+- **Client SDK** (`setups/_base/modules/lineage/`): decorator + client + connector + snapshot capture
+- **HTTP Connector** (httpx): auto-registrato via `ConnectorFactory`, retry con backoff esponenziale
+- **Server API** (FastAPI): riceve PRE/POST, esegue rule_engine, scrive in Neo4j
+- **Config**: `.lineage/server.yml` (url, protocol, timeout, retries, blocking)
+- **Blocking by default**: se il server non risponde e `blocking: true`, il training NON parte (exit code 10)
 
 
 ### 5.3 Inconsistenza dei Path URI
@@ -308,18 +329,233 @@ Neo4j non ha trigger nativi come SQL. APOC Procedures sono il meccanismo standar
 ### 5.7 Fragilità config.yml, madifica a id experiement, broke system
 Using comments to expose to the user what part of file you can modify freely, and what part of the configuration is the scope of the lineage system!
 
-### 5.8 Experimental Explosion
-Riscrivere intera codebase ogni branch puo portare a problemi di storage e limiti di size, in versioni future, il base experiment avra il 100% del codice iniziale, e gli esperimenti derivati avranno solo le changes salvate sotto forma di diff, per ricostruire lo stato in un determinato momento, una funzionalità applicherà changes in modod sequenziale da base_experiement fino allo stato target.
+### 5.8 Experimental Explosion — ✅ IMPLEMENTATA (Phase 6.1)
+
+Il sistema ora gestisce l'esplosione di storage:
+- Il **base experiment** (strategy=NEW) salva il 100% del codice nel campo `codebase: dict`
+- Gli esperimenti derivati (BRANCH) salvano **solo il diff** nel `codebase` — solo i file modificati
+- Per ricostruire lo stato in un punto specifico: `graph_lineage/diff/reconstructor.py` applica i diff sequenzialmente dalla base
+- Il campo `changed_files: list[str]` registra quali file sono stati modificati per ogni esperimento
+- **Limite di sicurezza**: file > 10MB → `FileTooLargeError` (blocco esecuzione)
+
+### 5.9 Split Config Mode
+
+**Evoluzione architetturale**: Il sistema ora supporta un **split config mode** che separa le responsabilità:
+
+```
+<project_root>/
+├── .lineage/
+│   ├── experiment.yml    # LINEAGE-MANAGED: id, status, previous_experiment_id, base
+│   └── server.yml        # CONNECTION: url, protocol, timeout, retries, blocking
+├── config.yml            # USER-OWNED: model, recipe, output, hardware, model_merging
+```
+
+**Classi coinvolte**:
+- `TrainingConfig` — parsing di config.yml (solo campi training, nessun metadato lineage)
+- `ExperimentConfig` — parsing di .lineage/experiment.yml (strict, hook-managed)
+- `LineageConfig` — composizione dei due (usata internamente dal tracker)
+- `LineageConfig.from_files(config_path)` — factory per caricare automaticamente in split mode
+
+**Vantaggi**:
+- L'utente non tocca mai experiment.yml (zero rischio di corruzione)
+- config.yml rimane pulito e versionabile
+- Il tracker scrive solo in .lineage/ durante PRE/POST execution
+
+### 5.10 Setups (Project Scaffolding)
+
+Per facilitare l'onboarding, `graph_lineage/setups/` contiene template pre-configurati:
+
+| Template | Use Case |
+|----------|----------|
+| `_base/` | Struttura base (.lineage/ + modules/lineage/ Client SDK + Makefile) |
+| `sft_trl/` | Supervised Fine-Tuning con TRL/HuggingFace |
+| `dpo_trl/` | Direct Preference Optimization con TRL |
+| `continual_ft_trl/` | Continual training con adapter resume |
+
+Ogni template ha `@envelope.tracker()` già integrato nel `train.py` (local mode) oppure può usare `@lineage_tracker()` dal Client SDK (remote mode).
+
+Il template `_base/` include:
+- `.lineage/experiment.yml` — template metadati lineage
+- `.lineage/server.yml` — configurazione connessione al server
+- `modules/lineage/` — Client SDK autonomo (non richiede installazione di graph_lineage)
 
 ### 6. UI del lineage system
 
-**TO DEFINE**
+**Stack**: Streamlit + streamlit-agraph + nest_asyncio
+**Pattern architetturale**: Repository async (Neo4j async driver) + Pydantic v2 per validazione form
+**Entry point**: `graph_lineage/streamlit_ui/app.py`
+
+#### 6.1 Pagine implementate
+
+| Pagina | Funzionalità | Modalità |
+|--------|-------------|----------|
+| **Recipes** | Upload YAML, browse, edit, upsert by URI | CRUD completo |
+| **Models** | Gestione modelli base, upsert by model_name | CRUD completo |
+| **Components** | Framework+technique pairs (DPO+TRL, etc.) | CRUD completo |
+| **Experiments** | Browse esperimenti con relazioni, soft-delete | Read-only (creati da hook) |
+| **Checkpoints** | Browse + URI edit wizard + toggle visibilità | Read + edit limitato |
+| **History** | Navigate (back/forward), Rollback (preview+confirm), Squash (range+warning) | Wizard operazioni |
+| **Graph View** | DAG gerarchico con nodi colorati per status (streamlit-agraph) | Visualizzazione |
+| **Admin** | 5 integrity checks (relazioni mancanti, run stale, duplicati, cicli, orfani) | Diagnostica |
+
+#### 6.2 Pattern tecnici
+
+- **Async**: `run_async()` helper con `nest_asyncio` per evitare conflitto event-loop Streamlit
+- **Repository**: Un repository per entità (`RecipeRepository`, `ModelRepository`, etc.) in `db/repository/`
+- **Navigazione**: 9 pagine raggruppate nel sidebar con tema Neo4j-inspired
+- **Sicurezza**: LIMIT 100 su query all-experiments (DoS prevention), conferma su operazioni distruttive
+
+#### 6.3 Infrastruttura
+
+- Container Docker dedicato (`docker-compose.yml` → servizio `streamlit` su porta 8501)
+- Dipendenze: `streamlit`, `streamlit-agraph`, `nest_asyncio`, `neo4j` (async driver)
+- Health check integrato nella pagina admin
 
 ---
 
-## 7.  Update Documentation
+## 7. Client-Server Architecture (Phase 6)
+
+### 7.1 Panoramica
+
+Il sistema supporta due modalità operative:
+1. **Locale** (`@envelope.tracker()`): hook diretto che usa `neo4j_ops.py` sulla stessa macchina del DB
+2. **Remoto** (`@lineage_tracker()`): Client SDK che comunica con un server FastAPI via HTTP
+
+### 7.2 Client SDK (`setups/_base/modules/lineage/`)
+
+Modulo autonomo copiato in ogni progetto di training. Non dipende da `graph_lineage` (standalone).
+
+| File | Ruolo |
+|------|-------|
+| `__init__.py` | Public API + `@lineage_tracker()` decorator |
+| `client.py` | `LineageClient` — PRE/POST lifecycle con retry |
+| `config.py` | `ServerConfig` da `.lineage/server.yml` |
+| `connector.py` | Protocol ABC (`Connector`) + `ConnectorFactory` |
+| `http_connector.py` | Implementazione HTTP (httpx) con auto-registration |
+| `models.py` | Payload Pydantic: `PreRequest/Response`, `PostRequest/Response` |
+| `snapshot.py` | Cattura codebase (scan root *.py/yml/txt, modules/ recursive, .lineage/) |
+
+### 7.3 Server API (`graph_lineage/server/`)
+
+FastAPI app avviata con: `uvicorn graph_lineage.server.app:app --host 0.0.0.0 --port 8000`
+
+| Endpoint | Metodo | Descrizione |
+|----------|--------|-------------|
+| `/health` | GET | Health check + stato connessione Neo4j |
+| `/api/v1/pre` | POST | Riceve codebase + config → rule_engine → crea Experiment |
+| `/api/v1/post` | POST | Riceve stato finale (COMPLETED/FAILED) → update Neo4j |
+
+### 7.4 Flusso PRE-execution (remoto)
+
+```
+Client                          Server
+  │                               │
+  ├── capture_codebase() ────────►│
+  │   (full file content)         │
+  │                               ├── CodebaseSnapshot(files)
+  │                               ├── find_parent_experiment(uri)
+  │                               ├── detect_run_type(config, snap, parent)
+  │                               ├── create_experiment_node(exp)
+  │                               ├── create_edge(if needed)
+  │◄──────────────────────────────┤
+  │   PreResponse(exp_id,         │
+  │     strategy, changed_files)  │
+  │                               │
+  ├── update .lineage/experiment.yml
+  └── training runs...
+```
+
+### 7.5 Codici di uscita (exit codes)
+
+| Code | Significato |
+|------|-------------|
+| 4 | Errore generico PRE-execution |
+| 6 | `base_experiment_id` non trovato in DB |
+| 7 | `ModelIdMismatchError` — model_id cambiato tra run |
+| 8 | `FileTooLargeError` — file > 10MB nella codebase |
+| 9 | Server ha rifiutato la richiesta (4xx) |
+| 10 | Server irraggiungibile (blocking mode) |
+
+### 7.6 Configurazione server (`.lineage/server.yml`)
+
+```yaml
+url: "http://lineage-server:8000"
+protocol: http          # http | grpc (futuro)
+timeout: 30             # secondi per richiesta
+retries: 3              # tentativi con backoff esponenziale
+blocking: true          # se false, training parte anche senza server
+```
+
+### 7.7 Snapshot Scan Rules
+
+Il Client SDK cattura TUTTO il codice significativo del progetto:
+
+| Scope | Pattern | Esempio |
+|-------|---------|---------|
+| Root level | `*.py`, `*.txt`, `*.yml`, `*.yaml` | `train.py`, `requirements.txt`, `config.yml` |
+| `modules/` | Recursive `*.py`, `*.yml`, `*.yaml` | `modules/utils/helper.py` |
+| `.lineage/` | All files | `.lineage/experiment.yml`, `.lineage/server.yml` |
+| Esclusi | Dot-files/folders (tranne .lineage/) | `.venv/`, `.cache/`, `.env`, `.git/` |
+| Blocco | File > 10MB | `FileTooLargeError` con exit code 8 |
+
+---
+
+## 8. Module Structure (aggiornata)
+
+```
+graph_lineage/
+├── __init__.py
+├── config_file/           # Config parsing & validation
+│   ├── validator.py       # Pre-execution checks (model_uri, name, merge logic)
+│   ├── writer.py          # Atomic config I/O (load/save experiment + training)
+│   └── data_classes/      # Pydantic models: LineageConfig, ExperimentConfig, etc.
+├── data_classes/          # Neo4j entity models
+│   └── neo4j/nodes/       # Experiment, Checkpoint, Recipe, Model, Component
+├── diff/                  # Codebase diff & snapshot
+│   ├── snapshot.py        # CodebaseSnapshot + capture_snapshot() + scan rules
+│   ├── differ.py          # compute_snapshot_diff(), detect_changes()
+│   ├── description.py     # generate_description() — auto from strategy + changed_files
+│   └── reconstructor.py   # reconstruct_codebase(base + diffs chain)
+├── history/               # History navigation & mutations
+│   ├── models.py          # DTOs: NavigationResult, RollbackPreview, etc.
+│   └── repository.py      # ExperimentRepository: navigate, rollback, squash
+├── lineage/               # Core tracking logic (local mode)
+│   ├── tracker.py         # @envelope.tracker() — PRE/POST lifecycle
+│   ├── rule_engine.py     # detect_run_type(): NEW/BRANCH/RETRY/RESUME/MERGE
+│   └── neo4j_ops.py       # Async Neo4j CRUD (create_experiment, create_edge, etc.)
+├── neo4j_client/          # Database driver
+│   ├── client.py          # Singleton driver (get_driver/close_driver)
+│   ├── neo4j_async.py     # AsyncNeo4jClient wrapper
+│   ├── init_schema.py     # CLI: python -m graph_lineage.neo4j_client.init_schema
+│   └── verify_schema.py   # CLI: python -m graph_lineage.neo4j_client.verify_schema
+├── observability/         # Metrics collection
+│   ├── collector.py       # MetricsCollector — JSONL + OpenLIT dual-write
+│   └── hw.py              # get_gpu_stats() — optional pynvml
+├── server/                # FastAPI lineage server (Phase 6.4)
+│   ├── app.py             # /health, /api/v1/pre, /api/v1/post
+│   └── schemas.py         # Request/Response Pydantic models
+├── setups/                # Project scaffolding templates
+│   ├── _base/             # Base template + Client SDK
+│   │   ├── .lineage/      # experiment.yml + server.yml
+│   │   ├── modules/lineage/  # CLIENT SDK (Phase 6.2-6.3)
+│   │   └── Makefile
+│   └── dpo-setup-trl/     # Real DPO training project example
+├── storage/               # Storage abstraction
+│   ├── provider.py        # ABC: StorageProvider
+│   ├── local_provider.py  # LocalStorageProvider (pathlib)
+│   └── resolver.py        # StorageResolver (URI scheme → provider)
+└── streamlit_ui/          # Web UI
+    ├── app.py             # Multi-page Streamlit app
+    ├── ui_pages/          # 9 pages (recipes, models, experiments, etc.)
+    ├── db/                # Async repositories per entity
+    └── utils/             # Helpers (async, formatting, validation)
+```
+
+---
+
+## 9.  Update Documentation
 
 Update with changes: 
 - workflow.md
 - README.md
-- docs/*.md aggiungendo docs per nuovi moduli e iniettndo in quelli esistenti eventuali modifiche
+- docs/*.md aggiungendo docs per nuovi moduli e iniettando in quelli esistenti eventuali modifiche

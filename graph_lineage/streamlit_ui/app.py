@@ -100,6 +100,7 @@ def main() -> None:
         "Models",
         "Experiments",
         "Components",
+        "Setups",
     ]
 
     page = st.sidebar.radio(
@@ -125,6 +126,9 @@ def main() -> None:
         elif page == "Components":
             from graph_lineage.streamlit_ui.ui_pages import components
             components.run()
+        elif page == "Setups":
+            from graph_lineage.streamlit_ui.ui_pages import setups
+            setups.run()
     except Exception as e:
         st.error(f"Error loading page: {str(e)}")
         st.exception(e)

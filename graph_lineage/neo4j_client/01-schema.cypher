@@ -47,6 +47,10 @@ CREATE CONSTRAINT unique_model_name IF NOT EXISTS
 CREATE CONSTRAINT unique_component_composite IF NOT EXISTS
   FOR (co:Component) REQUIRE (co.technique_code, co.framework_code) IS UNIQUE;
 
+// Component: unique name (maps 1:1 to setup template folder name)
+CREATE CONSTRAINT unique_component_name IF NOT EXISTS
+  FOR (co:Component) REQUIRE co.name IS UNIQUE;
+
 // ─────────────────────────────────────────────────────────────────────────
 // BTREE INDEXES (3 on Experiment hashes)
 // ─────────────────────────────────────────────────────────────────────────
@@ -193,10 +197,14 @@ CREATE INDEX idx_experiment_req_hash IF NOT EXISTS
 // Component Node
 // Pydantic: envelope/middleware/shared/nodes.py :: ComponentNode
 //
+//   name: str                 → Property: name (UNIQUE, setup template folder name e.g. "dpo_trl")
+//   uri: str                  → Property: uri (internal path: ./graph_lineage/setups/{name})
 //   technique_code: str       → Property: technique_code (e.g., "grpo", "sft", "dpo")
 //   framework_code: str       → Property: framework_code (e.g., "trl", "unsloth", "axolotl")
 //   [Composite UNIQUE constraint on (technique_code, framework_code)]
+//   [UNIQUE constraint on name]
 //
+//   opt_code: str             → Property: opt_code (e.g., "lora", "qlora", defaults "")
 //   docs_url: str             → Property: docs_url (documentation link, defaults "")
 //   description: str          → Property: description (defaults "")
 //

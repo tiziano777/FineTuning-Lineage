@@ -1,0 +1,12 @@
+# Variant: Lower rank LoRA with higher dropout
+# Tests whether a smaller adapter with more regularization works better.
+
+experiment:
+  id: ex2-dpo-lora-0.2-drop10
+
+model:
+  peft:
+    r: 8
+    lora_alpha: 16
+    lora_dropout: 0.1
+    peft_trainable_ratio: 0.2

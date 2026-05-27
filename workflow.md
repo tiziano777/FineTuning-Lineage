@@ -73,11 +73,43 @@ docker compose up streamlit -d
 
 | Phase | Status | Branch |
 |-------|--------|--------|
-| 1: Infrastructure | IN PROGRESS | `feature/phase1-infrastructure` |
-| 2: Config Schema | PENDING | `feature/phase2-config` |
-| 3: DiffManager | PENDING | `feature/phase3-diffmanager` |
-| 4: Hook/Decorator | PENDING | `feature/phase4-tracker` |
-| 5: Integration E2E | PENDING | `feature/phase5-integration` |
-| 6: Documentation | PENDING | `feature/phase6-docs` |
-| 7: Polish | PENDING | `feature/phase7-polish` |
-| 8: Commit/PR | PENDING | `feature/phase8-commit` |
+| 1: Infrastructure | ✅ DONE | `main` |
+| 2: Config Schema | ✅ DONE | `main` |
+| 3: DiffManager | ✅ DONE | `main` |
+| 4: Hook/Decorator | ✅ DONE | `main` |
+| 5: Streamlit UI | ✅ DONE | `main` |
+| 6: Client-Server Architecture | ✅ DONE | `main` |
+| 7: Documentation | ⬜ NEXT | — |
+| 8: Polish | ⬜ PENDING | — |
+| 9: Commit/PR | ⬜ PENDING | — |
+
+### Phase 6 Sub-phases
+
+| Sub-phase | Description | Tests |
+|-----------|-------------|-------|
+| 6.1: Core Refactor | Removed hash fields from Experiment, rewrote snapshot.py (full codebase scan), refactored rule_engine (dict comparison), rewrote description.py (auto-generate), removed commit_msg/ | 172 |
+| 6.2: Client SDK | `_base/modules/lineage/` — LineageClient, @lineage_tracker decorator, ServerConfig, models, snapshot capture | +34 |
+| 6.3: HTTP Connector | `http_connector.py` (httpx-based), ConnectorFactory with auto-registration | +11 |
+| 6.4: FastAPI Server | `graph_lineage/server/` — /health, /api/v1/pre, /api/v1/post endpoints | +12 |
+| 6.5: E2E Integration | Full client↔server lifecycle tests (NEW, BRANCH, RETRY, FAILED, decorator) | +5 |
+
+## Config Mode
+
+The project supports **split config mode**:
+- `.lineage/experiment.yml` — lineage hook-managed metadata (experiment ID, status, references)
+- `.lineage/server.yml` — server connection config (url, protocol, timeout, retries, blocking)
+- `config.yml` — user-owned training config (model, recipe, output, hardware)
+
+Use `graph_lineage/setups/` templates to scaffold new projects with the correct structure.
+
+## Server (Lineage API)
+
+```bash
+# Start the lineage server
+uvicorn graph_lineage.server.app:app --host 0.0.0.0 --port 8000
+
+# Health check
+curl http://localhost:8000/health
+```
+
+The server receives PRE/POST lifecycle events from remote GPU workers running the Client SDK (`_base/modules/lineage/`). It handles rule engine detection, Neo4j writes, and returns experiment strategy/ID.

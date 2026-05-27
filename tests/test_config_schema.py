@@ -14,8 +14,8 @@ def _minimal_config(**overrides) -> dict:
             "uri": "/tmp/project",
         },
         "model": {
-            "model_name": "llama-7b",
-            "framework": "pytorch",
+            "model_uri": "/nfs/models/llama-7b",
+            "model_id": "llama-7b_abc123",
         },
         "output": {
             "output_dir": "./outputs",
@@ -108,27 +108,31 @@ class TestLineageConfigValidationErrors:
         with pytest.raises(PydanticValidationError):
             LineageConfig.model_validate(data)
 
-    def test_missing_experiment_uri(self):
+    def test_experiment_uri_optional(self):
         data = _minimal_config()
         data["experiment"]["uri"] = ""
+        config = LineageConfig.model_validate(data)
+        assert config.experiment.uri == ""
+
+        data["experiment"]["uri"] = None
+        config = LineageConfig.model_validate(data)
+        assert config.experiment.uri is None
+
+    def test_missing_model_uri(self):
+        data = _minimal_config()
+        data["model"]["model_uri"] = ""
         with pytest.raises(PydanticValidationError):
             LineageConfig.model_validate(data)
 
-    def test_missing_model_name(self):
+    def test_missing_model_id(self):
         data = _minimal_config()
-        data["model"]["model_name"] = ""
-        with pytest.raises(PydanticValidationError):
-            LineageConfig.model_validate(data)
-
-    def test_missing_framework(self):
-        data = _minimal_config()
-        data["model"]["framework"] = ""
+        data["model"]["model_id"] = ""
         with pytest.raises(PydanticValidationError):
             LineageConfig.model_validate(data)
 
     def test_missing_model_key_entirely(self):
         data = _minimal_config()
-        del data["model"]["model_name"]
+        del data["model"]["model_uri"]
         with pytest.raises(PydanticValidationError):
             LineageConfig.model_validate(data)
 

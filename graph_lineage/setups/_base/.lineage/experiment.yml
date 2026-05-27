@@ -1,0 +1,13 @@
+# .lineage/experiment.yml — managed by lineage hook
+# Do not edit manually — fields are updated by @envelope.tracker()
+experiment:
+  id: null
+  previous_experiment_id: null
+  base_experiment_id: null
+  base: true
+  name: "{{SETUP_NAME}}"
+  description: "{{DESCRIPTION}}"
+  uri: null  # Set automatically by tracker to project_root at first execution
+  status: null
+  checkpoint_resume_from: null
+  # component: "{{COMPONENT_NAME}}"

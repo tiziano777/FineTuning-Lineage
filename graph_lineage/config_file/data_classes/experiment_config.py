@@ -14,6 +14,6 @@ class ExperimentConfig(BaseModel):
     base: bool = True
     name: str = Field(..., min_length=1)
     description: str = ""
-    uri: str = Field(..., min_length=1)
+    uri: str | None = None
     status: str | None = None
     checkpoint_resume_from: str | None = None

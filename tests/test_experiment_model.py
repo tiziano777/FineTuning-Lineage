@@ -1,11 +1,11 @@
-"""Tests for Experiment model fixes: imports, field renames, base field."""
+"""Tests for Experiment model: imports, field structure, model_uri/model_id."""
 
 import pytest
 from graph_lineage.data_classes.neo4j.nodes.experiment import Experiment
 
 
 class TestExperimentModelFixes:
-    """Verify Experiment model bug fixes and field renames."""
+    """Verify Experiment model structure and fields."""
 
     def test_typing_import_not_git(self):
         """Test 1: Optional comes from typing, not git."""
@@ -27,39 +27,39 @@ class TestExperimentModelFixes:
         assert exp.base is True
         assert isinstance(exp.base, bool)
 
-    def test_has_hash_fields(self):
-        """Test 4: Experiment has *_hash fields (str, default '')."""
+    def test_has_model_fields(self):
+        """Test 4: Experiment has model_uri and model_id fields."""
         exp = Experiment(uri="test/path", strategy="NEW")
-        assert exp.config_hash == ""
-        assert exp.prepare_hash == ""
-        assert exp.train_hash == ""
-        assert exp.requirements_hash == ""
+        assert exp.model_uri == ""
+        assert exp.model_id == ""
 
-    def test_no_old_bare_fields(self):
-        """Test 5: Old fields config, prepare, train, requirements do NOT exist."""
-        exp = Experiment(uri="test/path", strategy="NEW")
-        fields = set(exp.model_fields.keys())
-        # Only *_hash variants should exist, not bare names
-        assert "config" not in fields
-        assert "prepare" not in fields
-        assert "train" not in fields
-        assert "requirements" not in fields
+    def test_has_changed_files_field(self):
+        """Test 5: Experiment has changed_files list field."""
+        exp = Experiment(uri="test/path", strategy="BRANCH")
+        assert exp.changed_files == []
+        assert isinstance(exp.changed_files, list)
+
+    def test_no_old_hash_fields(self):
+        """Test 6: Old *_hash fields do NOT exist anymore."""
+        fields = set(Experiment.model_fields.keys())
+        assert "config_hash" not in fields
+        assert "prepare_hash" not in fields
+        assert "train_hash" not in fields
+        assert "requirements_hash" not in fields
 
     def test_full_instantiation(self):
-        """Test 6: Full instantiation with all new fields."""
+        """Test 7: Full instantiation with all new fields."""
         exp = Experiment(
             uri="test/path",
             strategy="BRANCH",
             base=False,
-            config_hash="abc123",
-            prepare_hash="def456",
-            train_hash="ghi789",
-            requirements_hash="jkl012",
+            model_uri="/nfs/models/llama-7b",
+            model_id="llama-7b",
             codebase={"train.py": "print('hello')"},
+            changed_files=["train.py"],
         )
         assert exp.base is False
-        assert exp.config_hash == "abc123"
-        assert exp.prepare_hash == "def456"
-        assert exp.train_hash == "ghi789"
-        assert exp.requirements_hash == "jkl012"
+        assert exp.model_uri == "/nfs/models/llama-7b"
+        assert exp.model_id == "llama-7b"
         assert exp.codebase == {"train.py": "print('hello')"}
+        assert exp.changed_files == ["train.py"]
