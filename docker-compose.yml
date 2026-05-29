@@ -34,18 +34,7 @@ services:
     depends_on:
       - neo4j
 
-  openlit:
-    image: ghcr.io/openlit/openlit:latest
-    container_name: envelope-openlit
-    restart: unless-stopped
-    ports:
-      - "3000:3000"
-    volumes:
-      - openlit_data:/app/data
-    environment:
-      - INIT_DB_PASSWORD=openlit
-
 volumes:
   neo4j_data:
   neo4j_logs:
-  openlit_data:
+

@@ -127,18 +127,18 @@ Check in @data_classes/neo4j/nodes
 ### 3.2 Relazioni
 
 ```
-(Component)  -[:USED_FOR]→     (Experiment)    # Stack tecnologico usato
-(Model)      -[:SELECTED_FOR]→ (Experiment)    # Modello base selezionato
-(Experiment) -[:BASED_ON]→     (Recipe)        # Configurazione di input
+(Component)  -[:USES_TECHNIQUE]→  (Experiment)    # Stack tecnologico usato
+(Model)      -[:USES_MODEL]→      (Experiment)    # Modello base selezionato
+(Experiment) -[:USES_RECIPE]→     (Recipe)        # Configurazione di input
 (Experiment) -[:PRODUCED]→     (Checkpoint)    # Checkpoint generato
 
 (Experiment) -[:DERIVED_FROM {diff_patch: JSON}]→ (Experiment)   # Branching logico
 (Experiment) -[:STARTED_FROM]→                    (Checkpoint)   # Branching fisico (opz.)
-(Experiment) -[:RETRY_OF]→                        (Experiment)   # Stesso setup, nuovo tentativo
+(Experiment) -[:RETRY_FROM]→                      (Experiment)   # Stesso setup, nuovo tentativo
 
 (Checkpoint) -[:MERGED_FROM]→  (Checkpoint)    # Merge N-a-1 di pesi
 (Checkpoint) -[:PROMOTED_TO]→  (Model)    # with kind == ADAPTER
-(Model) -[:MERGED_FROM]→  (Model)    # Merge N-a-1 di pesi dei modelli, sia Adapter che modelli base che richiedono fusione con adapters.
+(Model) -[:MERGED_FROM]→  (Model)    # Merge N-a-1 di pesi dei modelli
 ```
 
 NOTA: per il finetuning abbiamo applicato convenzione che ignora il model merging di modelli base, i nostri ckp produrranno tutti adapters.
@@ -157,7 +157,7 @@ Il campo `diff_patch` contiene il diff git-style completo tra i file dell'experi
 CREATE CONSTRAINT recipe_id     IF NOT EXISTS FOR (r:Recipe)     REQUIRE r.recipe_id IS UNIQUE;
 CREATE CONSTRAINT name     IF NOT EXISTS FOR (r:Recipe)     REQUIRE r.name IS UNIQUE;
 CREATE CONSTRAINT experiment_id IF NOT EXISTS FOR (e:Experiment) REQUIRE e.exp_id IS UNIQUE;
-CREATE CONSTRAINT checkpoint_id IF NOT EXISTS FOR (c:Checkpoint) REQUIRE c.ckp_id IS UNIQUE;
+CREATE CONSTRAINT checkpoint_id IF NOT EXISTS FOR (c:Checkpoint) REQUIRE c.id IS UNIQUE;
 CREATE CONSTRAINT model_name    IF NOT EXISTS FOR (m:Model)      REQUIRE m.model_name IS UNIQUE;
 CREATE CONSTRAINT component_composite IF NOT EXISTS FOR (c:Component) REQUIRE (c.technique_code, c.framework_code) IS UNIQUE;
 ```
@@ -189,7 +189,7 @@ CALL apoc.trigger.install('neo4j', 'validateCheckpointHasExperiment', '
   CALL apoc.util.validate(
     NOT EXISTS { MATCH (e:Experiment)-[:PRODUCED]->(n) },
     "Checkpoint %s must have a PRODUCED relationship from an Experiment (or is_merging=true for merged checkpoints)",
-    [n.ckp_id]
+    [n.id]
   )
   RETURN n
 ', {phase: "before"});
@@ -281,7 +281,8 @@ Il sistema ora supporta un'architettura client-server completa:
 │  modules/lineage/           │         │  graph_lineage/server/      │
 │  ├── @lineage_tracker()     │         │  ├── /health                │
 │  ├── LineageClient          │         │  ├── /api/v1/pre            │
-│  ├── HttpConnector          │         │  └── /api/v1/post           │
+│  ├── HttpConnector          │         │  ├── /api/v1/post           │
+│  ├── LineageCheckpointCallback       │  └── /api/v1/checkpoint      │
 │  └── capture_codebase()     │         │                             │
 │                             │         │  rule_engine + neo4j_ops    │
 │  .lineage/server.yml        │         │  Neo4j (container)          │
@@ -289,11 +290,12 @@ Il sistema ora supporta un'architettura client-server completa:
 ```
 
 **Componenti**:
-- **Client SDK** (`setups/_base/modules/lineage/`): decorator + client + connector + snapshot capture
+- **Client SDK** (`setups/_base/modules/lineage/`): decorator + client + connector + snapshot capture + checkpoint callback
 - **HTTP Connector** (httpx): auto-registrato via `ConnectorFactory`, retry con backoff esponenziale
-- **Server API** (FastAPI): riceve PRE/POST, esegue rule_engine, scrive in Neo4j
+- **Server API** (FastAPI): riceve PRE/POST/Checkpoint, esegue rule_engine, scrive in Neo4j
 - **Config**: `.lineage/server.yml` (url, protocol, timeout, retries, blocking)
 - **Blocking by default**: se il server non risponde e `blocking: true`, il training NON parte (exit code 10)
+- **Checkpoint Capture**: `LineageCheckpointCallback` (TrainerCallback) inviata mid-training via `on_save()`
 
 
 ### 5.3 Inconsistenza dei Path URI
@@ -432,7 +434,8 @@ Modulo autonomo copiato in ogni progetto di training. Non dipende da `graph_line
 | `config.py` | `ServerConfig` da `.lineage/server.yml` |
 | `connector.py` | Protocol ABC (`Connector`) + `ConnectorFactory` |
 | `http_connector.py` | Implementazione HTTP (httpx) con auto-registration |
-| `models.py` | Payload Pydantic: `PreRequest/Response`, `PostRequest/Response` |
+| `models.py` | Payload Pydantic: `PreRequest/Response`, `PostRequest/Response`, `CheckpointRequest/Response` |
+| `callbacks.py` | `LineageCheckpointCallback` — TrainerCallback per cattura mid-training |
 | `snapshot.py` | Cattura codebase (scan root *.py/yml/txt, modules/ recursive, .lineage/) |
 
 ### 7.3 Server API (`graph_lineage/server/`)
@@ -444,6 +447,7 @@ FastAPI app avviata con: `uvicorn graph_lineage.server.app:app --host 0.0.0.0 --
 | `/health` | GET | Health check + stato connessione Neo4j |
 | `/api/v1/pre` | POST | Riceve codebase + config → rule_engine → crea Experiment |
 | `/api/v1/post` | POST | Riceve stato finale (COMPLETED/FAILED) → update Neo4j |
+| `/api/v1/checkpoint` | POST | Riceve checkpoint event mid-training → crea Checkpoint + PRODUCED edge |
 
 ### 7.4 Flusso PRE-execution (remoto)
 
@@ -464,6 +468,32 @@ Client                          Server
   ├── update .lineage/experiment.yml
   └── training runs...
 ```
+
+### 7.4.1 Flusso Checkpoint (mid-training)
+
+```
+Client (Trainer)                Server
+  │                               │
+  ├── on_save() fires ───────────►│
+  │   CheckpointRequest(          │
+  │     experiment_id, name,      │
+  │     epoch, run, uri,          │
+  │     metrics, derived_from)    │
+  │                               ├── create_checkpoint_node(ckp)
+  │                               ├── create_checkpoint_edge(exp_id, ckp_id)
+  │◄──────────────────────────────┤
+  │   CheckpointResponse(         │
+  │     checkpoint_id)            │
+  │                               │
+  ... (repeats per save) ...
+```
+
+**Attivazione:** `@lineage_tracker(capture_checkpoints=True)` inietta `LineageCheckpointCallback`
+come kwarg `lineage_callback` nella funzione decorata. L'utente lo passa a `Trainer(callbacks=[...])`.
+
+**Modalità:**
+- `blocking=False` (default): errori di comunicazione loggati come warning, training continua
+- `blocking=True`: errori ri-lanciati, training si ferma
 
 ### 7.5 Codici di uscita (exit codes)
 
@@ -532,13 +562,15 @@ graph_lineage/
 │   ├── collector.py       # MetricsCollector — JSONL + OpenLIT dual-write
 │   └── hw.py              # get_gpu_stats() — optional pynvml
 ├── server/                # FastAPI lineage server (Phase 6.4)
-│   ├── app.py             # /health, /api/v1/pre, /api/v1/post
+│   ├── app.py             # /health, /api/v1/pre, /api/v1/post, /api/v1/checkpoint
 │   └── schemas.py         # Request/Response Pydantic models
 ├── setups/                # Project scaffolding templates
 │   ├── _base/             # Base template + Client SDK
 │   │   ├── .lineage/      # experiment.yml + server.yml
-│   │   ├── modules/lineage/  # CLIENT SDK (Phase 6.2-6.3)
-│   │   └── Makefile
+│   ├── modules/lineage/  # CLIENT SDK (Phase 6.2-6.3)
+│   │   ├── callbacks.py  # LineageCheckpointCallback (TrainerCallback)
+│   │   └── ...
+│   └── Makefile
 │   └── dpo-setup-trl/     # Real DPO training project example
 ├── storage/               # Storage abstraction
 │   ├── provider.py        # ABC: StorageProvider

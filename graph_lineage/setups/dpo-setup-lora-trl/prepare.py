@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 def prepare(config_path: str,strategy: PromptAssignmentStrategy = PromptAssignmentStrategy.ALL) -> Path:
     
     config = load_config(config_path)
-    config = resolve_config(config)
+    config = resolve_config(config=config, experiment_path= config.get("model", {}).get("lineage_uri"))
 
     cache_dir = Path(require_field(config, "model","dataset", "cache_dir", config_file=config_path))
     templates_mapping = require_field(config, "model", "dataset", "templates_mapping", config_file=config_path)
@@ -60,27 +60,24 @@ def prepare(config_path: str,strategy: PromptAssignmentStrategy = PromptAssignme
     # Hard Negative Filter setup
     dataset_cfg = config.get("model", {}).get("dataset", {})
     hn_enabled = dataset_cfg.get("hard_negative_enabled", True)
-    hn_filter = None
-    if hn_enabled:
-        hn_config = HardNegativeConfig(
-            enabled=True,
-            fallback=dataset_cfg.get("hard_negative_fallback", "temperature"),
-            rouge_delta=dataset_cfg.get("hard_negative_rouge_delta", 0.08),
-            tau=dataset_cfg.get("hard_negative_tau", 0.5),
-            entropy_min=dataset_cfg.get("hard_negative_entropy_min", 0.3),
-            ttr_min=dataset_cfg.get("hard_negative_ttr_min", 0.2),
-            w1=dataset_cfg.get("hard_negative_w1", 0.2),
-            w2=dataset_cfg.get("hard_negative_w2", 0.2),
-            w3=dataset_cfg.get("hard_negative_w3", 0.4),
-            w4=dataset_cfg.get("hard_negative_w4", 0.2),
-        )
-        hn_filter = HardNegativeFilter(hn_config)
-        logger.info("Hard negative filter enabled (fallback=%s, rouge_delta=%.2f, tau=%.2f)",
-                    hn_config.fallback, hn_config.rouge_delta, hn_config.tau)
+    hn_params = dataset_cfg.get("hard_negative_params", {})
 
     all_samples: list[dict] = []
-
     for uri, entry in recipe.entries.items():
+        hn_filter_instance = None
+        hn_filter_entry_stats = None
+        if hn_enabled:
+            hn_config = HardNegativeConfig(uri=uri)
+            hn_filter_entry_stats = hn_config.get_config(entry_uri=entry.dist_uri)
+            # Inject weights from config.yml into filter config
+            if hn_params:
+                hn_filter_entry_stats["w_entropy"] = hn_params.get("w1", 0.2)
+                hn_filter_entry_stats["w_ttr"] = hn_params.get("w2", 0.2)
+                hn_filter_entry_stats["w_rouge_dist"] = hn_params.get("w3", 0.4)
+                hn_filter_entry_stats["w_length_pen"] = hn_params.get("w4", 0.2)
+                hn_filter_entry_stats["fallback"] = hn_params.get("config_based_fallback", "temperature")
+            hn_filter_instance = HardNegativeFilter(hn_filter_entry_stats)
+
         logger.info("Processing: %s (replica=%d, chat_type=%s)", uri, entry.replica, entry.chat_type)
 
         raw_data = DataLoader.base_load(entry.dist_uri)
@@ -95,7 +92,7 @@ def prepare(config_path: str,strategy: PromptAssignmentStrategy = PromptAssignme
                 assigned = assigner.assign(sample, prompts, prompt_names, row_idx)
                 for sample_copy, prompt_content, prompt_id in assigned:
                     try:
-                        processed = template_fn(sample_copy, prompt_content, temperature=temperature, hn_filter=hn_filter)
+                        processed = template_fn(sample_copy, prompt_content, temperature=temperature, hn_filter=hn_filter_instance, hn_filter_entry_stats=hn_filter_entry_stats)
                         if processed is None:
                             logger.info("  Dropped sample (hard negative filter): %s", sample_copy.get("_id_hash", ""))
                             continue

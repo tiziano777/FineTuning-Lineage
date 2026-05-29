@@ -34,9 +34,11 @@ class CheckpointRepository:
         {where}
         OPTIONAL MATCH (e2:Experiment)-[:STARTED_FROM]->(c)
         WITH c, e, COLLECT(e2.exp_id) as used_by_exps
-        RETURN c.ckp_id as ckp_id, c.epoch as epoch, c.run as run,
-               c.metrics_snapshot as metrics_snapshot, c.uri as uri,
-               c.is_usable as is_usable, c.created_at as created_at,
+        RETURN c.id as id, c.name as name, c.epoch as epoch, c.run as run,
+               c.metrics as metrics, c.uri as uri,
+               c.derived_from as derived_from,
+               c.is_usable as is_usable, c.is_merging as is_merging,
+               c.created_at as created_at,
                e.exp_id as parent_exp, used_by_exps
         ORDER BY c.created_at DESC
         LIMIT 100
@@ -52,7 +54,7 @@ class CheckpointRepository:
         Returns:
             Checkpoint data or None if not found.
         """
-        query = "MATCH (c:Checkpoint {ckp_id: $ckp_id}) RETURN c"
+        query = "MATCH (c:Checkpoint {id: $ckp_id}) RETURN c"
         return await self.db.run_single(query, ckp_id=ckp_id)
 
     async def update_uri(self, ckp_id: str, new_uri: str) -> dict:
@@ -70,9 +72,9 @@ class CheckpointRepository:
         """
         now = datetime.utcnow().isoformat()
         query = """
-        MATCH (c:Checkpoint {ckp_id: $ckp_id})
+        MATCH (c:Checkpoint {id: $ckp_id})
         SET c.uri = $new_uri, c.updated_at = $updated_at
-        RETURN c.ckp_id as ckp_id, c.uri as uri
+        RETURN c.id as id, c.uri as uri
         """
         result = await self.db.run_single(query, ckp_id=ckp_id, new_uri=new_uri, updated_at=now)
         if not result:
@@ -94,9 +96,9 @@ class CheckpointRepository:
         """
         now = datetime.utcnow().isoformat()
         query = """
-        MATCH (c:Checkpoint {ckp_id: $ckp_id})
+        MATCH (c:Checkpoint {id: $ckp_id})
         SET c.is_usable = $is_usable, c.updated_at = $updated_at
-        RETURN c.ckp_id as ckp_id, c.is_usable as is_usable
+        RETURN c.id as id, c.is_usable as is_usable
         """
         result = await self.db.run_single(query, ckp_id=ckp_id, is_usable=is_usable, updated_at=now)
         if not result:
@@ -113,7 +115,7 @@ class CheckpointRepository:
             List of dependent experiment records.
         """
         query = """
-        MATCH (e:Experiment)-[:STARTED_FROM]->(c:Checkpoint {ckp_id: $ckp_id})
+        MATCH (e:Experiment)-[:STARTED_FROM]->(c:Checkpoint {id: $ckp_id})
         RETURN e.exp_id as exp_id, e.status as status, e.description as description
         """
         return await self.db.run_list(query, ckp_id=ckp_id)

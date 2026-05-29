@@ -12,6 +12,8 @@ import io
 import json
 import zipfile
 from datetime import datetime, timezone
+import uuid
+import re
 from pathlib import Path
 
 import streamlit as st
@@ -132,7 +134,7 @@ def _generate_config_yml(selections: dict) -> str:
 
 def _generate_experiment_yml(setup_name: str, selections: dict) -> str:
     """Generate .lineage/experiment.yml from template.
-    
+
     URI is intentionally null — the tracker sets it to the actual project_root
     on the remote machine at first execution.
     """
@@ -141,6 +143,15 @@ def _generate_experiment_yml(setup_name: str, selections: dict) -> str:
     content = content.replace("{{PROJECT_URI}}", "")
     content = content.replace("{{DESCRIPTION}}", selections.get("description", ""))
     content = content.replace("{{COMPONENT_NAME}}", selections.get("component_name", ""))
+
+    # If the UI generated an in-memory UUID, inject it into the template
+    # for both experiment.id and experiment.base_experiment_id only (not previous_experiment_id).
+    injected_uuid = selections.get("injected_experiment_uuid") or selections.get("loaded_experiment_uuid")
+    if injected_uuid:
+        # Replace only specific fields using regex to avoid touching previous_experiment_id
+        content = re.sub(r"^(\s*)id:\s*null", rf"\1id: {injected_uuid}", content, flags=re.MULTILINE)
+        content = re.sub(r"^(\s*)base_experiment_id:\s*null", rf"\1base_experiment_id: {injected_uuid}", content, flags=re.MULTILINE)
+
     return content
 
 
@@ -174,11 +185,13 @@ def _build_zip(component_uri: str | None, selections: dict) -> bytes:
                     content = _safe_read_file(item)
                     zf.writestr(f"{setup_name}/{rel_path}", content)
 
-        # 2. Copy base files (Makefile)
-        makefile = _BASE_DIR / "Makefile"
-        if makefile.exists():
-            content = _safe_read_file(makefile)
-            zf.writestr(f"{setup_name}/Makefile", content)
+        # 2. Copy base files (Makefile, modules/, etc.)
+        if _BASE_DIR.exists():
+            for item in _BASE_DIR.rglob("*"):
+                if item.is_file() and ".lineage" not in item.parts:
+                    rel_path = item.relative_to(_BASE_DIR)
+                    content = _safe_read_file(item)
+                    zf.writestr(f"{setup_name}/{rel_path}", content)
 
         # 3. Generate config.yml on-the-fly
         config_content = _generate_config_yml(selections)
@@ -348,6 +361,9 @@ def _render_create_form() -> None:
         selected_component_obj = component_map.get(selected_component)
         component_uri = selected_component_obj.get("uri", "") if selected_component_obj else None
 
+        # Generate a random UUID for this scaffold (detached, not yet in DB)
+        scaffold_uuid = str(uuid.uuid4())
+
         selections = {
             "setup_name": setup_name,
             "component_name": selected_component,
@@ -366,6 +382,8 @@ def _render_create_form() -> None:
             "merging_enabled": merging_enabled,
             "merge_method": merge_method if merging_enabled else None,
             "merge_sources": [s.strip() for s in merge_sources.split("\n") if s.strip()] if merging_enabled else [],
+            # Inject random UUID into scaffold (detached, registered by DB at first run)
+            "injected_experiment_uuid": scaffold_uuid,
         }
 
         if component_uri is None:

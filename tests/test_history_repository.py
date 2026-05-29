@@ -46,7 +46,7 @@ EXP_RECORD_BASE = {
     "config_hash": "abc123",
     "created_at": "2026-01-01",
     "checkpoints": [
-        {"ckp_id": "c-001", "epoch": 1, "run": 0, "metrics_snapshot": {"loss": 0.5}, "uri": "s3://bucket/c-001", "is_usable": True},
+        {"name": "c-001", "derived_from": "", "epoch": 1, "run": 0, "metrics": {"loss": 0.5}, "uri": "s3://bucket/c-001", "is_merging": False, "is_usable": True},
     ],
 }
 
@@ -59,7 +59,7 @@ EXP_RECORD_DERIVED = {
     "config_hash": "def456",
     "created_at": "2026-01-02",
     "checkpoints": [
-        {"ckp_id": "c-002", "epoch": 2, "run": 0, "metrics_snapshot": {"loss": 0.3}, "uri": "s3://bucket/c-002", "is_usable": True},
+        {"name": "c-002", "derived_from": "", "epoch": 2, "run": 0, "metrics": {"loss": 0.3}, "uri": "s3://bucket/c-002", "is_merging": False, "is_usable": True},
     ],
 }
 
@@ -72,8 +72,8 @@ class TestBuildSummary:
         summary = _build_experiment_summary(EXP_RECORD_BASE)
         assert summary.exp_id == "e-001"
         assert summary.checkpoint_count == 1
-        assert summary.checkpoints[0].ckp_id == "c-001"
-        assert summary.checkpoints[0].metrics_snapshot == {"loss": 0.5}
+        assert summary.checkpoints[0].name == "c-001"
+        assert summary.checkpoints[0].metrics == {"loss": 0.5}
 
     def test_empty_checkpoints(self):
         record = {**EXP_RECORD_BASE, "checkpoints": []}
@@ -137,7 +137,7 @@ class TestPreviewRollback:
     @pytest.mark.asyncio
     async def test_preview_no_weights_no_warning(self, repo, mock_client):
         record = {**EXP_RECORD_BASE, "checkpoints": [
-            {"ckp_id": "c-x", "epoch": 0, "run": 0, "metrics_snapshot": {}, "uri": None, "is_usable": True}
+            {"name": "c-x", "derived_from": "", "epoch": 0, "run": 0, "metrics": {}, "uri": None, "is_merging": False, "is_usable": True}
         ]}
         mock_client.run_list.return_value = [record]
         mock_client.run_single.return_value = {"external_branches": 0}
@@ -162,7 +162,7 @@ class TestApplyRollback:
             target_exp_id="e-001",
             affected_experiments=[
                 ExperimentSummary(exp_id="e-001", checkpoints=[
-                    CheckpointSummary(ckp_id="c-001", epoch=1, run=0)
+                    CheckpointSummary(name="c-001", epoch=1, run=0)
                 ]),
             ],
             branch_count=0,
@@ -170,7 +170,7 @@ class TestApplyRollback:
             total_checkpoints=1,
         )
         await repo.apply_rollback(preview)
-        # Two calls: one for experiments, one for checkpoints
+        # Two calls: one for experiments usable=false, one for their checkpoints
         assert mock_client.run.await_count == 2
 
     @pytest.mark.asyncio
@@ -326,6 +326,6 @@ class TestModels:
         assert n.codebase == {}
 
     def test_checkpoint_summary(self):
-        c = CheckpointSummary(ckp_id="c-001", epoch=1, run=0)
+        c = CheckpointSummary(name="c-001", epoch=1, run=0)
         assert c.is_usable is True
         assert c.uri is None

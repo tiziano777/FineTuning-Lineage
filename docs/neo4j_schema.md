@@ -11,14 +11,14 @@ FineTuning-Lineage uses Neo4j 5.x as the lineage graph store. The schema include
 | **:Recipe** | `recipe_id` (UNIQUE), `name`, `version` | Technique definition | `recipe_id: "lora_trl_7b"` |
 | **:Model** | `model_name` (UNIQUE), `model_id`, `type` | Base model metadata | `model_name: "llama-7b-instruct"` |
 | **:Experiment** | `exp_id` (UNIQUE), `config_hash`, `code_hash`, `req_hash`, `status`, `created_at`, `updated_at` | Training run instance | `exp_id: "e-20260410-001"`, `status: "completed"` |
-| **:Checkpoint** | `ckp_id` (UNIQUE), `epoch`, `run`, `metrics` (JSON), `uri`, `created_at`, `updated_at` | Saved artifact + metadata | `ckp_id: "e-001_c5_r2"`, `metrics: {"loss": 0.23}` |
+| **:Checkpoint** | `id` (UNIQUE), `name`, `derived_from`, `epoch`, `run`, `uri`, `metrics` (JSON), `is_merging`, `is_usable`, `created_at`, `updated_at` | Saved artifact + metadata | `id: "uuid"`, `name: "checkpoint-500"`, `metrics: {"loss": 0.23}` |
 | **:Component** | `(technique_code, framework_code)` (UNIQUE composite), `name` | Technique+framework pair | `technique_code: "dpo"`, `framework_code: "trl"` |
 
 ## Relation Types
 
 | Relation | From | To | Purpose | Example |
 |----------|------|----|-|---------|---------|
-| **PRODUCED_BY** | :Checkpoint | :Experiment | Checkpoint belongs to experiment | `ckp5 -[:PRODUCED_BY]-> exp1` |
+| **PRODUCED** | :Experiment | :Checkpoint | Experiment produced checkpoint | `exp1 -[:PRODUCED]-> ckp5` |
 | **DERIVED_FROM** | :Experiment | :Experiment | Config/code change (branch) | `exp2 -[:DERIVED_FROM]-> exp1` |
 | **RETRY_FROM** | :Experiment | :Experiment | Same config, different seed | `exp3 -[:RETRY_FROM]-> exp1` |
 | **MERGED_FROM** | :Checkpoint | :Checkpoint | Merge multiple checkpoints | `ckp_merged -[:MERGED_FROM]-> [ckp1, ckp2]` |
@@ -33,7 +33,7 @@ FineTuning-Lineage uses Neo4j 5.x as the lineage graph store. The schema include
 ```cypher
 CREATE CONSTRAINT unique_recipe_id FOR (r:Recipe) REQUIRE r.recipe_id IS UNIQUE;
 CREATE CONSTRAINT unique_exp_id FOR (e:Experiment) REQUIRE e.exp_id IS UNIQUE;
-CREATE CONSTRAINT unique_ckp_id FOR (c:Checkpoint) REQUIRE c.ckp_id IS UNIQUE;
+CREATE CONSTRAINT unique_ckp_id FOR (c:Checkpoint) REQUIRE c.id IS UNIQUE;
 CREATE CONSTRAINT unique_model_name FOR (m:Model) REQUIRE m.model_name IS UNIQUE;
 CREATE CONSTRAINT composite_component FOR (co:Component) REQUIRE (co.technique_code, co.framework_code) IS UNIQUE;
 ```
@@ -66,8 +66,8 @@ SET n.updated_at = datetime()
 ```cypher
 CREATE TRIGGER orphan_validation
 ON SET (c:Checkpoint)
-WHERE NOT EXISTS((c)-[:PRODUCED_BY]->()) AND c.is_merging = false
-RAISE ERROR "Checkpoint must have PRODUCED_BY relation"
+WHERE NOT EXISTS((c)<-[:PRODUCED]-()) AND c.is_merging = false
+RAISE ERROR "Checkpoint must have PRODUCED relation from Experiment"
 ```
 
 ## Common Queries
@@ -99,7 +99,7 @@ RETURN COUNT(path) AS circular_count;
 **Get all checkpoints from a merged experiment:**
 ```cypher
 MATCH (ckp:Checkpoint)-[:MERGED_FROM*]->(src:Checkpoint)
-RETURN ckp.ckp_id, COLLECT(src.ckp_id) AS sources;
+RETURN ckp.id, ckp.name, COLLECT(src.id) AS sources;
 ```
 
 ## Performance Notes

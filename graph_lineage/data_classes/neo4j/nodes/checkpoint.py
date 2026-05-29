@@ -8,10 +8,13 @@ from .base import BaseEntity
 class Checkpoint(BaseEntity):
     """Checkpoint entity -- core tracking entity for a training run."""
 
+    name: str = Field("", description="Checkpoint name")
     derived_from: str = Field("", description="Associated Model")
-    description: Optional[str] = Field("", description="Checkpoint description")
 
-    ckp_uri: str = Field("", description="Path scaffold on worker")
-    final_metrics: dict = Field("", description="Pointer to training metrics")
+    epoch: int
+    run: int
+    uri: str = Field("", description="Path scaffold on worker")
+    metrics: dict = Field(default_factory=dict, description="Training metrics")
 
-    
+    is_merging: bool = Field(True, description="Indicates if the checkpoint is merging")
+    is_usable: bool = Field(True, description="Soft-delete flag for visibility")

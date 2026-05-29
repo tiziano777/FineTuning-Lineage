@@ -10,18 +10,7 @@ Add `@envelope.tracker()` to your training function. The system automatically:
 2. **TRAINING**: Your code runs normally
 3. **POST-EXECUTION**: Captures metrics URIs, creates checkpoint nodes, updates experiment status
 
-### Local Mode (same machine as Neo4j)
-
-```python
-from graph_lineage.lineage import envelope
-
-@envelope.tracker()
-def train_loop(config_path: str, device: str):
-    # Your training code here
-    pass
-```
-
-### Remote Mode (GPU worker → server via HTTP)
+### Remote Mode (GPU worker → server via HTTP) — Recommended
 
 ```python
 from modules.lineage import lineage_tracker
@@ -33,6 +22,10 @@ def train_loop(config_path: str, device: str):
 ```
 
 Requires `.lineage/server.yml` pointing to the lineage server.
+
+**⚠️ Note:** Local mode (`@envelope.tracker()`) is in development. Use remote mode for production.
+
+See [docs/AUDIT.md](docs/AUDIT.md) for details on current implementation status.
 
 ## Architecture
 
@@ -113,17 +106,22 @@ output:
 
 ```
 
-### 4. Decorate your train function
+### 4. Decorate your train function (Remote Mode)
 
 ```python
-from graph_lineage.lineage import envelope
+from modules.lineage import lineage_tracker
 
-@envelope.tracker()
+@lineage_tracker()
 def train(config_path: str, device: str):
     # your training code
     pass
 
 train("config.yml", "cuda:0")
+```
+
+⚠️ **First time?** Copy Client SDK into your project:
+```bash
+cp -r graph_lineage/setups/_base/modules ./
 ```
 
 ### 5. View in UI
@@ -175,7 +173,7 @@ The Client SDK (`modules/lineage/`) is self-contained — copy it from `graph_li
 | Type | Trigger | Neo4j Edge |
 |------|---------|------------|
 | **NEW** | First run (no prior experiment) | None (root node) |
-| **RETRY** | Same config+code, re-run | `RETRY_OF` |
+| **RETRY** | Same config+code, re-run | `RETRY_FROM` |
 | **BRANCH** | Critical files changed | `DERIVED_FROM` + diff_patch |
 | **RESUME** | Resume from checkpoint | `STARTED_FROM` |
 | **MERGE** | `model_merging` in config | `MERGED_FROM` |
@@ -204,7 +202,8 @@ The Client SDK (`modules/lineage/`) is self-contained — copy it from `graph_li
 | 2 - Config Schema | `config_file/` (data_classes, validator, writer) | ✅ Done |
 | 3 - DiffManager | `diff/` (snapshot, differ, reconstructor, description) + `history/` | ✅ Done |
 | 4 - Hook/Tracker | `lineage/` (tracker, rule_engine, neo4j_ops) + `observability/` | ✅ Done |
-| 5 - Streamlit UI | `streamlit_ui/` (8 pages, CRUD, graph viz, admin) | ✅ Done |
+| 4 - Hook/Tracker | `lineage/` (tracker, rule_engine, neo4j_ops) + `observability/` | ✅ Done |
+| 5 - Streamlit UI | `streamlit_ui/` (9 pages, CRUD, graph viz, admin) | ✅ Done |
 | 6 - Client-Server | `server/` (FastAPI) + `setups/_base/modules/lineage/` (Client SDK) | ✅ Done |
 | 7+ | Deploy, Docs, Polish | ⬜ Planned |
 
@@ -264,7 +263,8 @@ graph_lineage/
 │   ├── dpo_trl/                # DPO with TRL
 │   └── continual_ft_trl/       # Continual fine-tuning
 ├── storage/                    # Storage abstraction (LocalProvider, resolver)
-└── streamlit_ui/               # CRUD UI for Neo4j entities (Streamlit)
+├── streamlit_ui/               # CRUD UI for Neo4j entities (Streamlit)
+└── observability/              # Metrics collection (MetricsCollector, GPU stats)
 ```
 
 ## Development
@@ -285,9 +285,8 @@ docker compose up neo4j -d
 
 ## Docs
 
-- [Config Reference](docs/CONFIG.md)
-- [Middleware/Hook System](docs/MIDDLEWARE.md)
-- [Neo4j Schema](docs/neo4j_schema.md)
-- [Architecture](docs/LINEAGE_SYSTEM_ARCHITECTURE.md)
-- [Error Handling](docs/ERROR_HANDLING.md)
-- [Examples](docs/EXAMPLES.md)
+- [Audit](docs/AUDIT.md) — Documentation audit (design vs reality)
+- [Module Docs](docs/modules/) — Complete reference for each module
+- [Workflow](docs/workflow.md) — Development & deployment workflow
+- [Neo4j Schema](docs/neo4j_schema.md) — Graph schema reference
+- [Architecture](docs/LINEAGE_SYSTEM_ARCHITECTURE.md) — System design overview

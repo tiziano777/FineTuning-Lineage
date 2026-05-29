@@ -16,10 +16,13 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException
 
+from graph_lineage.data_classes.neo4j.nodes.checkpoint import Checkpoint
 from graph_lineage.data_classes.neo4j.nodes.experiment import Experiment
 from graph_lineage.diff.description import generate_description
 from graph_lineage.diff.snapshot import CodebaseSnapshot
 from graph_lineage.lineage.neo4j_ops import (
+    create_checkpoint_edge,
+    create_checkpoint_node,
     create_edge,
     create_experiment_node,
     find_experiment_by_id,
@@ -28,7 +31,15 @@ from graph_lineage.lineage.neo4j_ops import (
 )
 from graph_lineage.lineage.rule_engine import ModelIdMismatchError, detect_run_type
 
-from .schemas import HealthResponse, PostRequest, PostResponse, PreRequest, PreResponse
+from .schemas import (
+    CheckpointRequest,
+    CheckpointResponse,
+    HealthResponse,
+    PostRequest,
+    PostResponse,
+    PreRequest,
+    PreResponse,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -220,4 +231,47 @@ async def post_execution(request: PostRequest) -> PostResponse:
 
     except Exception as e:
         logger.error("POST-execution server error: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/v1/checkpoint", response_model=CheckpointResponse)
+async def checkpoint_created(request: CheckpointRequest) -> CheckpointResponse:
+    """Checkpoint endpoint: create checkpoint node and link to experiment.
+
+    Flow:
+    1. Build Checkpoint entity from request
+    2. Create Checkpoint node in Neo4j
+    3. Create (Experiment)-[:PRODUCED]->(Checkpoint) edge
+    4. Return checkpoint_id acknowledgement
+    """
+    try:
+        ckp_id = str(uuid.uuid4())
+
+        checkpoint = Checkpoint(
+            id=ckp_id,
+            name=request.name,
+            derived_from=request.derived_from,
+            epoch=request.epoch,
+            run=request.run,
+            uri=request.uri,
+            metrics=request.metrics,
+            is_merging=request.is_merging,
+        )
+
+        create_checkpoint_node(checkpoint)
+        create_checkpoint_edge(request.experiment_id, ckp_id)
+
+        logger.info(
+            "Checkpoint created: id=%s, name=%s, exp=%s",
+            ckp_id, request.name, request.experiment_id,
+        )
+
+        return CheckpointResponse(
+            checkpoint_id=ckp_id,
+            experiment_id=request.experiment_id,
+            acknowledged=True,
+        )
+
+    except Exception as e:
+        logger.error("Checkpoint server error: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))

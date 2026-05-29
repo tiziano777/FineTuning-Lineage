@@ -199,6 +199,7 @@ class LineageClient:
                 strategy=response.strategy,
                 project_root=self._project_root,
                 server_config=self.server_config,
+                extra={"model_id": exp_data.get("model_id", "")},
             )
 
         except FileTooLargeError as e:

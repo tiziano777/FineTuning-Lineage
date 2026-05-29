@@ -8,13 +8,15 @@ from pydantic import BaseModel, Field
 
 
 class CheckpointSummary(BaseModel):
-    """Compact view of a checkpoint for human review."""
+    """Content projection of Checkpoint for preview/navigation."""
 
-    ckp_id: str
-    epoch: int
-    run: int
-    metrics_snapshot: dict[str, Any] = Field(default_factory=dict)
+    name: str = ""
+    derived_from: str = ""
+    epoch: int = 0
+    run: int = 0
     uri: Optional[str] = None
+    metrics: dict[str, Any] = Field(default_factory=dict)
+    is_merging: bool = False
     is_usable: bool = True
 
 

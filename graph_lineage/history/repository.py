@@ -28,11 +28,13 @@ def _build_experiment_summary(record: dict[str, Any]) -> ExperimentSummary:
     ckps_raw = record.get("checkpoints", [])
     checkpoints = [
         CheckpointSummary(
-            ckp_id=c["ckp_id"],
+            name=c.get("name", ""),
+            derived_from=c.get("derived_from", ""),
             epoch=c.get("epoch", 0),
             run=c.get("run", 0),
-            metrics_snapshot=c.get("metrics_snapshot", {}),
+            metrics=c.get("metrics", {}),
             uri=c.get("uri"),
+            is_merging=c.get("is_merging", False),
             is_usable=c.get("is_usable", True),
         )
         for c in ckps_raw
@@ -102,9 +104,9 @@ class ExperimentRepository:
         UNWIND all_exps AS e
         OPTIONAL MATCH (e)-[:PRODUCED]->(c:Checkpoint)
         WITH e, COLLECT(CASE WHEN c IS NOT NULL THEN {
-            ckp_id: c.ckp_id, epoch: c.epoch, run: c.run,
-            metrics_snapshot: c.metrics_snapshot, uri: c.uri,
-            is_usable: c.is_usable
+            name: c.name, derived_from: c.derived_from, epoch: c.epoch,
+            run: c.run, metrics: c.metrics, uri: c.uri,
+            is_merging: c.is_merging, is_usable: c.is_usable
         } ELSE NULL END) AS raw_ckps
         WITH e, [x IN raw_ckps WHERE x IS NOT NULL] AS ckps
         RETURN e.exp_id AS exp_id, e.description AS description,
@@ -165,7 +167,6 @@ class ExperimentRepository:
             )
 
         exp_ids = [s.exp_id for s in preview.affected_experiments]
-        ckp_ids = [c.ckp_id for s in preview.affected_experiments for c in s.checkpoints]
 
         if exp_ids:
             await self._client.run(
@@ -177,14 +178,14 @@ class ExperimentRepository:
                 ids=exp_ids,
             )
 
-        if ckp_ids:
+            # Also mark all checkpoints produced by affected experiments
             await self._client.run(
                 """
-                UNWIND $ids AS cid
-                MATCH (c:Checkpoint {ckp_id: cid})
+                UNWIND $ids AS eid
+                MATCH (e:Experiment {exp_id: eid})-[:PRODUCED]->(c:Checkpoint)
                 SET c.is_usable = false
                 """,
-                ids=ckp_ids,
+                ids=exp_ids,
             )
 
     # -- 3. Squash chain --
@@ -285,9 +286,9 @@ class ExperimentRepository:
         WITH ancestor
         OPTIONAL MATCH (ancestor)-[:PRODUCED]->(c:Checkpoint)
         WITH ancestor, COLLECT(CASE WHEN c IS NOT NULL THEN {
-            ckp_id: c.ckp_id, epoch: c.epoch, run: c.run,
-            metrics_snapshot: c.metrics_snapshot, uri: c.uri,
-            is_usable: c.is_usable
+            name: c.name, derived_from: c.derived_from, epoch: c.epoch,
+            run: c.run, metrics: c.metrics, uri: c.uri,
+            is_merging: c.is_merging, is_usable: c.is_usable
         } ELSE NULL END) AS raw_ckps
         WITH ancestor, [x IN raw_ckps WHERE x IS NOT NULL] AS ckps
         RETURN ancestor.exp_id AS exp_id, ancestor.description AS description,
@@ -349,9 +350,9 @@ class ExperimentRepository:
         MATCH (e:Experiment {exp_id: $eid})
         OPTIONAL MATCH (e)-[:PRODUCED]->(c:Checkpoint)
         WITH e, COLLECT(CASE WHEN c IS NOT NULL THEN {
-            ckp_id: c.ckp_id, epoch: c.epoch, run: c.run,
-            metrics_snapshot: c.metrics_snapshot, uri: c.uri,
-            is_usable: c.is_usable
+            name: c.name, derived_from: c.derived_from, epoch: c.epoch,
+            run: c.run, metrics: c.metrics, uri: c.uri,
+            is_merging: c.is_merging, is_usable: c.is_usable
         } ELSE NULL END) AS raw_ckps
         WITH e, [x IN raw_ckps WHERE x IS NOT NULL] AS ckps
         RETURN e.exp_id AS exp_id, e.description AS description,

@@ -14,6 +14,7 @@ from typing import Any
 
 import nest_asyncio
 
+from graph_lineage.data_classes.neo4j.nodes.checkpoint import Checkpoint
 from graph_lineage.data_classes.neo4j.nodes.experiment import Experiment
 from graph_lineage.neo4j_client.client import get_driver
 
@@ -206,3 +207,57 @@ def update_experiment_status(
         exit_msg: Optional exit/error message.
     """
     _run_sync(_update_experiment_status_async(exp_id, status, exit_msg))
+
+
+# ── Checkpoint operations ─────────────────────────────────────────────────────
+
+
+async def _create_checkpoint_node_async(ckp: Checkpoint) -> str:
+    """Create a Checkpoint node in Neo4j."""
+    driver = await get_driver()
+    props = ckp.model_dump(mode="python")
+    for key in ("created_at", "updated_at"):
+        if key in props and props[key] is not None:
+            props[key] = props[key].isoformat()
+    query = """
+    CREATE (c:Checkpoint $props)
+    RETURN c.id AS id
+    """
+    async with driver.session() as session:
+        result = await session.run(query, {"props": props})
+        record = await result.single()
+        return record["id"]
+
+
+def create_checkpoint_node(ckp: Checkpoint) -> str:
+    """Create a Checkpoint node in Neo4j and return its ID.
+
+    Args:
+        ckp: Checkpoint instance to persist.
+
+    Returns:
+        The checkpoint ID.
+    """
+    return _run_sync(_create_checkpoint_node_async(ckp))
+
+
+async def _create_checkpoint_edge_async(exp_id: str, ckp_id: str) -> None:
+    """Create PRODUCED relationship from Experiment to Checkpoint."""
+    driver = await get_driver()
+    query = """
+    MATCH (e:Experiment {id: $exp_id})
+    MATCH (c:Checkpoint {id: $ckp_id})
+    CREATE (e)-[:PRODUCED]->(c)
+    """
+    async with driver.session() as session:
+        await session.run(query, {"exp_id": exp_id, "ckp_id": ckp_id})
+
+
+def create_checkpoint_edge(exp_id: str, ckp_id: str) -> None:
+    """Create PRODUCED relationship from Experiment to Checkpoint.
+
+    Args:
+        exp_id: Source experiment ID.
+        ckp_id: Target checkpoint ID.
+    """
+    _run_sync(_create_checkpoint_edge_async(exp_id, ckp_id))

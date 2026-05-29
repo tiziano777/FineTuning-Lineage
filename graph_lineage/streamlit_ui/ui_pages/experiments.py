@@ -99,7 +99,7 @@ def run() -> None:
                 st.info("🔬 No experiments found")
                 st.caption(
                     "Experiments are created automatically when you run a "
-                    "training function with @envelope.tracker()."
+                    "training function with @lineage_tracker()."
                 )
         except UIError as e:
             st.error(f"Error: {e.user_message}")

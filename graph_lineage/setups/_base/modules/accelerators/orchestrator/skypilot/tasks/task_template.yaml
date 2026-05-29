@@ -1,0 +1,31 @@
+# SkyPilot Task Template
+# Variables are substituted by base_schedule.sh via envsubst
+name: ${EXPERIMENT_NAME}
+
+resources:
+  accelerators: ${SKY_ACCELERATORS}
+  cpus: ${SKY_CPUS}
+  memory: ${SKY_MEMORY}
+
+workdir: .
+
+# Mount NFS or cloud storage as needed
+# file_mounts:
+#   /nfs/training-output:
+#     source: s3://your-bucket/training-output
+#     mode: MOUNT
+
+envs:
+  CONFIG_PATH: ${CONFIG_PATH}
+  EXPERIMENT_NAME: ${EXPERIMENT_NAME}
+
+# Uncomment and set via `sky launch --env` or secrets manager
+# secrets:
+#   HF_TOKEN: <your-token>
+#   WANDB_API_KEY: <your-key>
+
+setup: |
+  pip install -r requirements.txt
+
+run: |
+  python train_lora.py ${CONFIG_PATH}

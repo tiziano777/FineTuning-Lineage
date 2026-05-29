@@ -81,3 +81,27 @@ class HealthResponse(BaseModel):
     status: str = "ok"
     version: str = ""
     neo4j_connected: bool = False
+
+
+# ─── CHECKPOINT ────────────────────────────────────────────────────────────────
+
+
+class CheckpointRequest(BaseModel):
+    """Payload sent to server when a checkpoint is saved during training."""
+
+    experiment_id: str
+    name: str
+    epoch: int
+    run: int
+    uri: str
+    metrics: dict = Field(default_factory=dict)
+    derived_from: str = ""
+    is_merging: bool = False
+
+
+class CheckpointResponse(BaseModel):
+    """Server acknowledgement of checkpoint creation."""
+
+    checkpoint_id: str
+    experiment_id: str
+    acknowledged: bool = True

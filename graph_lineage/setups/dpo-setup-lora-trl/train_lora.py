@@ -21,6 +21,7 @@ from modules.loader.model_loader import ModelLoader
 from modules.utils.config_validator import load_config, require_field, resolve_config
 from modules.plots.plot_manager import PlotManager
 from modules.callbacks.metrics_saver import MetricsSaverCallback
+from modules.lineage import lineage_tracker
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -105,7 +106,8 @@ def preflight(config_path: str) -> Dict[str, Any]:
         "ref_model": ref_model, "precompute_ref_log_probs": precompute_ref_log_probs,
     }
 
-def train(config_path: str = "config.yml", dry_run: bool = False):
+@lineage_tracker(capture_checkpoints=True)
+def train(config_path: str = "config.yml", dry_run: bool = False, lineage_callback=None):
     ctx = preflight(config_path)
 
     if dry_run:
@@ -169,6 +171,9 @@ def train(config_path: str = "config.yml", dry_run: bool = False):
     if metrics_uri:
         metrics_saver = MetricsSaverCallback(metrics_path=Path(metrics_uri))
         callbacks.append(metrics_saver)
+
+    if lineage_callback is not None:
+        callbacks.append(lineage_callback)
 
     # TRAINER
     trainer = DPOTrainer(

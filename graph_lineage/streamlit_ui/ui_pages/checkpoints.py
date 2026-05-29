@@ -90,7 +90,7 @@ def run() -> None:
                     with st.container(border=True):
                         col1, col2, col3 = st.columns([2, 2, 1])
                         with col1:
-                            st.markdown(f"**{ckp.get('ckp_id', 'N/A')}** {usable_badge}")
+                            st.markdown(f"**{ckp.get('name', 'N/A')}** {usable_badge}")
                             st.caption(
                                 f"Epoch: {ckp.get('epoch', 'N/A')} | "
                                 f"Run: {ckp.get('run', 'N/A')}"
@@ -122,11 +122,11 @@ def run() -> None:
                 return
 
             # Step 1: Select checkpoint
-            ckp_ids = [c["ckp_id"] for c in checkpoints]
+            ckp_ids = [c["id"] for c in checkpoints]
             selected_ckp = st.selectbox("Select checkpoint", ckp_ids, key="uri_edit_ckp")
 
             if selected_ckp:
-                current = next((c for c in checkpoints if c["ckp_id"] == selected_ckp), None)
+                current = next((c for c in checkpoints if c["id"] == selected_ckp), None)
                 if current:
                     # Step 2: Show current URI
                     current_uri = current.get("uri", "") or ""
@@ -169,11 +169,11 @@ def run() -> None:
                 st.info("No checkpoints available.")
                 return
 
-            ckp_ids = [c["ckp_id"] for c in checkpoints]
+            ckp_ids = [c["id"] for c in checkpoints]
             selected_ckp = st.selectbox("Select checkpoint", ckp_ids, key="vis_ckp")
 
             if selected_ckp:
-                current = next((c for c in checkpoints if c["ckp_id"] == selected_ckp), None)
+                current = next((c for c in checkpoints if c["id"] == selected_ckp), None)
                 if current:
                     is_usable = current.get("is_usable", True)
 

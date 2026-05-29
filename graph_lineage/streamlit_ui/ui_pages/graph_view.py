@@ -53,7 +53,7 @@ async def fetch_lineage_graph(db_client, root_exp_id: str | None = None) -> dict
         RETURN exp.exp_id AS exp_id, exp.status AS status,
                exp.description AS description, exp.usable AS usable,
                type(r) AS rel_type, target.exp_id AS target_exp_id,
-               COLLECT(DISTINCT ckp.ckp_id) AS checkpoint_ids
+               COLLECT(DISTINCT ckp.id) AS checkpoint_ids
         """
         records = await db_client.run_list(query, exp_id=root_exp_id)
     else:
@@ -64,7 +64,7 @@ async def fetch_lineage_graph(db_client, root_exp_id: str | None = None) -> dict
         RETURN e.exp_id AS exp_id, e.status AS status,
                e.description AS description, e.usable AS usable,
                type(r) AS rel_type, target.exp_id AS target_exp_id,
-               COLLECT(DISTINCT ckp.ckp_id) AS checkpoint_ids
+               COLLECT(DISTINCT ckp.id) AS checkpoint_ids
         LIMIT 100
         """
         records = await db_client.run_list(query)

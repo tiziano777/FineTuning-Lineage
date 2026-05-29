@@ -38,7 +38,15 @@ from typing import Any, Callable
 from .client import ExecutionContext, LineageClient, LineageClientError
 from .config import ServerConfig, ServerConfigError
 from .connector import Connector, ConnectorFactory, ServerError
-from .models import HealthResponse, PostRequest, PostResponse, PreRequest, PreResponse
+from .models import (
+    CheckpointRequest,
+    CheckpointResponse,
+    HealthResponse,
+    PostRequest,
+    PostResponse,
+    PreRequest,
+    PreResponse,
+)
 from .snapshot import FileTooLargeError, capture_codebase, content_hash
 
 # Auto-register built-in connectors
@@ -49,6 +57,7 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "LineageClient",
     "LineageClientError",
+    "LineageCheckpointCallback",
     "ExecutionContext",
     "ServerConfig",
     "ServerConfigError",
@@ -59,6 +68,8 @@ __all__ = [
     "PreResponse",
     "PostRequest",
     "PostResponse",
+    "CheckpointRequest",
+    "CheckpointResponse",
     "HealthResponse",
     "FileTooLargeError",
     "capture_codebase",
@@ -67,7 +78,13 @@ __all__ = [
 ]
 
 
-def lineage_tracker(config_path_arg: int = 0) -> Callable:
+def LineageCheckpointCallback(*args, **kwargs):
+    """Lazy accessor — avoids importing transformers at module load time."""
+    from .callbacks import LineageCheckpointCallback as _Cls
+    return _Cls(*args, **kwargs)
+
+
+def lineage_tracker(config_path_arg: int = 0, capture_checkpoints: bool = False) -> Callable:
     """Decorator that wraps a training function with PRE/POST lifecycle.
 
     The decorated function's first positional argument (or the one at
@@ -76,14 +93,18 @@ def lineage_tracker(config_path_arg: int = 0) -> Callable:
     Args:
         config_path_arg: Index of the positional arg that is the config path.
                          Defaults to 0 (first argument).
+        capture_checkpoints: If True, creates a LineageCheckpointCallback and
+                             injects it as `lineage_callback` kwarg into the
+                             wrapped function.
 
     Returns:
         Decorator function.
 
     Example:
-        @lineage_tracker()
-        def train(config_path: str):
-            ...
+        @lineage_tracker(capture_checkpoints=True)
+        def train(config_path: str, lineage_callback=None):
+            trainer = Trainer(..., callbacks=[lineage_callback])
+            trainer.train()
     """
 
     def decorator(fn: Callable) -> Callable:
@@ -100,6 +121,11 @@ def lineage_tracker(config_path_arg: int = 0) -> Callable:
             if ctx is None:
                 # Non-blocking mode, server unreachable — run without tracking
                 return fn(*args, **kwargs)
+
+            # Inject checkpoint callback if requested
+            if capture_checkpoints:
+                callback = LineageCheckpointCallback(ctx=ctx)
+                kwargs["lineage_callback"] = callback
 
             try:
                 result = fn(*args, **kwargs)
