@@ -63,6 +63,7 @@ def prepare(config_path: str,strategy: PromptAssignmentStrategy = PromptAssignme
     hn_params = dataset_cfg.get("hard_negative_params", {})
 
     all_samples: list[dict] = []
+    dropped=0
     for uri, entry in recipe.entries.items():
         hn_filter_instance = None
         hn_filter_entry_stats = None
@@ -76,6 +77,10 @@ def prepare(config_path: str,strategy: PromptAssignmentStrategy = PromptAssignme
                 hn_filter_entry_stats["w_rouge_dist"] = hn_params.get("w3", 0.4)
                 hn_filter_entry_stats["w_length_pen"] = hn_params.get("w4", 0.2)
                 hn_filter_entry_stats["fallback"] = hn_params.get("config_based_fallback", "temperature")
+                hn_filter_entry_stats["use_length_penalty"] = hn_params.get("use_length_penalty", True)
+                hn_filter_entry_stats["outlier_std"] = hn_params.get("outlier_std", 1.2)
+                hn_filter_entry_stats["suspected_std"] = hn_params.get("suspected_std", 3.0)
+                hn_filter_entry_stats["gamma"] = hn_params.get("gamma", 0.2)
             hn_filter_instance = HardNegativeFilter(hn_filter_entry_stats)
 
         logger.info("Processing: %s (replica=%d, chat_type=%s)", uri, entry.replica, entry.chat_type)
@@ -89,12 +94,16 @@ def prepare(config_path: str,strategy: PromptAssignmentStrategy = PromptAssignme
 
         for rep in range(entry.replica):
             for row_idx, sample in enumerate(raw_data):
+                
+                #logger.info("Processing sample:"+str(sample))
+                
                 assigned = assigner.assign(sample, prompts, prompt_names, row_idx)
                 for sample_copy, prompt_content, prompt_id in assigned:
                     try:
-                        processed = template_fn(sample_copy, prompt_content, temperature=temperature, hn_filter=hn_filter_instance, hn_filter_entry_stats=hn_filter_entry_stats)
+                        processed = template_fn(sample_copy, prompt_content, temperature=temperature, hn_filter=hn_filter_instance)
                         if processed is None:
-                            logger.info("  Dropped sample (hard negative filter): %s", sample_copy.get("_id_hash", ""))
+                            #logger.info("  Dropped sample (hard negative filter): %s", sample_copy.get("_id_hash", ""))
+                            dropped+=1
                             continue
                         processed["_source_uri"] = uri
                         processed["_replica"] = rep
@@ -109,6 +118,7 @@ def prepare(config_path: str,strategy: PromptAssignmentStrategy = PromptAssignme
     cache_dir.mkdir(parents=True, exist_ok=True)
     output_path = cache_dir 
     logger.info("Collected %d processed samples", len(all_samples))
+    logger.info("Dropped %d samples", dropped)
 
     # ------------------------------------------------------------------
     # Post-processing: convert, filter, split, shuffle (in-memory)

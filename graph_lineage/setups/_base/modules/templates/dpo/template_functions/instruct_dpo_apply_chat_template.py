@@ -41,8 +41,7 @@ def apply_chat_template(
     sample: dict,
     system_prompt: str | None,
     temperature: float = 0.7,
-    hn_filter: HardNegativeFilter | None = None,
-    hn_filter_entry_stats: dict | None = None,
+    hn_filter: HardNegativeFilter | None = None
 ) -> dict | None:
     """Convert a raw DPO sample into DPOTrainer-compatible format.
 
@@ -52,6 +51,7 @@ def apply_chat_template(
         temperature:   Select positive/negative by this temperature value.
         hn_filter:     Optional HardNegativeFilter for NLP-based rejected selection.
         hn_filter_entry_stats:   Optional stats of the entry for negative selection or debugging.
+        metadata:      Optional metadata of the sample for negative selection or debugging.
     Returns:
         {"prompt": [...], "chosen": [...], "rejected": [...]}
         Each is a list of {"role": str, "content": str} message dicts.
@@ -62,6 +62,7 @@ def apply_chat_template(
     """
     id_hash: str = sample.get("_id_hash", "<unknown>")
     raw_messages = sample.get("messages", [])
+    metadata: dict = {k: sample[k] for k in sample if k.startswith("_")}
 
     # Be explicit about emptiness checks: samples may contain numpy arrays or
     # pandas Series where truthiness raises ValueError. Use len() when available.
@@ -107,8 +108,10 @@ def apply_chat_template(
             # Hard negative selection: NLP-based or temperature fallback
             if hn_filter:
                 rejected_item = hn_filter.select(
-                    negatives, gold_content=chosen_content, temperature=temperature,
-                    hn_filter_entry_stats=hn_filter_entry_stats
+                    negatives,
+                    gold_content=chosen_content,
+                    temperature=temperature,
+                    sample_metadata=metadata
                 )
                 if rejected_item is None:
                     return None  # signal drop to caller
@@ -131,4 +134,9 @@ def apply_chat_template(
         "prompt": prompt_messages,
         "chosen": [{"role": "assistant", "content": chosen_content}],
         "rejected": [{"role": "assistant", "content": rejected_content}],
+        "_eval": {
+            "gold": chosen_content,
+            "chosen_inference_params": chosen_item.get("inference_params") if chosen_item else None,
+            "rejected_inference_params": rejected_item.get("inference_params") if rejected_item else None,
+        },
     }

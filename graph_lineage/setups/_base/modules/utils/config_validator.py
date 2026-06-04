@@ -170,7 +170,10 @@ def resolve_config(config: dict, experiment_path: str = None) -> dict:
             node = node[k]
         else:
             if isinstance(node, str) and node:
-                os.makedirs(node, exist_ok=True)
-                logger.info("Ensured directory exists: %s", node)
+                try:
+                    os.makedirs(node, exist_ok=True)
+                    logger.info("Ensured directory exists: %s", node)
+                except OSError as e:
+                    logger.warning("Failed to create directory %s: %s", node, e)
 
     return resolved
