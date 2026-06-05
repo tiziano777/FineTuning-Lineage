@@ -1,0 +1,27 @@
+
+model:
+  lineage_uri: .lineage/experiment.yml
+
+output:
+  output_dir: /path/to/merged/output
+
+model_merging:
+  enabled: true
+  merge_method: avg  # parametrico: avg | (future: slerp, task_arithmetic, ...)
+  lora_enabled: false  # true per LoRA adapter merging
+
+  lora:
+    base_model_path: /path/to/base/model
+    merge_strategy: fully_merged_model  # fully_merged_model | adapter_only
+
+  sources:
+    - /path/to/model_or_adapter_1
+    - /path/to/model_or_adapter_2
+
+  save_dtype: bfloat16  # float16 | bfloat16 | float32
+  torch_dtype: bfloat16  # dtype per caricamento modelli in memoria
+
+hardware:
+  gpu:
+    type: "NVIDIA A100 80GB PCIe"
+    count: 1
