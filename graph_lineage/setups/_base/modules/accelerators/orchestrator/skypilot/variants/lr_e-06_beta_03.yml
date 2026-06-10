@@ -1,0 +1,9 @@
+experiment:
+  id: 77dae76f-28f8-4e25-8985-275beed79361
+  id: ex2-dpo-unsloth-lr_1e-06-beta03
+
+model:
+  training:
+    learning_rate: 1e-06
+    beta: 0.3
+

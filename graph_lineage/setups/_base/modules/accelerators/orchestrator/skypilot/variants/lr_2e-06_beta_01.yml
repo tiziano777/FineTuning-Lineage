@@ -6,9 +6,10 @@
 #   bash schedules/base_schedule.sh variants/lr_high_beta_strong.yml
 
 experiment:
-  id: ex2-dpo-lora-0.4-lr5e5-beta03
+  id: 77dae76f-28f8-4e25-8985-275beed79361
+  name: ex2-dpo-unsloth-lr2e-06-beta01
 
 model:
   training:
-    learning_rate: 5e-05
-    beta: 0.3
+    learning_rate: 2e-06
+    beta: 0.1

@@ -42,6 +42,6 @@ accelerate launch \
     --dynamo_backend="$DYNAMO_BACKEND" \
     --mixed_precision="$MIXED_PRECISION" \
     $([ "$USE_DEEPSPEED" = "true" ] && echo "--use_deepspeed") \
-    "train_lora.py" --config "$TRAIN_CONFIG"
+    "train.py" --config "$TRAIN_CONFIG"
 
 echo "Training completato!"

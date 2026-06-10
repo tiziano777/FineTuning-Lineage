@@ -140,7 +140,7 @@ bash schedules/base_schedule.sh --cluster-prefix mio-exp variants/*.yml
 2. Aggiungi solo le chiavi da cambiare (stessa struttura del config.yml):
    ```yaml
    experiment:
-     id: mio-esperimento-v1
+     name: mio-esperimento-v1
    model:
      training:
        learning_rate: 1e-04

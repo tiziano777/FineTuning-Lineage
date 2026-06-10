@@ -15,3 +15,7 @@ rich
 python-dotenv
 matplotlib>=3.9.4
 huggingface_hub>=0.20.0
+rouge-score>=0.1.2
+scipy>=1.11.0
+yq
+skypilot

@@ -28,4 +28,16 @@ setup: |
   pip install -r requirements.txt
 
 run: |
-  python train_lora.py ${CONFIG_PATH}
+  python train.py ${CONFIG_PATH}
+
+
+bash schedules/base_schedule.sh \
+  variants/lr_2e-06_beta_01.yml \
+  variants/lr_2e-06_beta_02.yml \
+  variants/lr_2e-06_beta_03.yml \
+  variants/lr_2e-07_beta_01.yml \
+  variants/lr_2e-07_beta_02.yml \
+  variants/lr_2e-07_beta_03.yml \
+  variants/lr_e-06_beta_01.yml \
+  variants/lr_e-06_beta_02.yml \
+  variants/lr_e-06_beta_03.yml
