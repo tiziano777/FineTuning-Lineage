@@ -1,302 +1,219 @@
 #!/usr/bin/env bash
 # =============================================================================
-# base_schedule.sh — SkyPilot Experiment Orchestrator
+# base_schedule.sh — SkyPilot Experiment Orchestrator (Sequenziale/Coda)
 # =============================================================================
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SKYPILOT_DIR="$(dirname "$SCRIPT_DIR")"
-REPO_ROOT="$(cd "$SCRIPT_DIR/../../../../.." && pwd)"
+MODULE_DIR="$(dirname "$SCRIPT_DIR")"
+# Risale fino alla root del tuo repository
+REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 
-# Defaults
+# Defaults definiti dalla documentazione
 BASE_CONFIG="${REPO_ROOT}/config.yml"
 LINEAGE_FILE="${REPO_ROOT}/.lineage/experiment.yml"
+TEMPLATE_FILE="${MODULE_DIR}/tasks/task_template.yaml"
+GENERATED_DIR="${MODULE_DIR}/generated"
+CLUSTER_NAME="azure-gpu-cluster"
 DRY_RUN=false
-PARALLEL=false
+PARALLEL=false 
 CLUSTER_PREFIX=""
 VARIANT_FILES=()
 
 # -----------------------------------------------------------------------------
-# Arg parsing
+# 🛠️ AUTOMATIC INFRASTRUCTURE SETUP (Check & Link della cartella .sky nella Home)
 # -----------------------------------------------------------------------------
+HOME_SKY_DIR="${HOME}/.sky"
+REPO_SKY_SRC="${MODULE_DIR}/.sky/ssh_node_pools.yaml"
+
+if [ "$DRY_RUN" = false ]; then
+  # Se il file di configurazione non esiste nella Home dell'utente
+  if [ ! -f "${HOME_SKY_DIR}/ssh_node_pools.yaml" ]; then
+    echo "⚠️ Configurazione SkyPilot non trovata in ${HOME_SKY_DIR}"
+    
+    # Controlla se esiste il file sorgente nel repository
+    if [ -f "$REPO_SKY_SRC" ]; then
+      echo "📦 Inizializzazione automatica dell'infrastruttura dal repository..."
+      mkdir -p "$HOME_SKY_DIR"
+      
+      # Crea un link simbolico (scelta consigliata: le modifiche nel repo si riflettono nella home)
+      ln -sf "$REPO_SKY_SRC" "${HOME_SKY_DIR}/ssh_node_pools.yaml"
+      echo "✅ Collegamento simbolico creato con successo: ${HOME_SKY_DIR}/ssh_node_pools.yaml -> $REPO_SKY_SRC"
+      
+      # Inizializza il pool SSH su SkyPilot automaticamente
+      echo "🚀 Esecuzione automatica di 'sky ssh up'..."
+      sky ssh up
+    else
+      echo "❌ ERROR: File di configurazione sorgente non trovato in $REPO_SKY_SRC" >&2
+      echo "Assicurati di aver creato il file di configurazione nel tuo modulo." >&2
+      exit 1
+    fi
+  fi
+fi
+
+# Parsing degli argomenti (Allineato al 100% alla documentazione)
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --config)
-      BASE_CONFIG="$2"; shift 2 ;;
-    --lineage)
-      LINEAGE_FILE="$2"; shift 2 ;;
-    --dry-run)
-      DRY_RUN=true; shift ;;
-    --parallel)
-      PARALLEL=true; shift ;;
-    --cluster-prefix)
-      CLUSTER_PREFIX="$2"; shift 2 ;;
-    -h|--help)
-      head -30 "$0" | tail -25; exit 0 ;;
-    *)
-      VARIANT_FILES+=("$1"); shift ;;
+    --config) BASE_CONFIG="$2"; shift 2 ;;
+    --lineage) LINEAGE_FILE="$2"; shift 2 ;;
+    --dry-run) DRY_RUN=true; shift ;;
+    --parallel) PARALLEL=true; shift ;; 
+    --cluster-prefix) CLUSTER_PREFIX="$2"; shift 2 ;;
+    --cluster-name) CLUSTER_NAME="$2"; shift 2 ;;
+    -h|--help) 
+      echo "SkyPilot Experiment Orchestrator"
+      echo "Usage: $0 [--config PATH] [--lineage PATH] [--dry-run] [--cluster-prefix PREFIX] [variants/..]"
+      exit 0 ;;
+    *) VARIANT_FILES+=("$1"); shift ;;
   esac
 done
 
-# -----------------------------------------------------------------------------
-# Helper: Sanitize for cluster name only
-# -----------------------------------------------------------------------------
-sanitize_for_cluster() {
-  local input="$1"
-  echo "$input" | sed 's/"//g' | sed 's/[^a-zA-Z0-9._-]/_/g' | sed 's/__*/_/g' | sed 's/^_//;s/_$//'
-}
-
-# -----------------------------------------------------------------------------
-# Dependency checks
-# -----------------------------------------------------------------------------
-for cmd in envsubst sky; do
-  if ! command -v "$cmd" &>/dev/null; then
-    echo "ERROR: '$cmd' is required but not found in PATH." >&2
-    exit 1
-  fi
-done
-
-# Detect yq type
-if ! command -v yq &>/dev/null; then
-  echo "ERROR: 'yq' is required but not found in PATH." >&2
+# Check preliminare dell'ambiente Python
+if ! command -v python3 &>/dev/null; then
+  echo "ERROR: python3 è richiesto per l'unione dei file di configurazione." >&2
   exit 1
 fi
 
-if yq --version 2>&1 | grep -q "mikefarah"; then
-  YQ_TYPE="go"
-else
-  YQ_TYPE="python"
-fi
-
-if [[ ! -f "$BASE_CONFIG" ]]; then
-  echo "ERROR: Base config not found: $BASE_CONFIG" >&2
-  exit 1
-fi
-
-if [[ ! -f "$LINEAGE_FILE" ]]; then
-  echo "ERROR: Lineage file not found: $LINEAGE_FILE" >&2
-  exit 1
-fi
-
-# -----------------------------------------------------------------------------
-# Read lineage metadata using raw string extraction
-# -----------------------------------------------------------------------------
-LINEAGE_EXP_ID=$(grep -E '^[[:space:]]+id:' "$LINEAGE_FILE" | head -1 | sed 's/.*id:[[:space:]]*//;s/[[:space:]]*$//;s/^"//;s/"$//')
-LINEAGE_NAME=$(grep -E '^[[:space:]]+name:' "$LINEAGE_FILE" | head -1 | sed 's/.*name:[[:space:]]*//;s/[[:space:]]*$//;s/^"//;s/"$//')
-LINEAGE_BASE_EXP_ID=$(grep -E '^[[:space:]]+base_experiment_id:' "$LINEAGE_FILE" | head -1 | sed 's/.*base_experiment_id:[[:space:]]*//;s/[[:space:]]*$//;s/^"//;s/"$//')
-LINEAGE_PREVIOUS_ID=$(grep -E '^[[:space:]]+previous_experiment_id:' "$LINEAGE_FILE" | head -1 | sed 's/.*previous_experiment_id:[[:space:]]*//;s/[[:space:]]*$//;s/^"//;s/"$//')
-LINEAGE_IS_BASE=$(grep -E '^[[:space:]]+base:' "$LINEAGE_FILE" | head -1 | sed 's/.*base:[[:space:]]*//;s/[[:space:]]*$//;s/^"//;s/"$//' | tr '[:upper:]' '[:lower:]')
-
-[[ "$LINEAGE_PREVIOUS_ID" == "null" ]] && LINEAGE_PREVIOUS_ID=""
-[[ "$LINEAGE_BASE_EXP_ID" == "null" ]] && LINEAGE_BASE_EXP_ID=""
-
-if [[ -z "$LINEAGE_EXP_ID" ]] || [[ "$LINEAGE_EXP_ID" == "null" ]]; then
-  echo "ERROR: Invalid lineage file - missing experiment.id" >&2
-  exit 1
-fi
-
-if [[ -z "$LINEAGE_IS_BASE" ]]; then
-  LINEAGE_IS_BASE="false"
-fi
-
-echo "=== Lineage Metadata (from $LINEAGE_FILE) ==="
-echo "  experiment.id: $LINEAGE_EXP_ID"
-echo "  experiment.name: $LINEAGE_NAME"
-echo "  experiment.base: $LINEAGE_IS_BASE"
-echo "  experiment.base_experiment_id: $LINEAGE_BASE_EXP_ID"
-echo "  experiment.previous_experiment_id: $LINEAGE_PREVIOUS_ID"
-echo ""
-
-# -----------------------------------------------------------------------------
-# Read SkyPilot resources - KEEP ORIGINAL FORMAT
-# -----------------------------------------------------------------------------
-SKY_ACCELERATORS=$(yq '.hardware.skypilot.resources.accelerators' "$BASE_CONFIG" | sed 's/"//g')
-SKY_CPUS=$(yq '.hardware.skypilot.resources.cpus' "$BASE_CONFIG" | sed 's/"//g')
-SKY_MEMORY=$(yq '.hardware.skypilot.resources.memory' "$BASE_CONFIG" | sed 's/"//g')
-
-echo "=== SkyPilot Resources (from $BASE_CONFIG) ==="
-echo "  accelerators: $SKY_ACCELERATORS"
-echo "  cpus:         $SKY_CPUS"
-echo "  memory:       $SKY_MEMORY"
-echo ""
-
-# -----------------------------------------------------------------------------
-# Prepare generated output directory
-# -----------------------------------------------------------------------------
-GENERATED_DIR="${SKYPILOT_DIR}/generated"
 mkdir -p "$GENERATED_DIR"
 
-# -----------------------------------------------------------------------------
-# Create a YAML fragment with lineage metadata
-# -----------------------------------------------------------------------------
-create_lineage_fragment() {
-  local output="$1"
-  local is_base="$2"
-  
-  cat > "$output" << EOF
-experiment:
-  id: ${LINEAGE_EXP_ID}
-  name: ${LINEAGE_NAME}
-  base: ${is_base}
-  base_experiment_id: ${LINEAGE_BASE_EXP_ID:-null}
-  previous_experiment_id: ${LINEAGE_PREVIOUS_ID:-null}
-EOF
-}
-
-# -----------------------------------------------------------------------------
-# Build complete config with lineage metadata
-# -----------------------------------------------------------------------------
-build_config_with_lineage() {
-  local output="$1"
-  local variant_override="${2:-}"
-  local is_base="${3:-false}"
-  
-  local base_with_lineage="${output}.base.tmp"
-  local lineage_fragment="${output}.lineage.tmp"
-  
-  create_lineage_fragment "$lineage_fragment" "$is_base"
-  
-  if [[ "$YQ_TYPE" == "go" ]]; then
-    yq eval-all '
-      select(fileIndex == 0) as $lineage |
-      select(fileIndex == 1) as $config |
-      $lineage * $config
-    ' "$lineage_fragment" "$BASE_CONFIG" > "$base_with_lineage"
-  else
-    yq -s '.[0] * .[1]' "$lineage_fragment" "$BASE_CONFIG" > "$base_with_lineage" 2>/dev/null
-  fi
-  
-  if [[ -n "$variant_override" && -f "$variant_override" ]]; then
-    if [[ "$YQ_TYPE" == "go" ]]; then
-      yq eval-all '
-        select(fileIndex == 0) as $base |
-        select(fileIndex == 1) as $variant |
-        $base * $variant
-      ' "$base_with_lineage" "$variant_override" > "$output"
-    else
-      yq -s '.[0] * .[1]' "$base_with_lineage" "$variant_override" > "$output" 2>/dev/null
-    fi
-    rm -f "$base_with_lineage"
-  else
-    mv "$base_with_lineage" "$output"
-  fi
-  
-  rm -f "$lineage_fragment"
-}
-
-# -----------------------------------------------------------------------------
-# If no variants provided, run with base config directly
-# -----------------------------------------------------------------------------
 if [[ ${#VARIANT_FILES[@]} -eq 0 ]]; then
   VARIANT_FILES=("__base__")
 fi
 
 # -----------------------------------------------------------------------------
-# Launch function
+# Motore Python per estrazione sicura e Deep Merge (Sostituisce yq ed envsubst)
 # -----------------------------------------------------------------------------
-launch_variant() {
-  local variant_file="$1"
-  local variant_index="$2"
-  local variant_config
-
-  if [[ "$variant_file" == "__base__" ]]; then
-    variant_config="${GENERATED_DIR}/config_base.yml"
-    build_config_with_lineage "$variant_config" "" "true"
-    echo "--- Variant: BASE (no overrides) ---"
-  else
-    if [[ ! -f "$variant_file" ]]; then
-      echo "WARNING: Variant file not found: $variant_file — skipping" >&2
-      return 1
-    fi
-    local variant_name
-    variant_name=$(basename "$variant_file" .yml)
-    variant_config="${GENERATED_DIR}/config_${variant_name}.yml"
-    
-    build_config_with_lineage "$variant_config" "$variant_file" "false"
-    
-    echo "--- Variant: $variant_name ---"
-    echo "    overrides: $variant_file"
-  fi
-
-  # Read back experiment metadata
-  local experiment_name
-  experiment_name=$(yq '.experiment.name' "$variant_config" 2>/dev/null | sed 's/"//g' || echo "unknown")
-  local experiment_id
-  experiment_id=$(yq '.experiment.id' "$variant_config" 2>/dev/null | sed 's/"//g' || echo "unknown")
-  local is_base
-  is_base=$(yq '.experiment.base // false' "$variant_config" 2>/dev/null | sed 's/"//g' || echo "false")
-
-  # Create safe cluster name
-  local safe_cluster_base=$(sanitize_for_cluster "$experiment_name")
-  
-  local cluster_name
-  if [[ -n "$CLUSTER_PREFIX" ]]; then
-    cluster_name="${CLUSTER_PREFIX}-${variant_index}"
-  else
-    cluster_name="${safe_cluster_base}-${variant_index}"
-    cluster_name="${cluster_name:0:64}"
-    cluster_name=$(echo "$cluster_name" | sed 's/-$//')
-  fi
-
-  echo "    experiment.name: $experiment_name"
-  echo "    experiment.id: $experiment_id"
-  echo "    experiment.base: $is_base"
-  echo "    config:  $variant_config"
-  echo "    cluster: $cluster_name"
-  echo ""
-
-  # Generate task YAML
-  local task_yaml="${GENERATED_DIR}/task_${variant_index}.yaml"
-  
-  cat > "$task_yaml" << EOF
-# SkyPilot Task Template - Generated by base_schedule.sh
-name: ${experiment_name}-${experiment_id}
-
-resources:
-  accelerators: ${SKY_ACCELERATORS}
-  cpus: ${SKY_CPUS}
-  memory: ${SKY_MEMORY}
-  disk_size: 200
-
-workdir: ${REPO_ROOT}
-
-envs:
-  CONFIG_PATH: ${variant_config}
-  EXPERIMENT_NAME: ${experiment_name}_${experiment_id}
-  PYTHONUNBUFFERED: 1
-
-setup: |
-  echo "Setting up environment..."
-  cd ${REPO_ROOT}
-  if [ -f "requirements.txt" ]; then
-    pip install -r requirements.txt
-  fi
-
-run: |
-  echo "Starting training with config: \${CONFIG_PATH}"
-  cd ${REPO_ROOT}
-  python train.py --config \${CONFIG_PATH}
-EOF
-
-  echo "YAML to run: $task_yaml"
-  
-  # Launch
-  if [[ "$DRY_RUN" == true ]]; then
-    echo "    [DRY-RUN] sky launch -c $cluster_name $task_yaml"
-    echo ""
-    echo "=== Generated Task YAML Content ==="
-    cat "$task_yaml"
-    echo ""
-  else
-    sky launch -c "$cluster_name" "$task_yaml" -y
-  fi
+py_extract_field() {
+  python3 -c "
+import yaml
+with open('$1') as f:
+    d = yaml.safe_load(f) or {}
+for k in '$2'.split('.'):
+    d = d.get(k, '') if isinstance(d, dict) else ''
+print(str(d).replace('+', ''))
+" 2>/dev/null || echo "$3"
 }
 
+py_deep_merge_and_lineage() {
+  local out="$1" l_file="$2" b_file="$3" v_file="$4"
+  python3 -c "
+import yaml
+
+def deep_merge(dict1, dict2):
+    for key, value in dict2.items():
+        if isinstance(value, dict) and key in dict1 and isinstance(dict1[key], dict):
+            deep_merge(dict1[key], value)
+        else:
+            dict1[key] = value
+
+# 1. Leggi UUID dal lineage file del Base Experiment
+with open('$l_file') as f:
+    lin = yaml.safe_load(f) or {}
+base_uuid = lin.get('experiment', {}).get('id', 'null')
+
+# 2. Carica il Base Config del progetto
+with open('$b_file') as f:
+    base_config = yaml.safe_load(f) or {}
+
+# 3. Se presente una variante, caricala
+variant_config = {}
+if '$v_file':
+    with open('$v_file') as f:
+        variant_config = yaml.safe_load(f) or {}
+
+# Costruisci il dizionario finale applicando le regole di Lineage Tracker
+final_dict = {}
+deep_merge(final_dict, base_config)
+deep_merge(final_dict, variant_config)
+
+# Iniezione automatica dei metadati per la topologia a stella (Richiesta da Doc)
+if 'experiment' not in final_dict:
+    final_dict['experiment'] = {}
+
+final_dict['experiment']['base_experiment_id'] = base_uuid
+final_dict['experiment']['previous_experiment_id'] = None
+
+with open('$out', 'w') as f:
+    yaml.dump(final_dict, f, default_flow_style=False)
+"
+}
+
+# Estrazione Risorse Hardware per SkyPilot (Rimuovendo i caratteri '+' non graditi)
+SKY_ACCELERATORS=$(py_extract_field "$BASE_CONFIG" "hardware.skypilot.resources.accelerators" "A100-80GB:1")
+SKY_CPUS=$(py_extract_field "$BASE_CONFIG" "hardware.skypilot.resources.cpus" "128")
+SKY_MEMORY=$(py_extract_field "$BASE_CONFIG" "hardware.skypilot.resources.memory" "216")
+
 # -----------------------------------------------------------------------------
-# Execute all variants
+# Ciclo di generazione ed esecuzione delle Varianti
 # -----------------------------------------------------------------------------
 for i in "${!VARIANT_FILES[@]}"; do
-  launch_variant "${VARIANT_FILES[$i]}" "$i"
+  variant_file="${VARIANT_FILES[$i]}"
+  run_id=$(date +%Y%m%d_%H%M%S)"_${i}"
+  
+  # Creazione di una sandbox isolata dentro 'generated' per evitare race conditions
+  run_sandbox_dir="${GENERATED_DIR}/run_${run_id}"
+  mkdir -p "$run_sandbox_dir"
+  
+  variant_name="base"
+  if [[ "$variant_file" == "__base__" ]]; then
+    variant_file=""
+    echo "=== Preparazione Variante: BASE ==="
+  else
+    variant_name=$(basename "$variant_file" .yml)
+    echo "=== Preparazione Variante: ${variant_name} ==="
+  fi
+
+  merged_config_path="${run_sandbox_dir}/config_${variant_name}.yml"
+  
+  # Esegui il Deep Merge e l'iniezione del Lineage Tracker
+  py_deep_merge_and_lineage "$merged_config_path" "$LINEAGE_FILE" "$BASE_CONFIG" "$variant_file"
+
+  # Estrai il nome finale dell'esperimento per battezzare il job SkyPilot
+  experiment_name=$(py_extract_field "$merged_config_path" "experiment.name" "dpo_exp")
+  experiment_id=$(py_extract_field "$merged_config_path" "experiment.id" "no_id")
+
+  # Calcola il nome del task/job
+  job_display_name="${experiment_name}"
+  if [[ -n "$CLUSTER_PREFIX" ]]; then
+    job_display_name="${CLUSTER_PREFIX}_${variant_name}"
+  fi
+
+  # Genera il file task compilando il template (Sostituisce envsubst)
+  task_yaml="${run_sandbox_dir}/task_${variant_name}.yaml"
+  
+  # Ottieni il percorso relativo della configurazione rispetto alla REPO_ROOT 
+  # in modo che SkyPilot possa risolverlo dopo aver sincronizzato la workdir
+  relative_config_path="modules/skypilot/generated/run_${run_id}/config_${variant_name}.yml"
+
+  python3 -c "
+with open('$TEMPLATE_FILE') as f:
+    content = f.read()
+
+content = content.replace('__TASK_NAME__', '${job_display_name}')
+content = content.replace('__SKY_ACCELERATORS__', '${SKY_ACCELERATORS}')
+content = content.replace('__SKY_CPUS__', '${SKY_CPUS}')
+content = content.replace('__SKY_MEMORY__', '${SKY_MEMORY}')
+content = content.replace('__REPO_ROOT__', '${REPO_ROOT}')
+content = content.replace('__RELATIVE_CONFIG_PATH__', '${relative_config_path}')
+
+with open('$task_yaml', 'w') as f:
+    f.write(content)
+"
+
+  # Sottomissione alla coda o Dry Run
+  if [[ "$DRY_RUN" == true ]]; then
+    echo "   [DRY-RUN] sky launch -c $CLUSTER_NAME $task_yaml --detach"
+    echo "   [DRY-RUN] Configurazione fusa generata in: $merged_config_path"
+    echo ""
+  else
+    echo "   Sottomissione in coda su cluster '$CLUSTER_NAME'..."
+    sky launch -c "$CLUSTER_NAME" "$task_yaml" -y --detach
+    echo "   Job sottomesso con successo."
+    echo ""
+  fi
 done
 
-echo "=== Done. Generated files in: $GENERATED_DIR ==="
+echo "=== Elaborazione completata. Directory di Staging: $GENERATED_DIR ==="
+if [[ "$DRY_RUN" == false ]]; then
+  echo "Controlla lo stato della coda hardware con il comando: sky queue"
+fi

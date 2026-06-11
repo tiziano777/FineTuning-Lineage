@@ -1,43 +1,36 @@
-# SkyPilot Task Template
-# Variables are substituted by base_schedule.sh via envsubst
-name: ${EXPERIMENT_NAME}
+# SkyPilot Task Template — Managed by base_schedule.sh
+name: __TASK_NAME__
 
 resources:
-  accelerators: ${SKY_ACCELERATORS}
-  cpus: ${SKY_CPUS}
-  memory: ${SKY_MEMORY}
+  accelerators: __SKY_ACCELERATORS__
+  cpus: __SKY_CPUS__
+  memory: __SKY_MEMORY__
+  disk_size: 200
 
-workdir: .
-
-# Mount NFS or cloud storage as needed
-# file_mounts:
-#   /nfs/training-output:
-#     source: s3://your-bucket/training-output
-#     mode: MOUNT
+# Sincronizza l'intero progetto
+workdir: __REPO_ROOT__
 
 envs:
-  CONFIG_PATH: ${CONFIG_PATH}
-  EXPERIMENT_NAME: ${EXPERIMENT_NAME}
-
-# Uncomment and set via `sky launch --env` or secrets manager
-# secrets:
-#   HF_TOKEN: <your-token>
-#   WANDB_API_KEY: <your-key>
+  # Path relativo della config dentro la cartella del run generata
+  RELATIVE_CONFIG_PATH: "__RELATIVE_CONFIG_PATH__"
 
 setup: |
-  pip install -r requirements.txt
+  echo "=== SETUP DI RUNTIME ==="
+  mkdir -p /tmp/skypilot_configs
+  # Copia la configurazione unita nello spazio /tmp isolato prima del training
+  cp "${RELATIVE_CONFIG_PATH}" /tmp/skypilot_configs/runtime_config.yml
+  
+  # Attivazione ed eventuale check del venv locale esistente
+  if [ -f ".venv/bin/activate" ]; then
+    echo "Ambiente .venv rilevato."
+  else
+    echo "ATTENZIONE: .venv non trovato in workdir!"
+  fi
 
 run: |
-  python train.py ${CONFIG_PATH}
-
-
-bash schedules/base_schedule.sh \
-  variants/lr_2e-06_beta_01.yml \
-  variants/lr_2e-06_beta_02.yml \
-  variants/lr_2e-06_beta_03.yml \
-  variants/lr_2e-07_beta_01.yml \
-  variants/lr_2e-07_beta_02.yml \
-  variants/lr_2e-07_beta_03.yml \
-  variants/lr_e-06_beta_01.yml \
-  variants/lr_e-06_beta_02.yml \
-  variants/lr_e-06_beta_03.yml
+  echo "=== AVVIO TRAINING DPO ==="
+  source .venv/bin/activate
+  echo "Using Python from: $(which python)"
+  
+  # Avvio del training passando la configurazione blindata in /tmp
+  python train.py --config /tmp/skypilot_configs/runtime_config.yml

@@ -3,7 +3,7 @@
 # All other values are inherited from the base config.yml.
 #
 # Usage:
-#   bash schedules/base_schedule.sh variants/lr_high_beta_strong.yml
+#   bash schedules/base_schedule.sh variants/<variant_name>.yml
 
 experiment:
   id: 77dae76f-28f8-4e25-8985-275beed79361

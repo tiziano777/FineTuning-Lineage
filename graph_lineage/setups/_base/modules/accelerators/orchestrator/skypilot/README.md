@@ -1,224 +1,209 @@
-# SkyPilot Experiment Orchestrator
+# SkyPilot Experiment Orchestrator — Reference & Execution Guide
 
-Orchestratore per lanciare esperimenti DPO su cloud con [SkyPilot](https://docs.skypilot.co), supportando N varianti di configurazione in parallelo.
+Orchestratore centralizzato per la pianificazione e l'esecuzione sequenziale di esperimenti DPO su macchine dedicate (ambiente Azure/Localhost a singola GPU). Questo sistema sfrutta la coda interna di un **SSH Node Pool** gestito da SkyPilot per ottimizzare l'allocazione hardware senza saturare la memoria della GPU, garantendo un'architettura robusta, isolata e priva di race condition.
 
 ---
 
-## Struttura
+## 📐 Visione ad Alto Livello & Architettura
+
+Il sistema è strutturato per orchestrare $N$ varianti di configurazione (ad esempio, combinazioni di Learning Rate e Beta) ereditando i parametri da un file di configurazione base e iniettando automaticamente i metadati per il tracciamento della *lineage*.
+
+### Struttura delle Directory
 
 ```
 /dpo-setup/modules/skypilot/
+
+├── .sky/                       # Contiene configurazione del cluster locale/ssh/k8/cloud
+│   └── ssh_node_pools.yaml     # host configs, ssh 
 ├── schedules/
-│   └── base_schedule.sh        # Script principale — legge config, genera task, lancia
+│   └── base_schedule.sh        # Script orchestratore principale (Python-backed)
 ├── tasks/
-│   └── task_template.yaml      # Template SkyPilot (risorse, setup, run)
-├── variants/
+│   └── task_template.yaml      # Template del Task SkyPilot con tag di runtime
+├── variants/                   # Contiene gli override da inserire nella configurazione
 │   ├── lr_high_beta_strong.yml # Esempio: override learning rate e beta
 │   └── lora_small.yml          # Esempio: override parametri LoRA
-└── generated/                  # Output generato (gitignored)
-    ├── config_*.yml            # Config mergiate per ogni variante
-    └── task_*.yaml             # Task YAML pronti per sky launch
-```
-
----
-
-## Componenti
-
-### `schedules/base_schedule.sh`
-
-Il cuore dell'orchestratore. Responsabilita:
-
-1. **Legge le risorse hardware** da `config.yml` (sezione `hardware.skypilot.resources`) tramite `yq`
-2. **Mergia le varianti** — per ogni file in `variants/`, esegue un deep-merge sul config base producendo un config completo
-3. **Genera i task SkyPilot** — sostituisce le variabili nel template con `envsubst`
-4. **Lancia i cluster** — chiama `sky launch` per ogni variante
-
-Dipendenze: `yq` (v4+), `envsubst` (GNU gettext), `sky` CLI.
-
-### `tasks/task_template.yaml`
-
-Template del task SkyPilot. Contiene placeholder (`${VAR}`) che vengono risolti dallo script:
-
-| Variabile | Sorgente | Descrizione |
-|-----------|----------|-------------|
-| `${SKY_ACCELERATORS}` | `hardware.skypilot.resources.accelerators` | GPU tipo e quantita (es. `A100-80GB:1`) |
-| `${SKY_CPUS}` | `hardware.skypilot.resources.cpus` | CPU minime richieste |
-| `${SKY_MEMORY}` | `hardware.skypilot.resources.memory` | RAM minima richiesta |
-| `${CONFIG_PATH}` | path generato | Path al config mergiato per questa variante |
-| `${EXPERIMENT_NAME}` | `experiment.name` + `experiment.id` | Nome cluster e identificativo |
-
-### `variants/`
-
-File YAML minimali che contengono **solo i parametri da sovrascrivere**. Tutto il resto viene ereditato dal `config.yml` base.
-
-Esempio — cambiare learning rate:
-```yaml
-experiment:
-  id: ex2-dpo-lora-0.4-lr5e5
-model:
-  training:
-    learning_rate: 5e-05
-```
-
-Regole:
-- La struttura deve rispecchiare quella del `config.yml` (stesse chiavi, stesso nesting)
-- Puoi sovrascrivere qualsiasi sezione: `model.training`, `model.peft`, `experiment`, ecc.
-- Un file = una variante = un cluster SkyPilot
-
-### `generated/`
-
-Directory di output (gitignored). Contiene:
-- `config_<nome_variante>.yml` — config completo dopo il merge
-- `task_<indice>.yaml` — task YAML pronto per SkyPilot
-
-Utile per debug: puoi ispezionare i file generati prima di lanciare senza `--dry-run`.
-
----
-
-## Workflow
+└── generated/                  # Output di runtime isolati (in .gitignore)
+    └── run_[timestamp]_[i]/    # Sandbox univoca per singolo Job ID (Isolamento Totale)
+        ├── config_variant.yml  # Config completo (Base + Lineage + Variante)
+        └── task_variant.yaml   # Task YAML finale compilato per Sky Queue
 
 ```
-┌─────────────┐     ┌──────────────┐     ┌─────────────────┐
-│ config.yml  │────>│              │────>│ generated/       │
-│ (base)      │     │ base_schedule│     │  config_v1.yml   │
-└─────────────┘     │    .sh       │     │  config_v2.yml   │
-                    │              │     │  task_0.yaml     │
-┌─────────────┐     │   yq merge   │     │  task_1.yaml     │
-│ variants/   │────>│   envsubst   │     └────────┬────────┘
-│  v1.yml     │     │              │              │
-│  v2.yml     │     └──────────────┘              │
-└─────────────┘                                   v
-                                          ┌───────────────┐
-                                          │  sky launch   │
-                                          │  (per ognuno) │
-                                          └───────────────┘
+
+### Il Flusso dei Dati (Workflow)
+
+```
+┌─────────────┐     ┌──────────────────────────────┐     ┌──────────────────────────────────┐
+│ config.yml  │────>│                              │────>│ generated/run_[timestamp]_[i]/   │
+│ (base)      │     │      base_schedule.sh        │     │  ├── config_variant.yml          │
+└─────────────┘     │                              │     │  └── task_variant.yaml           │
+                    │   - Estrazione HW Python     │     └────────────────┬─────────────────┘
+┌─────────────┐     │   - Deep Merge Relazionale   │                      │
+│ .lineage/   │────>│   - Lineage Injection        │                      v
+│ exp.yml     │     │   - Compilazione Template    │         ┌──────────────────────────┐
+└─────────────┘     │                              │         │       sky launch         │
+                    └──────────────────────────────┘         │  (In coda sequenziale)   │
+┌─────────────┐                    ▲                         └────────────┬─────────────┘
+│ variants/   │────────────────────┘                                      │
+│  *.yml      │                                                           v
+└─────────────┘                                              ┌──────────────────────────┐
+                                                             │     Sky Pilot Queue      │
+                                                             │ ┌──────────────────────┐ │
+                                                             │ │ Job 0: RUNNING (GPU) │ │
+                                                             │ └──────────────────────┘ │
+                                                             │ ┌──────────────────────┐ │
+                                                             │ │ Job 1: PENDING       │ │
+                                                             │ └──────────────────────┘ │
+                                                             └──────────────────────────┘
+
 ```
 
 **Passo per passo:**
 
-1. Lo script legge `hardware.skypilot.resources` dal config base
-2. Per ogni variante, crea una copia del config base e ci sovrascrive i parametri della variante (deep merge con `yq`)
-3. Genera un file task YAML sostituendo i placeholder nel template
-4. Lancia `sky launch -c <cluster_name> <task.yaml>` per ogni variante
-5. Sul cluster remoto, SkyPilot esegue `python train.py <config_path>` — `train.py` gia accetta il config path come primo parametro.
+1. **Fase di Parsing:** Un motore Python interno *inline* analizza in modo sicuro il file `config.yml` base del progetto e il file `.lineage/experiment.yml`. Estrae le risorse hardware pulendole dai modificatori di stringa (come il simbolo `+` dai core CPU o dalla memoria RAM) per renderle conformi agli standard di SkyPilot.
+2. **Generazione della Sandbox (Isolamento Totale Antimutazione):** Per ciascuna variante passata come argomento CLI, viene creata una sottocartella "sandbox" temporanea e univoca marchiata con timestamp e indice all'interno di `generated/`. Python esegue un *deep-merge* ricorsivo integrando il Config Base, la Variante e i metadati di Lineage.
+3. **Iniezione Lineage:** Viene estratto l'UUID del *Base Experiment* e iniettato automaticamente nel campo `experiment.base_experiment_id` del config generato. Questo permette al tracker (`@envelope.tracker()`) di mappare una topologia a stella nel grafo degli esperimenti, dove tutte le varianti sottomesse in coda sanno di derivare dallo stesso identico esperimento radice.
+4. **Compilazione del Task:** Il file `tasks/task_template.yaml` viene letto e i tag statici di runtime (`__TAG__`) vengono sostituiti con i percorsi assoluti e relativi corretti della sandbox, generando il file `task_variant.yaml`.
+5. **Accodamento Centralizzato:** L'orchestratore invia il task compilato a SkyPilot tramite `sky launch -c <cluster_name> <task.yaml> -y --detach`. Grazie al flag `--detach`, il controllo viene restituito immediatamente alla shell Bash: lo script carica istantaneamente tutte le varianti nella coda di esecuzione dell'SSH Node Pool locale.
+6. **Esecuzione Protetta sulla GPU:** SkyPilot esegue un job alla volta rispettando la disponibilità dell'unica GPU del cluster finto-localhost. Durante la fase di `setup` del task, la configurazione unita viene copiata nella directory `/tmp/` della macchina e viene attivato il `.venv` locale in modalità *Read-Only*, garantendo un avvio immediato senza reinstallazioni ridondanti.
 
 ---
 
-## Uso
+## ⚙️ Configurazione Iniziale dell'Infrastruttura Locale (SSH Node Pool)
+
+Prima di poter utilizzare l'orchestratore, SkyPilot deve conoscere e inizializzare la macchina Azure locale come pool di calcolo. **Questa operazione va eseguita una sola volta (una tantum)** o in caso di riavvio del server.
+
+1. Creare (se non presente) il file di mappatura degli host:
+```bash
+mkdir -p ~/.sky
+nano ~/.sky/ssh_node_pools.yaml
+
+```
+
+
+2. Configurare il cluster associando l'IP di loopback (o l'IP privato della macchina Azure) al nome utilizzato dall'orchestratore (`azure-gpu-cluster`):
+```yaml
+azure-gpu-cluster:
+  hosts:
+    - 127.0.0.1
+
+```
+
+
+3. Lanciare il comando di provisioning e accoppiamento SSH di SkyPilot:
+```bash
+sky ssh up
+
+```
+
+
+4. Verificare lo stato di attivazione con `sky check`. Una volta abilitato, il cluster è pronto a ricevere i job dell'orchestratore.
+
+---
+
+## 🛠️ Componenti del Sistema
+
+### `schedules/base_schedule.sh`
+
+Il motore di orchestrazione. Centralizza la logica di estrazione dei dati hardware, risolve le dipendenze di configurazione tramite script Python integrati ed esegue il deployment asincrono dei task sulla coda hardware locale tramite `sky launch`.
+
+### `tasks/task_template.yaml`
+
+Il blueprint dei compiti di SkyPilot. Mappa le risorse minime richieste, imposta il puntamento corretto alla cartella radice (`workdir`), mette in sicurezza il file yaml di configurazione duplicandolo a runtime in `/tmp/skypilot_configs/runtime_config.yml` e lancia il comando di addestramento:
+
+```yaml
+python train.py --config /tmp/skypilot_configs/runtime_config.yml
+
+```
+
+### `variants/`
+
+File YAML minimali che contengono **esclusivamente le chiavi e i parametri da sovrascrivere** (es. variazioni di `learning_rate` o coefficienti `beta`).
+
+* **Constraints per i file `variants/*.yml`:**
+* **DEVE contenere:** `experiment.id` compilato con un identificativo human-readable.
+* **NON DEVE contenere:** `experiment.base_experiment_id` o `experiment.previous_experiment_id` (gestiti automaticamente dall'orchestratore).
+
+
+
+---
+
+## 🚀 Guida di Esecuzione del Workflow
+
+Posizionarsi nella directory dell'orchestratore all'interno della macchina Azure:
 
 ```bash
-cd modules/accelerators/orchetrator/skypilot
+cd /home/velvet/DPO-unsloth-setup/modules/accelerators/orchestrator/skypilot
 
-# Dry-run: mostra cosa verrebbe lanciato senza eseguire
-bash schedules/base_schedule.sh --dry-run
+```
 
-# Lancio singolo (config base, nessuna variante)
-bash schedules/base_schedule.sh
+### 1. Fase di Validazione (Dry Run)
 
-# Lancio con varianti sequenziali
-bash schedules/base_schedule.sh variants/lr_high_beta_strong.yml variants/lora_small.yml
+Il dry-run permette di ispezionare l'output generato, la struttura del deep-merge e i file di task compilati senza impegnare la GPU o inviare istruzioni di calcolo a SkyPilot:
 
-# Lancio parallelo di tutte le varianti
-bash schedules/base_schedule.sh --parallel variants/*.yml
+```bash
+bash schedules/base_schedule.sh --dry-run variants/lr_*.yml
 
-# Config base custom
-bash schedules/base_schedule.sh --config /path/to/altro_config.yml variants/*.yml
+```
 
-# Prefisso cluster custom
-bash schedules/base_schedule.sh --cluster-prefix mio-exp variants/*.yml
+### 2. Esecuzione della Coda (Lancio Reale)
+
+Per lanciare la pipeline sequenziale di tutti gli esperimenti e le varianti trovate nella cartella, invia il comando all'orchestratore. È consigliato reindirizzare l'output su un file di log:
+
+```bash
+# Esecuzione nativa sequenziale della coda
+bash schedules/base_schedule.sh variants/lr_*.yml
+
+# Esecuzione raccomandata con storicizzazione del log dell'orchestratore
+bash schedules/base_schedule.sh variants/lr_*.yml 2>&1 | tee generated/submission_$(date +%Y%m%d_%H%M%S).log
+
+# Lancio impostando un prefisso personalizzato per identificare i compiti nel cluster
+bash schedules/base_schedule.sh --cluster-prefix dpo-sweep-1 variants/lr_*.yml
+
+```
+
+### 3. Gestione di Interruzioni o Errori Mid-Run
+
+Se un esperimento all'interno della coda fallisce (es. crash del codice Python, Out of Memory della VRAM), **la coda di SkyPilot non si interrompe**. L'esperimento fallito viene marcato come `FAILED`, la GPU viene rilasciata e il job successivo in stato `PENDING` viene avviato immediatamente.
+
+Se interrompi bruscamente l'orchestratore (Ctrl+C) mentre sta sottomettendo i job, i compiti già inviati rimarranno memorizzati al sicuro all'interno della coda della macchina. Per riprendere l'esecuzione in un secondo momento con le varianti escluse, basterà indicarle esplicitamente:
+
+```bash
+bash schedules/base_schedule.sh variants/lr_2e-07_beta_03.yml variants/lr_1e-06_beta_01.yml
+
 ```
 
 ---
 
-## Creare una nuova variante
+## 📊 Monitoraggio & Amministrazione del Runtime
 
-1. Crea un file in `variants/`:
-   ```bash
-   touch variants/mia_variante.yml
-   ```
+Lavorando su un pool SSH locale (finto-localhost), la gestione dell'infrastruttura si sposta interamente sui comandi nativi di controllo della coda di SkyPilot (`sky queue`, `sky logs`, `sky cancel`).
 
-2. Aggiungi solo le chiavi da cambiare (stessa struttura del config.yml):
-   ```yaml
-   experiment:
-     name: mio-esperimento-v1
-   model:
-     training:
-       learning_rate: 1e-04
-       num_train_epochs: 5
-   ```
+### Comandi Fondamentali di Gestione
 
-3. Testa con dry-run:
-   ```bash
-   bash schedules/base_schedule.sh --dry-run variants/mia_variante.yml
-   ```
+| Comando | Scopo | Descrizione |
+| --- | --- | --- |
+| `sky queue azure-gpu-cluster` | **Ispezione Coda** | Mostra l'elenco in tempo reale di tutti i job inviati al cluster locale, l'ID univoco, lo stato attuale (`RUNNING`, `PENDING`, `SUCCEEDED`, `FAILED`) e le risorse allocate. |
+| `sky logs azure-gpu-cluster <JOB_ID> -f` | **Log in Tempo Reale** | Aggancia lo stream di output (`stdout`/`stderr`) dell'esperimento selezionato sul cluster, mostrando l'avanzamento del training. |
+| `sky cancel azure-gpu-cluster <JOB_ID>` | **Uccidere un Esperimento** | Interrompe immediatamente il job specificato se in esecuzione (liberando la GPU) o lo rimuove dalla lista d'attesa se in stato `PENDING`. |
+| `nvidia-smi -l 1` | **Stato Hardware Reale** | Verificato direttamente sulla macchina host per monitorare l'uso dei core CUDA e della VRAM dell'A100/H100 Azure. |
 
-4. Ispeziona il config generato:
-   ```bash
-   cat generated/config_mia_variante.yml
-   ```
+### Strategie di Storicizzazione dei Log
 
-5. Lancia:
-   ```bash
-   bash schedules/base_schedule.sh variants/mia_variante.yml
-   ```
+* **Log di SkyPilot:** I log completi dei task e delle fasi di setup sono memorizzati localmente da SkyPilot nella cartella home dell'utente: `~/.sky/logs/`.
+* **Storicizzazione delle varianti:** Grazie all'architettura a sandbox isolata, ogni file di configurazione effettivo utilizzato da un esperimento rimane salvato e accessibile in `generated/run_*/config_*.yml`.
 
 ---
 
-## Requisiti
+## 🆘 Comandi di Emergenza
 
-| Tool | Versione | Installazione |
-|------|----------|---------------|
-| `yq` | v4+ | `brew install yq` / `pip install yq` |
-| `envsubst` | qualsiasi | `brew install gettext` (incluso in GNU/Linux) |
-| `sky` | latest | `pip install skypilot` |
+```bash
+# Interrompe e cancella IMMEDIATAMENTE tutti i job (attivi e pendenti) nella coda del cluster
+sky cancel azure-gpu-cluster --all
 
----
+# Pulisce i file temporanei locali generati dall'orchestratore (Reset dello staging locale)
+rm -rf generated/run_*
 
-## Integrazione Lineage Tracker
-
-L'orchestratore inietta automaticamente `experiment.base_experiment_id` nel config mergiato di ogni variante, permettendo al lineage tracker di creare una topologia a stella (tutte le varianti derivano dallo stesso base experiment).
-
-### Prerequisiti
-
-- Il **base experiment** deve essere stato eseguito almeno una volta tramite il tracker (`@envelope.tracker()`), cosi che il suo UUID venga scritto in `config.yml` nel campo `experiment.id`.
-
-### Cosa fa l'orchestratore
-
-Dopo il merge (`yq`) di base + variant, lo script:
-1. Legge `experiment.id` dal config base (che contiene l'UUID assegnato dal tracker)
-2. Lo inietta come `experiment.base_experiment_id` nel config mergiato della variante
-
-Il tracker, leggendo il config mergiato, risolve il parent per ID (non per URI), garantendo che tutte le varianti puntino allo stesso base — anche in esecuzione parallela.
-
-### Constraints per i file `variants/*.yml`
-
-**DEVE contenere:**
-```yaml
-experiment:
-  id: <nome-unico-variante>   # Identificativo human-readable (sovrascritto da UUID dal tracker)
-```
-
-**NON DEVE contenere:**
-- `experiment.base_experiment_id` — iniettato automaticamente dall'orchestratore
-- `experiment.previous_experiment_id` — deve restare null/vuoto
-
-**PUO' contenere:**
-- Qualsiasi override su `model.*`, `recipe.*`, `hardware.*`, `output.*`
-
-### Risultato nel grafo
+# Verifica lo stato di salute generale di SkyPilot e dei backend
+sky check
 
 ```
-[BASE: UUID-A]
-    |-- DERIVED_FROM --> [VARIANT: lr-5e5-beta03]  (diff: learning_rate, beta)
-    |-- DERIVED_FROM --> [VARIANT: lora-small]      (diff: r, alpha, dropout)
-    |-- DERIVED_FROM --> [VARIANT: warmup-500]      (diff: warmup_steps)
-```
-
----
-
-## Note
-
-- **train.py** accetta il config path come primo argomento (`sys.argv[1]`), quindi ogni variante viene eseguita col suo config dedicato senza modifiche al codice di training
-- I cluster vengono nominati `<experiment_name>-variant-<indice>` — usa `sky status` per monitorarli
-- Per fermare un esperimento: `sky down <cluster_name>`
-- Per vedere i log: `sky logs <cluster_name>`
