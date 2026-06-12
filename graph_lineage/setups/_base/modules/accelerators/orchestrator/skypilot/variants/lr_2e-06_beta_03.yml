@@ -1,6 +1,5 @@
 experiment:
   id: 77dae76f-28f8-4e25-8985-275beed79361
-  name: ex2-dpo-unsloth-lr2e-06-beta03
 
 model:
   training:

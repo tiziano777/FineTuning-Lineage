@@ -1,36 +1,72 @@
-# SkyPilot Task Template — Managed by base_schedule.sh
+# SkyPilot Task Template 
 name: __TASK_NAME__
 
 resources:
+  infra: ssh/azure-gpu-cluster
   accelerators: __SKY_ACCELERATORS__
   cpus: __SKY_CPUS__
   memory: __SKY_MEMORY__
   disk_size: 200
 
-# Sincronizza l'intero progetto
 workdir: __REPO_ROOT__
 
 envs:
-  # Path relativo della config dentro la cartella del run generata
   RELATIVE_CONFIG_PATH: "__RELATIVE_CONFIG_PATH__"
+
+# Binding R/W dei path NFS sull'host
+config:
+  ssh:
+    pod_config:
+      spec:
+        containers:
+          - volumeMounts:
+              - mountPath: /nfs/training-output
+                name: nfs-training-output
+              - mountPath: /nfs/data-download
+                name: nfs-data-download
+        volumes:
+          - name: nfs-training-output
+            hostPath:
+              path: /nfs/training-output
+              type: Directory
+          - name: nfs-data-download
+            hostPath:
+              path: /nfs/data-download
+              type: Directory
 
 setup: |
   echo "=== SETUP DI RUNTIME ==="
-  mkdir -p /tmp/skypilot_configs
-  # Copia la configurazione unita nello spazio /tmp isolato prima del training
-  cp "${RELATIVE_CONFIG_PATH}" /tmp/skypilot_configs/runtime_config.yml
-  
-  # Attivazione ed eventuale check del venv locale esistente
-  if [ -f ".venv/bin/activate" ]; then
-    echo "Ambiente .venv rilevato."
-  else
-    echo "ATTENZIONE: .venv non trovato in workdir!"
-  fi
+  set -e  # ← blocca al primo errore
+
+  python3 -m venv .venv
+  source .venv/bin/activate
+  echo "INFO: ambiente virtuale creato e attivato"
+
+  pip install --upgrade pip
+
+  # Rileva CUDA
+  cuda_version=$(nvcc --version | grep "release" | awk '{print $6}' | cut -c 2-)
+  echo "INFO: CUDA version rilevata: $cuda_version"
+
+  pip install -r job_requirements.txt
+  echo "INFO: dipendenze da job_requirements.txt installate"
 
 run: |
-  echo "=== AVVIO TRAINING DPO ==="
+  echo "=== AVVIO TRAINING DPO ISOLATO ==="
   source .venv/bin/activate
-  echo "Using Python from: $(which python)"
-  
-  # Avvio del training passando la configurazione blindata in /tmp
-  python train.py --config /tmp/skypilot_configs/runtime_config.yml
+
+  python3 -c "from unsloth import FastLanguageModel; print('✅ unsloth OK nel run')"
+
+  # Verifica accesso NFS prima di partire
+  echo "INFO: verifica accesso NFS..."
+  ls /nfs/data-download || { echo "❌ /nfs/data-download non accessibile"; exit 1; }
+  ls /nfs/training-output || { echo "❌ /nfs/training-output non accessibile"; exit 1; }
+  echo "✅ NFS accessibile"
+
+  if [ -f "$RELATIVE_CONFIG_PATH" ]; then
+    echo "📦 Configurazione variante individuata: $RELATIVE_CONFIG_PATH"
+    python3 train.py --config "$RELATIVE_CONFIG_PATH"
+  else
+    echo "❌ ERRORE: File di configurazione non trovato in $RELATIVE_CONFIG_PATH"
+    exit 1
+  fi

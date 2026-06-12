@@ -606,8 +606,8 @@ hardware:
   skypilot:
     resources:
       accelerators: A100-80GB:1     # Formato corretto SkyPilot (<tipo>:<conteggio>)
-      cpus: 128+                    # Minimo 128 core richiesti
-      memory: 216+                  # Minimo 216 GB di RAM richiesti
+      cpus: 20+                     # Minimo 20 core richiesti
+      memory: 128+                  # Minimo 128 GB di RAM richiesti
 
   gpu:
     type: "NVIDIA A100 80GB PCIe"

@@ -58,7 +58,6 @@ def preflight(config_path: str) -> Dict[str, Any]:
     model_id = require_field(config, "model", "model_id", config_file=config_path)
     model_uri = config.get("model", {}).get("model_uri")
     cache_dir = require_field(config, "model", "dataset", "cache_dir", config_file=config_path)
-    cache_file = require_field(config, "model", "dataset", "cache_file", config_file=config_path)
     filtered_samples = require_field(config, "model", "dataset", "filtered_samples", config_file=config_path)
 
     # Training fields
@@ -80,7 +79,7 @@ def preflight(config_path: str) -> Dict[str, Any]:
     precompute_ref_log_probs = require_field(config, "model", "training", "precompute_ref_log_probs", config_file=config_path)
 
     # Cache existence
-    cache_path = Path(cache_dir) / cache_file
+    cache_path = Path(cache_dir)
     if not cache_path.exists():
         raise FileNotFoundError(f"Cache not found: {cache_path}. Run prepare.py first.")
 
