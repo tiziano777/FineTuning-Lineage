@@ -4,7 +4,6 @@
 # NOTA: SkyPilot includerà COMUNQUE il run corrente appena creato perché l'orchestratore 
 # lo genera prima del lancio, ma eviterà di scansionare i vecchi run accumulati.
 
-
 # Esclude file di sistema e ambienti virtuali locali
 .venv/
 .git/
@@ -13,3 +12,4 @@
 *.pyc
 __pycache__/
 .DS_Store
+hallucinations.jsonl
