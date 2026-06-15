@@ -4,6 +4,8 @@
 # =============================================================================
 set -euo pipefail
 
+sudo apt install socat
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MODULE_DIR="$(dirname "$SCRIPT_DIR")"
 # Risale fino alla root del tuo repository
@@ -21,17 +23,15 @@ PARALLEL=false
 CLUSTER_PREFIX=""
 VARIANT_FILES=()
 
-# -----------------------------------------------------------------------------
-# 🛠️ AUTOMATIC INFRASTRUCTURE SETUP
-# -----------------------------------------------------------------------------
-HOME_SKY_DIR="${HOME}/.sky"
-REPO_SKY_SRC="${MODULE_DIR}/.sky/ssh_node_pools.yaml"
-
 echo "INFO: pulizia preventiva dell'ambiente SkyPilot per il cluster '$CLUSTER_NAME'..."
 sky down $CLUSTER_NAME 
 echo "🚀 Esecuzione automatica di 'sky ssh up'..."
 echo " INFO: se il comando fallisce, potresti non aver settato chiavi SSH o configurato correttamente SkyPilot. " >&2
 sky ssh up || echo "⚠️ 'sky ssh up' ha restituito un avviso, procedo comunque con il lancio."
+
+HOME_SKY_DIR="${HOME}/.sky"
+REPO_SKY_SRC="${MODULE_DIR}/.sky/ssh_node_pools.yaml"
+
 
 if [ "$DRY_RUN" = false ]; then
   if [ ! -f "${HOME_SKY_DIR}/ssh_node_pools.yaml" ]; then

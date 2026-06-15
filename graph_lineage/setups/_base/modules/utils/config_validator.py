@@ -80,6 +80,7 @@ _DIR_FIELDS = [
     ("model", "dataset", "cache_dir"),
     ("output", "output_dir"),
     ("output", "metrics_uri"),
+    ("output", "plot_dir"),
 ]
 
 

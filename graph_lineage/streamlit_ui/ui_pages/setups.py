@@ -70,6 +70,42 @@ async def _list_recipes_async() -> list[dict]:
 # Scaffold generation
 # ---------------------------------------------------------------------------
 
+def _parse_accelerators(gpu_type: str, gpu_count: int) -> str | dict | list:
+    """
+    Parse gpu_type input into a valid SkyPilot accelerators value.
+    Supports:
+      - "A100-80GB"           → "A100-80GB:1"  (single, count from gpu_count)
+      - "A100-80GB:4"         → "A100-80GB:4"  (single with inline count, ignores gpu_count)
+      - "{A100:1, V100:1}"    → {"A100": 1, "V100": 1}  (unordered set → dict)
+      - "[L4:1, H100:1]"      → ["L4:1", "H100:1"]      (ordered list)
+    """
+    gpu_type = gpu_type.strip()
+
+    # Case 1: unordered set  {A100:1, V100:1}
+    if gpu_type.startswith("{") and gpu_type.endswith("}"):
+        inner = gpu_type[1:-1]
+        result = {}
+        for item in inner.split(","):
+            item = item.strip()
+            if ":" in item:
+                name, count = item.rsplit(":", 1)
+                result[name.strip()] = int(count.strip())
+            else:
+                result[item] = 1
+        return result
+
+    # Case 2: ordered list  [L4:1, H100:1, A100:1]
+    if gpu_type.startswith("[") and gpu_type.endswith("]"):
+        inner = gpu_type[1:-1]
+        return [item.strip() for item in inner.split(",") if item.strip()]
+
+    # Case 3: single with inline count  A100-80GB:4
+    if ":" in gpu_type:
+        return gpu_type  # already in "NAME:COUNT" format
+
+    # Case 4: plain name  A100-80GB  → append gpu_count
+    return f"{gpu_type}:{int(gpu_count)}"
+
 def _generate_config_yml(selections: dict) -> str:
     """Generate config.yml content from form selections."""
     setup_name = selections["setup_name"]
@@ -93,7 +129,7 @@ def _generate_config_yml(selections: dict) -> str:
                 "optim": "paged_adamw_8bit",
                 "per_device_train_batch_size": selections.get("batch_size", 1),
                 "gradient_accumulation_steps": 16,
-                "num_train_epochs": selections.get("epochs", 3),
+                "num_train_epochs": selections.get("epochs", 1),
                 "gradient_checkpointing": True,
                 "bf16": True,
                 "logging_steps": 10,
@@ -315,25 +351,40 @@ def _render_create_form() -> None:
         )
         cache_dir = st.text_input(
             "Dataset Cache Directory (optional)",
-            value="/nfs/training-output/.dpo-cache/${experiment.name}/${experiment.id}/data",
-            help="Dataset cache directory. Supports template variables: ${experiment.name}, ${experiment.id}",
+            value="/nfs/training-output/.dpo-cache/${experiment.name}/data",
+            help="Dataset cache directory. Supports template variables: ${experiment.name}",
         )
 
         # Hyperparameters
         st.markdown("**Hyperparameters**")
         learning_rate = st.number_input("Learning Rate", value=2e-4, format="%.2e", step=1e-5)
         batch_size = st.number_input("Batch Size", value=4, min_value=1, step=1)
-        epochs = st.number_input("Epochs", value=3, min_value=1, step=1)
+        epochs = st.number_input("Epochs", value=1.0, min_value=0.1, step=0.1)
 
     # Hardware (optional)
-    with st.expander("Hardware Configuration (optional)"):
+    with st.expander("Hardware Configuration (optional, skipilot-based)"):
         hw_col1, hw_col2 = st.columns(2)
         with hw_col1:
-            gpu_type = st.text_input("GPU Type", placeholder="A100-80GB")
-            gpu_count = st.number_input("GPU Count", value=1, min_value=1, step=1)
+            gpu_type = st.text_input("GPU Type",placeholder="A100-80GB",
+                help=(
+                    "Specifica il tipo di acceleratore. Formati supportati:\n\n"
+                    "• A100-80GB → usa il valore di 'GPU Count'\n"
+                    "• A100-80GB:4 → conteggio inline, 'GPU Count' viene IGNORATO\n"
+                    "• {A100:1, V100:1} → set non ordinato, 'GPU Count' viene IGNORATO\n"
+                    "• [L4:1, H100:1, A100:1] → lista ordinata, 'GPU Count' viene IGNORATO\n\n"
+                    "⚠️ A100 (40GB) e A100-80GB sono hardware distinti e non intercambiabili.\n\n"
+                    "Docs: https://docs.skypilot.co/en/latest/compute/gpus.html"
+                )
+            )
+            count_is_inline = (
+                ":" in gpu_type or
+                gpu_type.strip().startswith("{") or
+                gpu_type.strip().startswith("[")
+            )
+            gpu_count = st.number_input("GPU Count", value=1, min_value=1, step=1, disabled=count_is_inline, help=""" [Ignorato se GPU Type contiene già il conteggio (es. A100:4, {A100:1}, [L4:1]).] \n Numero di GPU per nodo. Inserisci un numero intero (es. 1, 4, 8).\n Se specificato insieme al GPU Type, usa il formato combinato <NOME>:<QUANTITÀ> nel campo GPU Type (es. A100-80GB:4). \n DOCS URL: https://docs.skypilot.co/en/latest/reference/yaml-spec.html#resources-accelerators""")
         with hw_col2:
-            cpus = st.text_input("CPUs", placeholder="128+")
-            memory = st.text_input("Memory", placeholder="216+")
+            cpus = st.text_input("CPUs", placeholder="128+", help= """Numero di vCPU per nodo.\nFormati accettati: \n4 — esattamente 4 vCPU \n4+ — almeno 4 vCPU (SkyPilot sceglierà l'istanza più economica con ≥ 4 vCPU)\nEsempio: 128+ significa "almeno 128 vCPU".\n DOCS URL: https://docs.skypilot.co/en/latest/reference/yaml-spec.html#resources-cpus """)
+            memory = st.text_input("Memory", placeholder="216+", help="""Quantità di RAM per nodo.\nFormati accettati:\n64 — esattamente 64 GB\n64+ — almeno 64 GB\nCon unità: 1024MB, 64GB, 2TB\nUnità supportate (case-insensitive): KB, MB, GB (default), TB, PB.\nEsempio: 216+ significa "almeno 216 GB di RAM". \n DOCS URL: https://docs.skypilot.co/en/latest/reference/yaml-spec.html#resources-memory""")
 
     # Model Merging (optional)
     with st.expander("Model Merging (optional)"):
@@ -346,15 +397,20 @@ def _render_create_form() -> None:
     if st.button("Generate & Download", type="primary", disabled=not (setup_name and model_uri and model_id and output_dir)):
         hardware = None
         if gpu_type:
+            accelerators = _parse_accelerators(gpu_type, int(gpu_count))
             hardware = {
                 "skypilot": {
                     "resources": {
-                        "accelerators": f"{gpu_type}:{int(gpu_count)}",
+                        "accelerators": accelerators,
                         "cpus": cpus or None,
                         "memory": memory or None,
                     },
                 },
-                "gpu": {"type": gpu_type, "count": int(gpu_count)},
+                # Per gpu.type/count, estrai solo il caso singolo
+                "gpu": {
+                    "type": gpu_type,
+                    "count": int(gpu_count),
+                },
             }
 
         # Get component URI from DB
@@ -377,7 +433,7 @@ def _render_create_form() -> None:
             "cache_dir": cache_dir,
             "learning_rate": learning_rate,
             "batch_size": int(batch_size),
-            "epochs": int(epochs),
+            "epochs": float(epochs),
             "hardware": hardware,
             "merging_enabled": merging_enabled,
             "merge_method": merge_method if merging_enabled else None,

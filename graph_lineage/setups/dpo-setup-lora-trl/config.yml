@@ -594,6 +594,8 @@ recipe:
 output: 
   output_dir: /Users/T.Finizzi/repo/SFT-data-Forge/nfs/training-output/.dpo-cache/${experiment.name}/${experiment.id}/checkpoints
   metrics_uri: /Users/T.Finizzi/repo/SFT-data-Forge/nfs/training-output/.dpo-cache/${experiment.name}/${experiment.id}/metrics
+  plot_dir: /Users/T.Finizzi/repo/SFT-data-Forge/nfs/training-output/.dpo-cache/${experiment.name}/${experiment.id}/plots
+
 
 hardware:
   skypilot:

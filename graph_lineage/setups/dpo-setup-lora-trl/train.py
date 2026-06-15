@@ -78,6 +78,7 @@ def preflight(config_path: str) -> Dict[str, Any]:
     ref_model= config.get("model", {}).get("training", {}).get("ref_model")  # optional; if not set, DPOTrainer defaults to model for ref as well
     # Output Dir
     output_dir = require_field(config, "output", "output_dir", config_file=config_path)
+    plot_dir = require_field(config, "output", "plot_dir", config_file=config_path)
     precompute_ref_log_probs = require_field(config, "model","training", "precompute_ref_log_probs", config_file=config_path)
 
     # Cache existence
@@ -102,7 +103,7 @@ def preflight(config_path: str) -> Dict[str, Any]:
         "dataset": (ds_train, ds_eval), "output_dir": output_dir,
         "training_cfg": training_cfg, "cache_path": str(cache_path),
         "filtered_samples": filtered_samples, "model_uri": model_uri,
-        "ref_model": ref_model, "precompute_ref_log_probs": precompute_ref_log_probs,
+        "ref_model": ref_model, "precompute_ref_log_probs": precompute_ref_log_probs, "plot_dir": plot_dir
     }
 
 @lineage_tracker(capture_checkpoints=True)
@@ -200,9 +201,10 @@ def train(config_path: str = "config.yml", dry_run: bool = False, lineage_callba
     try:
         beta = training_cfg.get('beta', 0.1)
         max_grad_norm = training_cfg.get('max_grad_norm', 1.0)
-        pm = PlotManager(config_path=config_path, beta=beta, max_grad_norm=max_grad_norm)
-        plots_dir = pm.run(trainer.state.log_history)
-        logger.info('Plots saved to %s', plots_dir)
+        plot_dir = config.get("output", {}).get("plot_dir")
+        pm = PlotManager(config_path=config_path, beta=beta, max_grad_norm=max_grad_norm, output_base=plot_dir)
+        plots_log = pm.run(trainer.state.log_history)
+        logger.info('Plots logs saved to %s', plots_log)
     except Exception:
         logger.exception('Plot generation failed (non-fatal); training artefacts are intact.')
 
