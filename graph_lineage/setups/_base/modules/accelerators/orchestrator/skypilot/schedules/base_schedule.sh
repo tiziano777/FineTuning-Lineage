@@ -116,27 +116,31 @@ def deep_merge(dict1, dict2):
         else:
             dict1[key] = value
 
+# 1. Carica la configurazione Base di default
+with open('$b_file') as f:
+    base_config = yaml.safe_load(f) or {}
+
+# 2. Carica il lineage globale (.lineage/experiment.yml)
 with open('$l_file') as f:
     lin = yaml.safe_load(f) or {}
 base_uuid = lin.get('experiment', {}).get('id', 'null')
 
-with open('$b_file') as f:
-    base_config = yaml.safe_load(f) or {}
-
+# 3. Carica la variante se presente
 variant_config = {}
 if '$v_file':
     with open('$v_file') as f:
         variant_config = yaml.safe_load(f) or {}
 
 final_dict = {}
+# Unisci prima la Base, poi il Lineage
 deep_merge(final_dict, base_config)
-deep_merge(final_dict, variant_config)
-
 if 'experiment' not in final_dict:
     final_dict['experiment'] = {}
-
 final_dict['experiment']['base_experiment_id'] = base_uuid
 final_dict['experiment']['previous_experiment_id'] = None
+
+# Applica infine la variante (Vince su tutto, compresi ID sovrascritti intenzionalmente)
+deep_merge(final_dict, variant_config)
 
 with open('$out', 'w') as f:
     yaml.dump(final_dict, f, default_flow_style=False)
@@ -217,7 +221,3 @@ echo "=== Elaborazione completata. Directory di Staging: $(realpath "$GENERATED_
 if [[ "$DRY_RUN" == false ]]; then
   echo "Controlla lo stato della coda hardware con il comando: sky queue $CLUSTER_NAME"
 fi
-
-
-
-

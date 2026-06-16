@@ -43,6 +43,9 @@ REMOTE MODE (GPU worker → server):
 
 ### Remote Architecture
 
+Worker e Server possono risiedere sulla stessa macchiana (base case todo)
+Oppure collegati in remoto tramite ssh (second case pending)
+
 ```
 ┌─────────────────────────────┐         ┌─────────────────────────────┐
 │  GPU WORKER                 │   HTTP  │  LINEAGE SERVER             │
@@ -56,7 +59,7 @@ REMOTE MODE (GPU worker → server):
 
 Lineage uses a **split config** approach:
 - `.lineage/experiment.yml` — managed by the hook (experiment metadata, IDs, status)
-- `config.yml` — user-owned (model, recipe, output, hardware settings)
+- `config.yml` — user-owned (model, recipe, output, hardware, model_merging)
 
 This keeps lineage concerns separate from training configuration.
 
@@ -77,11 +80,6 @@ pip install -e ".[dev]"
 ### 3. Create config.yml
 
 ```yaml
-experiment:
-  id: null                    # Auto-generated on first run
-  derived_from: null
-  base_experiment: null
-  expected_run_type: "auto"
 
 model:
   - model_name: "llama-7b"
@@ -106,7 +104,51 @@ output:
 
 ```
 
+.lineage/experiment.yml:
+```yaml
+# .lineage/experiment.yml — managed by lineage hook
+# Do not edit manually — fields are updated by @envelope.tracker()
+experiment:
+  id: null
+  previous_experiment_id: null
+  base_experiment_id: null
+  base: true
+  name: "{{SETUP_NAME}}"
+  description: "{{DESCRIPTION}}"
+  uri: null  # Set automatically by tracker to project_root at first execution
+  status: null
+  checkpoint_resume_from: null
+  # component: "{{COMPONENT_NAME}}"
+```
+
+.lineage/server.yml:
+```yaml
+# .lineage/server.yml — lineage server connection config
+# This file tells the client SDK where the lineage server is running.
+url: "http://localhost:8000"
+protocol: http
+timeout: 30
+retries: 3
+blocking: true
+```
+
 ### 4. Decorate your train function (Remote Mode)
+
+lineage tracker fn:
+```python
+lineage_tracker(config_path_arg: int = 0, capture_checkpoints: bool = False) -> Callable:
+    """Decorator that wraps a training function with PRE/POST lifecycle.
+
+    The decorated function's first positional argument (or the one at
+    `config_path_arg` index) is used to locate the project root.
+
+    Args:
+        config_path_arg: Index of the positional arg that is the config path.
+                         Defaults to 0 (first argument).
+        capture_checkpoints: If True, creates a LineageCheckpointCallback and
+                             injects it as `lineage_callback` kwarg into the
+                             wrapped function.
+```                          
 
 ```python
 from modules.lineage import lineage_tracker
@@ -123,6 +165,7 @@ train("config.yml", "cuda:0")
 ```bash
 cp -r graph_lineage/setups/_base/modules ./
 ```
+Alternatively, you can initialize your own project by select new exeriment in streamlit app
 
 ### 5. View in UI
 
@@ -227,44 +270,39 @@ Each setup includes `train.py`, `requirements.txt`, and `.lineage/` directory.
 ```
 graph_lineage/
 ├── config_file/                # Config schema + validation + write-back
-│   ├── data_classes/           # Pydantic models (LineageConfig, TrainingConfig, ExperimentConfig)
-│   ├── validator.py            # Strict pre-execution validation
-│   └── writer.py              # Atomic YAML write-back (UUID injection)
+│   ├── data_classes/           # Pydantic models for every config block( model, recipe, output, hardware, model_merging)
+│       ├── experiment_config.py      
+│       ├── lineage_config.py       # This file contains all of configuration blocks explained 
+│       ├── model_merging_config.py            
+│       ├── output_config.py            
+│       └── recipe_config.py             
 ├── data_classes/neo4j/         # Pydantic entity models
-│   └── nodes/                  # Experiment, Model, Recipe, Component, Checkpoint
-├── diff/                       # Codebase diff & snapshot
+│   └── nodes/*.py                 # contasin Dataclasses: experiment, model, recipe, component, checkpoint
+├── diff/                       # Codebase diff & snapshot, frozen Pydantic model capturing project files for lineage tracking.
 │   ├── snapshot.py             # CodebaseSnapshot (scan rules, FileTooLargeError)
-│   ├── differ.py               # compute_snapshot_diff(), detect_changes()
-│   ├── description.py          # Auto-generated descriptions per strategy
-│   └── reconstructor.py        # Codebase reconstruction from base + diffs
+│   ├── differ.py               # unified diff generation, hash computation, change detection.
+│   ├── description.py          # Auto-generated descriptions metadata per strategy
+│   └── reconstructor.py        # Codebase reconstruction from lineage chain (base snapshot + sequential diffs).
 ├── history/                    # Experiment history tracking
 │   ├── models.py               # Navigation DTOs
-│   └── repository.py           # Navigate, rollback, squash
+│   └── repository.py           # History management and graph navigation operations. (Navigate, rollback, squash)
 ├── lineage/                    # Hook/decorator system (local mode)
-│   ├── tracker.py              # @envelope.tracker() — PRE/POST lifecycle
-│   ├── rule_engine.py          # detect_run_type(): NEW/RETRY/BRANCH/RESUME/MERGE
-│   └── neo4j_ops.py            # Async Neo4j CRUD
+│   ├── rule_engine.py          # RuleEngine: detect run type strategy based on config and codebase state. NEW/RETRY/BRANCH/RESUME/MERGE
+│   └── neo4j_ops.py            # Async Neo4j CRUD, async wrapper functions for Neo4j operations used by the tracker.
 ├── neo4j_client/               # Database driver + schema
 │   ├── client.py               # get_driver() / close_driver()
 │   ├── neo4j_async.py          # AsyncNeo4jClient
 │   ├── init_schema.py          # Schema initialization CLI
 │   └── verify_schema.py        # Schema verification CLI
-├── observability/              # Metrics collection
-│   ├── collector.py            # MetricsCollector (JSONL + OpenLIT)
-│   └── hw.py                   # GPU stats (pynvml)
 ├── server/                     # FastAPI lineage server (Phase 6)
-│   ├── app.py                  # /health, /api/v1/pre, /api/v1/post
+│   ├── app.py                  # /health, /api/v1/pre, /api/v1/post FastAPI application for the Lineage Server.
 │   └── schemas.py              # Server-side Pydantic models
-├── setups/                     # Scaffolding templates
+├── setups/                     # Scaffolding templates for initializer user story
 │   ├── _base/                  # Base template
 │   │   ├── .lineage/           # experiment.yml + server.yml
-│   │   └── modules/lineage/    # Client SDK (standalone, no pip install needed)
-│   ├── sft_trl/                # SFT with TRL
-│   ├── dpo_trl/                # DPO with TRL
-│   └── continual_ft_trl/       # Continual fine-tuning
-├── storage/                    # Storage abstraction (LocalProvider, resolver)
-├── streamlit_ui/               # CRUD UI for Neo4j entities (Streamlit)
-└── observability/              # Metrics collection (MetricsCollector, GPU stats)
+│   │   └── modules/*           # custom libraries + Client SDK for lineage (standalone, no pip install needed)
+│   └── *                       # custom_setups_name ex DPO-setup, DPO-unsloth-setup, model-merging-setup..
+├── streamlit_ui/*               # CRUD UI for Neo4j entities, setup generation  (Streamlit)
 ```
 
 ## Development

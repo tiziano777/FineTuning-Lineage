@@ -1,3 +1,4 @@
+# graph_lineage/setups/_base/modules/lineage/client.py
 """LineageClient: main entry point for client-server lineage communication.
 
 Handles the PRE/POST lifecycle by capturing local state and communicating
@@ -216,6 +217,8 @@ class LineageClient:
             logger.error("PRE-execution communication failed: %s", e)
             if blocking:
                 sys.exit(10)
+            # ❌ Aggiungi questo:
+            logger.warning("Non-blocking mode: continuing without lineage tracking")
             return None
 
         except Exception as e:
@@ -223,6 +226,7 @@ class LineageClient:
             if blocking:
                 sys.exit(4)
             return None
+        
 
     def post_execution(
         self,

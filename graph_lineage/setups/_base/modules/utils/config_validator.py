@@ -151,13 +151,14 @@ def resolve_config(config: dict, experiment_path: str = None) -> dict:
         except yaml.YAMLError as e:
             logger.warning("Failed to parse lineage file %s: %s", lineage_uri, e)
     
-    # Merge lineage data into config for context building
+    # Merge lineage data into config for context building (CONFIG MUST WIN OVER LINEAGE, but usually not intersections happens)
     merged_config = dict(config)
     for key, value in lineage_data.items():
         if key not in merged_config:
             merged_config[key] = value
         elif isinstance(value, dict) and isinstance(merged_config.get(key), dict):
-            merged_config[key] = {**merged_config[key], **value}
+            # CORRETTO: value (lineage) viene messo PRIMA, merged_config[key] (variante) viene messo DOPO e vince!
+            merged_config[key] = {**value, **merged_config[key]}
 
     context = _flatten(merged_config)
     resolved = _walk_and_resolve(config, context)

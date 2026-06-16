@@ -216,6 +216,7 @@ async def post_execution(request: PostRequest) -> PostResponse:
             exp_id=request.experiment_id,
             status=request.status,
             exit_msg=request.exit_message,
+            metrics_uri=request.metrics_uri,
         )
 
         logger.info(

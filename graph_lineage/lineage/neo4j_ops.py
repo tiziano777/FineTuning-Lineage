@@ -179,14 +179,15 @@ async def _update_experiment_status_async(
     exp_id: str,
     status: str,
     exit_msg: str | None = None,
+    metrics_uri: str | None = None,
 ) -> None:
     """Update experiment status and optional exit message."""
     driver = await get_driver()
     query = """
     MATCH (e:Experiment {id: $exp_id})
-    SET e.status = $status, e.exit_status = $status, e.updated_at = datetime()
+    SET e.status = $status, e.exit_status = $status, e.updated_at = datetime(), e.metrics_uri = $metrics_uri
     """
-    params: dict[str, Any] = {"exp_id": exp_id, "status": status}
+    params: dict[str, Any] = {"exp_id": exp_id, "status": status, "metrics_uri": metrics_uri}
     if exit_msg is not None:
         query += ", e.exit_msg = $exit_msg"
         params["exit_msg"] = exit_msg
@@ -198,6 +199,7 @@ def update_experiment_status(
     exp_id: str,
     status: str,
     exit_msg: str | None = None,
+    metrics_uri: str | None = None,
 ) -> None:
     """Update experiment status in Neo4j.
 
@@ -205,8 +207,9 @@ def update_experiment_status(
         exp_id: Experiment ID to update.
         status: New status (COMPLETED, FAILED, etc.).
         exit_msg: Optional exit/error message.
+        metrics_uri: Optional URI for metrics logs (currently not stored in Neo4j).
     """
-    _run_sync(_update_experiment_status_async(exp_id, status, exit_msg))
+    _run_sync(_update_experiment_status_async(exp_id, status, exit_msg, metrics_uri))
 
 
 # ── Checkpoint operations ─────────────────────────────────────────────────────
