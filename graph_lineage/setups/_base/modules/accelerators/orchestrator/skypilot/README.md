@@ -78,7 +78,13 @@ mkdir -p ~/.sky
 nano ~/.sky/ssh_node_pools.yaml
 
 ```
-
+**NOTA**: questa operazione richiede setup delle chiavi rsa e dei relativi permessi! Permission denied o key not found potrebbe succedere!
+#### esempio: 
+```bash
+Failed to deploy 1 cluster(s): 
+cluster: SSH Identity File Missing: /home/velvet/.ssh/* 
+RuntimeError: Failed to deploy SkyPilot on some Node Pools.
+```
 
 2. Configurare il cluster associando l'IP di loopback (o l'IP privato della macchina Azure) al nome utilizzato dall'orchestratore (`azure-gpu-cluster`):
 ```yaml
@@ -169,7 +175,6 @@ Se interrompi bruscamente l'orchestratore (Ctrl+C) mentre sta sottomettendo i jo
 
 ```bash
 bash schedules/base_schedule.sh variants/lr_2e-07_beta_03.yml variants/lr_1e-06_beta_01.yml
-
 ```
 
 ---

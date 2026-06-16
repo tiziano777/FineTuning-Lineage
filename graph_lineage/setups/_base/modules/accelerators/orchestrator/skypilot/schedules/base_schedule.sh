@@ -23,6 +23,18 @@ PARALLEL=false
 CLUSTER_PREFIX=""
 VARIANT_FILES=()
 
+echo "variabili inizializzate:"
+echo "BASE_CONFIG=$BASE_CONFIG"
+echo "LINEAGE_FILE=$LINEAGE_FILE"
+echo "TEMPLATE_FILE=$TEMPLATE_FILE"
+echo "GENERATED_DIR=$GENERATED_DIR"
+echo "CLUSTER_NAME=$CLUSTER_NAME"
+echo "INFRA=$INFRA"
+echo "DRY_RUN=$DRY_RUN"
+echo "PARALLEL=$PARALLEL"
+echo "CLUSTER_PREFIX=$CLUSTER_PREFIX"
+echo "VARIANT_FILES=${VARIANT_FILES[@]}"
+
 echo "INFO: pulizia preventiva dell'ambiente SkyPilot per il cluster '$CLUSTER_NAME'..."
 sky down $CLUSTER_NAME 
 echo "🚀 Esecuzione automatica di 'sky ssh up'..."
@@ -169,7 +181,7 @@ for i in "${!VARIANT_FILES[@]}"; do
   task_yaml="${run_sandbox_dir}/task_${variant_name}.yaml"
   
   # Calcola il path relativo corretto partendo dalla REPO_ROOT specchiata da SkyPilot
-  relative_config_path="$(realpath --relative-to="$REPO_ROOT" "$merged_config_path")"
+  config_path="$(realpath --relative-to="$REPO_ROOT" "$merged_config_path")"
 
   # Genera il task YAML sostituendo i placeholder
   python3 -c "
@@ -181,7 +193,7 @@ content = content.replace('__SKY_ACCELERATORS__', '${SKY_ACCELERATORS}')
 content = content.replace('__SKY_CPUS__', '${SKY_CPUS}')
 content = content.replace('__SKY_MEMORY__', '${SKY_MEMORY}')
 content = content.replace('__REPO_ROOT__', '${REPO_ROOT}')
-content = content.replace('__RELATIVE_CONFIG_PATH__', '${relative_config_path}')
+content = content.replace('__CONFIG_PATH__', '${config_path}')
 
 with open('$task_yaml', 'w') as f:
     f.write(content)
@@ -189,20 +201,19 @@ with open('$task_yaml', 'w') as f:
 
   # Sottomissione alla coda o Dry Run
   if [[ "$DRY_RUN" == true ]]; then
-    echo "   [DRY-RUN] sky launch --infra $INFRA -c $CLUSTER_NAME $task_yaml --detach-run"
+    echo "   [DRY-RUN] sky launch --infra $INFRA -c ${CLUSTER_NAME} ${task_yaml} --detach-run"
     echo "   [DRY-RUN] Configurazione fusa generata in: $merged_config_path"
-    echo "   [DRY-RUN] relative_config_path: ${relative_config_path}"
+    echo "   [DRY-RUN] config_path: ${config_path}"
     echo "   [DRY-RUN] merged_config_path exists: $(test -f "$merged_config_path" && echo YES || echo NO)"
     echo ""
   else
     echo "   Sottomissione in coda su infrastruttura '$INFRA' con nome cluster '$CLUSTER_NAME'..."
     sky launch --infra "$INFRA" -c "$CLUSTER_NAME" "$task_yaml" -y --detach-run 
     echo "   Job sottomesso con successo."
-    echo ""
   fi
 done
 
-echo "=== Elaborazione completata. Directory di Staging: $GENERATED_DIR ==="
+echo "=== Elaborazione completata. Directory di Staging: $(realpath "$GENERATED_DIR") ==="
 if [[ "$DRY_RUN" == false ]]; then
   echo "Controlla lo stato della coda hardware con il comando: sky queue $CLUSTER_NAME"
 fi
