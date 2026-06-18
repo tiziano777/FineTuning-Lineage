@@ -223,7 +223,7 @@ class TestPostEndpoint:
         assert data["acknowledged"] is True
         assert data["status"] == "COMPLETED"
         mock_update.assert_called_once_with(
-            exp_id="exp-001", status="COMPLETED", exit_msg=None,
+            exp_id="exp-001", status="COMPLETED", exit_msg=None, metrics_uri="/logs/run-001/metrics.json",
         )
 
     @patch("graph_lineage.server.app.update_experiment_status")
@@ -240,7 +240,7 @@ class TestPostEndpoint:
         data = resp.json()
         assert data["status"] == "FAILED"
         mock_update.assert_called_once_with(
-            exp_id="exp-002", status="FAILED", exit_msg="CUDA out of memory",
+            exp_id="exp-002", status="FAILED", exit_msg="CUDA out of memory", metrics_uri=None,
         )
 
     @patch("graph_lineage.server.app.update_experiment_status")

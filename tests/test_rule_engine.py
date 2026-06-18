@@ -33,7 +33,7 @@ def _make_config(
         output=OutputConfig(output_dir="/tmp/output"),
         model_merging=ModelMergingConfig(
             enabled=merging_enabled,
-            merge_method="linear" if merging_enabled else None,
+            merge_method="linear" if merging_enabled else "avg",
             sources=["a", "b"] if merging_enabled else [],
         ),
     )
