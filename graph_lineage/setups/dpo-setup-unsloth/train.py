@@ -19,6 +19,7 @@ from huggingface_hub import login
 from transformers import AutoTokenizer
 
 from modules.loader.data_loader import DataLoader
+from modules.loader.model_loader import ModelLoader
 from modules.utils.config_validator import load_config, require_field, resolve_config
 from modules.plots.plot_manager import PlotManager
 from modules.callbacks.metrics_saver import MetricsSaverCallback
@@ -134,25 +135,16 @@ def train(config_path: str = "config.yml", dry_run: bool = False, lineage_callba
     max_seq_length = training_cfg["max_seq_length"]
     source = model_uri or model_id
 
-    model, tokenizer = FastLanguageModel.from_pretrained(
-        model_name=source,
-        max_seq_length=max_seq_length,
-        dtype=None,  # auto-detect (bfloat16 on A100)
-        load_in_4bit=False,
-        token=hf_token,
-        full_finetuning=True,
+    # Model + Tokenizer
+    loader = ModelLoader(hf_token=hf_token)
+    model, tokenizer = loader.load_model(
+        model_id=model_id,
+        model_uri=source,
+        torch_dtype=training_cfg["torch_dtype"],
+        device_map=training_cfg.get("device_map")
     )
+    print(f"✅ Modello caricato da: {source}")
 
-    # Tokenizer (re)initialization with local_files_only to avoid unwanted downloads during training runs
-    # Base tokenizer is loaded, if a known LLM is used, you can omit tokenizer_class.
-    tokenizer = AutoTokenizer.from_pretrained(source, local_files_only=True, tokenizer_class="PreTrainedTokenizerFast")
-    tokenizer.init_kwargs["tokenizer_class"] = "PreTrainedTokenizerFast"
-    # Forza l'allineamento del pad token sull'EOS 
-    tokenizer.pad_token = tokenizer.eos_token
-    tokenizer.pad_token_id = tokenizer.eos_token_id
-    # direzione del padding
-    tokenizer.padding_side = "right" 
-    model.config.pad_token_id = tokenizer.eos_token_id
     FastLanguageModel.for_training(model)
 
     # -----------------------------------------------------------------------
@@ -184,6 +176,8 @@ def train(config_path: str = "config.yml", dry_run: bool = False, lineage_callba
         'save_steps': training_cfg.get('save_steps'),
         'bf16': training_cfg.get('bf16', True),
         'report_to': training_cfg.get('report_to', 'none'),
+
+        'evaluation_strategy': training_cfg.get('evaluation_strategy', 'steps'),
 
         # NO file .pt dell'ottimizzatore 
         'save_only_model': True,

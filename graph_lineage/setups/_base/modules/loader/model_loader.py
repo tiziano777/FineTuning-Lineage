@@ -9,14 +9,6 @@ from peft import LoraConfig, get_peft_model, TaskType
 logger = logging.getLogger(__name__)
 
 
-def get_local_tokenizer(path: str) -> AutoTokenizer:
-    """Load only the tokenizer from a local model path."""
-    tokenizer = AutoTokenizer.from_pretrained(path)
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
-    return tokenizer
-
-
 class ModelLoader:
     """Load, configure and optionally wrap models with PEFT adapters.
 
@@ -82,9 +74,16 @@ class ModelLoader:
             model = self._apply_peft(model, peft_cfg)
 
         # Tokenizer
-        tokenizer = AutoTokenizer.from_pretrained(source)
+        tokenizer = AutoTokenizer.from_pretrained(source, trust_remote_code=True)
+        
+        # Configura il tokenizer
         if tokenizer.pad_token is None:
             tokenizer.pad_token = tokenizer.eos_token
+            tokenizer.pad_token_id = tokenizer.eos_token_id
+        tokenizer.padding_side = "right"
+        if hasattr(model, 'config'):
+            model.config.pad_token_id = tokenizer.pad_token_id
+            model.config.eos_token_id = tokenizer.eos_token_id
 
         self.model = model
         self.tokenizer = tokenizer

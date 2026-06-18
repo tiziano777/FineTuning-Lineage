@@ -184,7 +184,7 @@ Plans:
 **Plans:** 4 plans
 
 Plans:
-- [ ] 06-01-PLAN.md — Fix 10 failing tests (Group A: rule_engine, Group B: server_api, Group C: checkpoint, Group D: e2e)
+- [x] 06-01-PLAN.md — Fix 10 failing tests (Group A: rule_engine, Group B: server_api, Group C: checkpoint, Group D: e2e)
 - [ ] 06-02-PLAN.md — Server fix: base_experiment_id self-reference for NEW + integration_new assertions
 - [ ] 06-03-PLAN.md — Test infrastructure (logs/, ckp_factory, codebase_mutator fixtures) + S-01, S-02
 - [ ] 06-04-PLAN.md — Merge infrastructure (mock_neo4j, merge_client) + S-03, S-04, S-05, S-06, S-07

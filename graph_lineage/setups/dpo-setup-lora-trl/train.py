@@ -138,17 +138,6 @@ def train(config_path: str = "config.yml", dry_run: bool = False, lineage_callba
         peft_cfg=peft_cfg
     )
 
-    # Tokenizer (re)initialization with local_files_only to avoid unwanted downloads during training runs
-    # Base tokenizer is loaded, if a known LLM is used, you can omit tokenizer_class.
-    tokenizer = AutoTokenizer.from_pretrained(source, local_files_only=True, tokenizer_class="PreTrainedTokenizerFast")
-    tokenizer.init_kwargs["tokenizer_class"] = "PreTrainedTokenizerFast"
-    # Forza l'allineamento del pad token sull'EOS 
-    tokenizer.pad_token = tokenizer.eos_token
-    tokenizer.pad_token_id = tokenizer.eos_token_id
-    # direzione del padding
-    tokenizer.padding_side = "right" 
-    model.config.pad_token_id = tokenizer.eos_token_id
-
     dpo_args = {
         'output_dir': output_dir,
         'per_device_train_batch_size': training_cfg.get('per_device_train_batch_size'),

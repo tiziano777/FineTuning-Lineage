@@ -137,17 +137,6 @@ def train(config_path: str = "config.yml", dry_run: bool = False, lineage_callba
         torch_dtype=training_cfg["torch_dtype"],
         device_map=training_cfg.get("device_map")
     )
-    
-    # Tokenizer (re)initialization with local_files_only to avoid unwanted downloads during training runs
-    # Base tokenizer is loaded, if a known LLM is used, you can omit tokenizer_class.
-    tokenizer = AutoTokenizer.from_pretrained(source, local_files_only=True, tokenizer_class="PreTrainedTokenizerFast")
-    tokenizer.init_kwargs["tokenizer_class"] = "PreTrainedTokenizerFast"
-    # Forza l'allineamento del pad token sull'EOS 
-    tokenizer.pad_token = tokenizer.eos_token
-    tokenizer.pad_token_id = tokenizer.eos_token_id
-    # direzione del padding
-    tokenizer.padding_side = "right" 
-    model.config.pad_token_id = tokenizer.eos_token_id
 
     dpo_args = {
         'output_dir': output_dir,

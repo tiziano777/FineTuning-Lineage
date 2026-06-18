@@ -1,63 +1,62 @@
-2026-06-17 16:22:17 [INFO] http_connector_test_test_http_logging_multi_strategy_sequence - → POST /api/v1/pre
-2026-06-17 16:22:17 [DEBUG] http_connector_test_test_http_logging_multi_strategy_sequence -   Body: {
+2026-06-18 16:50:35 [INFO] http_connector_test_test_http_logging_multi_strategy_sequence - → POST /api/v1/pre
+2026-06-18 16:50:35 [DEBUG] http_connector_test_test_http_logging_multi_strategy_sequence -   Body: {
   "experiment_name": "test-experiment",
-  "experiment_uri": "/private/var/folders/1j/ndgc87vs72q081r3w6lbf51r0000gn/T/pytest-of-T.Finizzi/pytest-6/test_http_logging_multi_strate0/test-project",
+  "experiment_uri": "/private/var/folders/1j/ndgc87vs72q081r3w6lbf51r0000gn/T/pytest-of-T.Finizzi/pytest-0/test_http_logging_multi_strate0/test-project",
   "base_experiment_id": null,
   "previous_experiment_id": null,
   "description": null,
-  "model_uri": "", 
-  "model_id": "",
-  "codebase": {
-    "config.yml": "experiment:\n  name: test-train\n  uri: /private/var/folders/1j/ndgc87vs72q081r3w6lbf51r0000gn/T/pytest-of-T.Finizzi/pytest-6/test_http_logging_multi_strate0/test-project\nmodel:\n  dataset:\n    cache_dir: /private/var/folders/1j/ndgc87vs72q081r3w6lbf51r0000gn/T/pytest-of-T.Finizzi/pytest-6/test_http_logging_multi_strate0/test-project/cache\n  model_id: llama-7b-base\n  model_uri: /nfs/llama-7b\n  training:\n    learning_rate: 0.0001\n    num_train_epochs: 1\n    per_device_train_batch_size: 1\noutput:\n  metrics_uri: /logs/${experiment.id}/metrics.json\n  output_dir: /private/var/folders/1j/ndgc87vs72q081r3w6lbf51r0000gn/T/pytest-of-T.Finizzi/pytest-6/test_http_logging_multi_strate0/test-project/output\n",
-    "prepare.py": "def prepare(config_path: str):\n    \"\"\"Prepare minimal training dataset.\"\"\"\n    print(f\"Preparing dataset for {config_path}\")\n\nif __name__ == \"__main__\":\n    prepare(\"config.yml\")\n",
-    "requirements.txt": "pyyaml>=6.0\n",
-    "train.py": "from modules.lineage import lineage_tracker\n\n@lineage_tracker()\ndef train(config_path: str):\n    \"\"\"Minimal training function for testing.\"\"\"\n    print(f\"Training with {config_path}\")\n    return \"success\"\n\nif __name__ == \"__main__\":\n    train(\"config.yml\")\n",
-    "modules/utils/__init__.py": "",
-    "modules/utils/helper.py": "def load_data():\n    \"\"\"Load training data.\"\"\"\n    return []\n",
-    ".lineage/experiment.yml": "experiment:\n  base: true\n  base_experiment_id: null\n  checkpoint_resume_from: null\n  created_at: null\n  description: null\n  id: null\n  name: test-experiment\n  previous_experiment_id: null\n  status: null\n  strategy: null\n  updated_at: null\n  uri: /private/var/folders/1j/ndgc87vs72q081r3w6lbf51r0000gn/T/pytest-of-T.Finizzi/pytest-6/test_http_logging_multi_strate0/test-project\n",
-    ".lineage/server.yml": "blocking: true\nprotocol: http\nretries: 0\ntimeout: 10\nurl: http://localhost:8000\n"
-  },
-  "checkpoint_resume_from": null
-}
-2026-06-17 16:22:17 [INFO] http_connector_test_test_http_logging_multi_strategy_sequence - ← 200 POST /api/v1/pre
-2026-06-17 16:22:17 [DEBUG] http_connector_test_test_http_logging_multi_strategy_sequence -   Response: {
-  "experiment_id": "83ea4f48-0fc0-44ac-b39c-a5b36daa8793",
-  "strategy": "NEW",
-  "base": true,
-  "description": "Initial experiment (base)",
-  "base_experiment_id": null, # MISSING: "83ea4f48-0fc0-44ac-b39c-a5b36daa8793"
-  "previous_experiment_id": null,
-  "changed_files": []
-}
-2026-06-17 16:22:17 [INFO] http_connector_test_test_http_logging_multi_strategy_sequence - → POST /api/v1/pre
-2026-06-17 16:22:17 [DEBUG] http_connector_test_test_http_logging_multi_strategy_sequence -   Body: {
-  # MISSING: "experiment_id": "83ea4f48-0fc0-44ac-b39c-a5b36daa8793",
-  "experiment_name": "test-experiment",
-  "experiment_uri": "/private/var/folders/1j/ndgc87vs72q081r3w6lbf51r0000gn/T/pytest-of-T.Finizzi/pytest-6/test_http_logging_multi_strate0/test-project",
-  "base_experiment_id": null, # MISSING: "83ea4f48-0fc0-44ac-b39c-a5b36daa8793"
-  "previous_experiment_id": "83ea4f48-0fc0-44ac-b39c-a5b36daa8793", # MISSING: null
-  "description": null, # MISSING: "Initial experiment (base)" but maybe deleted before sending to server, to investigate in setups/_base/modules/lineage/*.py
   "model_uri": "",
   "model_id": "",
   "codebase": {
-    "config.yml": "experiment:\n  name: test-train\n  uri: /private/var/folders/1j/ndgc87vs72q081r3w6lbf51r0000gn/T/pytest-of-T.Finizzi/pytest-6/test_http_logging_multi_strate0/test-project\nmodel:\n  dataset:\n    cache_dir: /private/var/folders/1j/ndgc87vs72q081r3w6lbf51r0000gn/T/pytest-of-T.Finizzi/pytest-6/test_http_logging_multi_strate0/test-project/cache\n  model_id: llama-7b-base\n  model_uri: /nfs/llama-7b\n  training:\n    learning_rate: 0.0001\n    num_train_epochs: 1\n    per_device_train_batch_size: 1\noutput:\n  metrics_uri: /logs/${experiment.id}/metrics.json\n  output_dir: /private/var/folders/1j/ndgc87vs72q081r3w6lbf51r0000gn/T/pytest-of-T.Finizzi/pytest-6/test_http_logging_multi_strate0/test-project/output\n",
+    "config.yml": "experiment:\n  name: test-train\n  uri: /private/var/folders/1j/ndgc87vs72q081r3w6lbf51r0000gn/T/pytest-of-T.Finizzi/pytest-0/test_http_logging_multi_strate0/test-project\nmodel:\n  dataset:\n    cache_dir: /private/var/folders/1j/ndgc87vs72q081r3w6lbf51r0000gn/T/pytest-of-T.Finizzi/pytest-0/test_http_logging_multi_strate0/test-project/cache\n  model_id: llama-7b-base\n  model_uri: /nfs/llama-7b\n  training:\n    learning_rate: 0.0001\n    num_train_epochs: 1\n    per_device_train_batch_size: 1\noutput:\n  metrics_uri: /logs/${experiment.id}/metrics.json\n  output_dir: /private/var/folders/1j/ndgc87vs72q081r3w6lbf51r0000gn/T/pytest-of-T.Finizzi/pytest-0/test_http_logging_multi_strate0/test-project/output\n",
     "prepare.py": "def prepare(config_path: str):\n    \"\"\"Prepare minimal training dataset.\"\"\"\n    print(f\"Preparing dataset for {config_path}\")\n\nif __name__ == \"__main__\":\n    prepare(\"config.yml\")\n",
     "requirements.txt": "pyyaml>=6.0\n",
     "train.py": "from modules.lineage import lineage_tracker\n\n@lineage_tracker()\ndef train(config_path: str):\n    \"\"\"Minimal training function for testing.\"\"\"\n    print(f\"Training with {config_path}\")\n    return \"success\"\n\nif __name__ == \"__main__\":\n    train(\"config.yml\")\n",
     "modules/utils/__init__.py": "",
     "modules/utils/helper.py": "def load_data():\n    \"\"\"Load training data.\"\"\"\n    return []\n",
-    ".lineage/experiment.yml": "experiment:\n  base: true\n  base_experiment_id: null\n  checkpoint_resume_from: null\n  created_at: null\n  description: null\n  id: 83ea4f48-0fc0-44ac-b39c-a5b36daa8793\n  name: test-experiment\n  previous_experiment_id: null\n  status: RUNNING\n  strategy: null\n  updated_at: null\n  uri: /private/var/folders/1j/ndgc87vs72q081r3w6lbf51r0000gn/T/pytest-of-T.Finizzi/pytest-6/test_http_logging_multi_strate0/test-project\n",
+    ".lineage/experiment.yml": "experiment:\n  base: true\n  base_experiment_id: null\n  checkpoint_resume_from: null\n  created_at: null\n  description: null\n  id: null\n  name: test-experiment\n  previous_experiment_id: null\n  status: null\n  strategy: null\n  updated_at: null\n  uri: /private/var/folders/1j/ndgc87vs72q081r3w6lbf51r0000gn/T/pytest-of-T.Finizzi/pytest-0/test_http_logging_multi_strate0/test-project\n",
     ".lineage/server.yml": "blocking: true\nprotocol: http\nretries: 0\ntimeout: 10\nurl: http://localhost:8000\n"
   },
   "checkpoint_resume_from": null
 }
-2026-06-17 16:22:17 [INFO] http_connector_test_test_http_logging_multi_strategy_sequence - ← 200 POST /api/v1/pre
-2026-06-17 16:22:17 [DEBUG] http_connector_test_test_http_logging_multi_strategy_sequence -   Response: {
-  "experiment_id": "e90bdf8c-1690-44a7-8356-feec4e9e4390",
+2026-06-18 16:50:35 [INFO] http_connector_test_test_http_logging_multi_strategy_sequence - ← 200 POST /api/v1/pre
+2026-06-18 16:50:35 [DEBUG] http_connector_test_test_http_logging_multi_strategy_sequence -   Response: {
+  "experiment_id": "03601c56-87f2-4f33-99cf-1ede05094a90",
+  "strategy": "NEW",
+  "base": true,
+  "description": "Initial experiment (base)",
+  "base_experiment_id": null,
+  "previous_experiment_id": null,
+  "changed_files": []
+}
+2026-06-18 16:50:35 [INFO] http_connector_test_test_http_logging_multi_strategy_sequence - → POST /api/v1/pre
+2026-06-18 16:50:35 [DEBUG] http_connector_test_test_http_logging_multi_strategy_sequence -   Body: {
+  "experiment_name": "test-experiment",
+  "experiment_uri": "/private/var/folders/1j/ndgc87vs72q081r3w6lbf51r0000gn/T/pytest-of-T.Finizzi/pytest-0/test_http_logging_multi_strate0/test-project",
+  "base_experiment_id": null,
+  "previous_experiment_id": "03601c56-87f2-4f33-99cf-1ede05094a90",
+  "description": null,
+  "model_uri": "",
+  "model_id": "",
+  "codebase": {
+    "config.yml": "experiment:\n  name: test-train\n  uri: /private/var/folders/1j/ndgc87vs72q081r3w6lbf51r0000gn/T/pytest-of-T.Finizzi/pytest-0/test_http_logging_multi_strate0/test-project\nmodel:\n  dataset:\n    cache_dir: /private/var/folders/1j/ndgc87vs72q081r3w6lbf51r0000gn/T/pytest-of-T.Finizzi/pytest-0/test_http_logging_multi_strate0/test-project/cache\n  model_id: llama-7b-base\n  model_uri: /nfs/llama-7b\n  training:\n    learning_rate: 0.0001\n    num_train_epochs: 1\n    per_device_train_batch_size: 1\noutput:\n  metrics_uri: /logs/${experiment.id}/metrics.json\n  output_dir: /private/var/folders/1j/ndgc87vs72q081r3w6lbf51r0000gn/T/pytest-of-T.Finizzi/pytest-0/test_http_logging_multi_strate0/test-project/output\n",
+    "prepare.py": "def prepare(config_path: str):\n    \"\"\"Prepare minimal training dataset.\"\"\"\n    print(f\"Preparing dataset for {config_path}\")\n\nif __name__ == \"__main__\":\n    prepare(\"config.yml\")\n",
+    "requirements.txt": "pyyaml>=6.0\n",
+    "train.py": "from modules.lineage import lineage_tracker\n\n@lineage_tracker()\ndef train(config_path: str):\n    \"\"\"Minimal training function for testing.\"\"\"\n    print(f\"Training with {config_path}\")\n    return \"success\"\n\nif __name__ == \"__main__\":\n    train(\"config.yml\")\n",
+    "modules/utils/__init__.py": "",
+    "modules/utils/helper.py": "def load_data():\n    \"\"\"Load training data.\"\"\"\n    return []\n",
+    ".lineage/experiment.yml": "experiment:\n  base: true\n  base_experiment_id: null\n  checkpoint_resume_from: null\n  created_at: null\n  description: null\n  id: 03601c56-87f2-4f33-99cf-1ede05094a90\n  name: test-experiment\n  previous_experiment_id: null\n  status: RUNNING\n  strategy: null\n  updated_at: null\n  uri: /private/var/folders/1j/ndgc87vs72q081r3w6lbf51r0000gn/T/pytest-of-T.Finizzi/pytest-0/test_http_logging_multi_strate0/test-project\n",
+    ".lineage/server.yml": "blocking: true\nprotocol: http\nretries: 0\ntimeout: 10\nurl: http://localhost:8000\n"
+  },
+  "checkpoint_resume_from": null
+}
+2026-06-18 16:50:35 [INFO] http_connector_test_test_http_logging_multi_strategy_sequence - ← 200 POST /api/v1/pre
+2026-06-18 16:50:35 [DEBUG] http_connector_test_test_http_logging_multi_strategy_sequence -   Response: {
+  "experiment_id": "ccc550b5-e396-465f-ab70-cf7f34ad1dc6",
   "strategy": "RETRY",
   "base": false,
-  "description": "Retry of experiment 83ea4f48-0fc0-44ac-b39c-a5b36daa8793",
-  "base_experiment_id": "83ea4f48-0fc0-44ac-b39c-a5b36daa8793",
-  "previous_experiment_id": "83ea4f48-0fc0-44ac-b39c-a5b36daa8793",
+  "description": "Retry of experiment 03601c56-87f2-4f33-99cf-1ede05094a90",
+  "base_experiment_id": "03601c56-87f2-4f33-99cf-1ede05094a90",
+  "previous_experiment_id": "03601c56-87f2-4f33-99cf-1ede05094a90",
   "changed_files": []
 }
