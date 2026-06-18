@@ -230,9 +230,10 @@ class TestLineageCheckpointCallback:
 class TestDecoratorInjection:
     """Tests that lineage_tracker(capture_checkpoints=True) injects the callback."""
 
-    @patch("graph_lineage.setups._base.modules.lineage.LineageClient")
+    @patch("graph_lineage.setups._base.modules.lineage.callbacks.LineageCheckpointCallback")
+    @patch("graph_lineage.setups._base.modules.lineage.tracker.LineageClient")
     @patch("graph_lineage.setups._base.modules.lineage.callbacks.ConnectorFactory.create")
-    def test_callback_injected_when_capture_checkpoints(self, mock_factory, mock_client_cls):
+    def test_callback_injected_when_capture_checkpoints(self, mock_factory, mock_client_cls, mock_callback_cls, test_project):
         """Decorator injects lineage_callback kwarg when capture_checkpoints=True."""
         from graph_lineage.setups._base.modules.lineage import lineage_tracker
         from graph_lineage.setups._base.modules.lineage.client import ExecutionContext
@@ -262,7 +263,7 @@ class TestDecoratorInjection:
             received_callback["cb"] = lineage_callback
             return "done"
 
-        result = train("/tmp/config.yml")
+        result = train(str(test_project / "config.yml"))
         assert result == "done"
         assert received_callback["cb"] is not None
         # Verify it's a LineageCheckpointCallback instance (duck-type check)

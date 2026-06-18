@@ -258,6 +258,7 @@ class TestE2EFailedTraining:
             exp_id=ctx.experiment_id,
             status="FAILED",
             exit_msg="CUDA OOM",
+            metrics_uri=None,
         )
 
         with open(project / ".lineage" / "experiment.yml") as f:

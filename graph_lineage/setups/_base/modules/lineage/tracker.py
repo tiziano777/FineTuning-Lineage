@@ -108,8 +108,7 @@ def lineage_tracker(config_path_arg: int = 0, capture_checkpoints: bool = False)
             if capture_checkpoints:
                 # Import the callback (lazy to avoid circular imports)
                 from .callbacks import LineageCheckpointCallback
-                # Pass both client and ctx so callback can send requests
-                callback = LineageCheckpointCallback(client=client, ctx=ctx)
+                callback = LineageCheckpointCallback(ctx=ctx)
                 kwargs["lineage_callback"] = callback
 
             result = None
