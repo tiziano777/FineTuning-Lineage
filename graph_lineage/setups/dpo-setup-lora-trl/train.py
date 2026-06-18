@@ -15,6 +15,7 @@ import os
 import torch
 from trl import DPOConfig, DPOTrainer
 from huggingface_hub import login
+from transformers import AutoTokenizer
 
 from modules.loader.data_loader import DataLoader
 from modules.loader.model_loader import ModelLoader
@@ -124,16 +125,29 @@ def train(config_path: str = "config.yml", dry_run: bool = False, lineage_callba
 
     training_cfg = ctx["training_cfg"]
 
+    source = model_uri or model_id
+
     # Model + Tokenizer + PEFT (all handled by ModelLoader)
     loader = ModelLoader(hf_token=hf_token)
     peft_cfg = config.get('model', {}).get('peft')
     model, tokenizer = loader.load_model(
         model_id=model_id,
-        model_uri=model_uri,
+        model_uri=source,
         torch_dtype=training_cfg["torch_dtype"],
         device_map=training_cfg.get("device_map"),
         peft_cfg=peft_cfg
     )
+
+    # Tokenizer (re)initialization with local_files_only to avoid unwanted downloads during training runs
+    # Base tokenizer is loaded, if a known LLM is used, you can omit tokenizer_class.
+    tokenizer = AutoTokenizer.from_pretrained(source, local_files_only=True, tokenizer_class="PreTrainedTokenizerFast")
+    tokenizer.init_kwargs["tokenizer_class"] = "PreTrainedTokenizerFast"
+    # Forza l'allineamento del pad token sull'EOS 
+    tokenizer.pad_token = tokenizer.eos_token
+    tokenizer.pad_token_id = tokenizer.eos_token_id
+    # direzione del padding
+    tokenizer.padding_side = "right" 
+    model.config.pad_token_id = tokenizer.eos_token_id
 
     dpo_args = {
         'output_dir': output_dir,
@@ -160,6 +174,11 @@ def train(config_path: str = "config.yml", dry_run: bool = False, lineage_callba
         'save_steps': training_cfg.get('save_steps'),
         'bf16': training_cfg.get('bf16', True),
         'report_to': training_cfg.get('report_to', 'none'),
+
+        'evaluation_strategy': training_cfg.get('evaluation_strategy', 'steps'),
+        
+        # NO file .pt dell'ottimizzatore 
+        'save_only_model': True, 
     }
 
     # Rimuovi i valori None e crea la config
@@ -189,13 +208,10 @@ def train(config_path: str = "config.yml", dry_run: bool = False, lineage_callba
     logger.info(str(dpo_args))
     logger.info("Starting DPO training...")
 
+    trainer.args.max_shard_size = "1GB"
     trainer.train()
-    logger.info("Training complete. Saving to %s", output_dir)
-    try:
-        trainer.save_model(output_dir)
-    except Exception:
-        model.save_pretrained(output_dir)
-        tokenizer.save_pretrained(output_dir)
+    logger.info("Training complete. Saved to %s", output_dir)
+
 
     # -- generate diagnostic plots from training history --
     try:

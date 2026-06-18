@@ -49,8 +49,9 @@ model:
     precompute_ref_log_probs: false
 
     logging_steps: 10
-    eval_steps: 1500
-    save_steps: 1500
+    eval_steps: 50
+    evaluation_strategy: steps
+    save_steps: 500
     max_steps: null
     
     bf16: true

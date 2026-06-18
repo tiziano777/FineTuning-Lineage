@@ -16,6 +16,7 @@ import torch
 from unsloth import FastLanguageModel
 from trl import DPOConfig, DPOTrainer
 from huggingface_hub import login
+from transformers import AutoTokenizer
 
 from modules.loader.data_loader import DataLoader
 from modules.utils.config_validator import load_config, require_field, resolve_config
@@ -111,6 +112,7 @@ def preflight(config_path: str) -> Dict[str, Any]:
 
 #@lineage_tracker(capture_checkpoints=True)
 def train(config_path: str = "config.yml", dry_run: bool = False, lineage_callback=None):
+    logger.info("Starting DPO training with config: %s", config_path)
     ctx = preflight(config_path)
 
     if dry_run:
@@ -141,13 +143,17 @@ def train(config_path: str = "config.yml", dry_run: bool = False, lineage_callba
         full_finetuning=True,
     )
 
-    # Enable Unsloth optimized training kernels
+    # Tokenizer (re)initialization with local_files_only to avoid unwanted downloads during training runs
+    # Base tokenizer is loaded, if a known LLM is used, you can omit tokenizer_class.
+    tokenizer = AutoTokenizer.from_pretrained(source, local_files_only=True, tokenizer_class="PreTrainedTokenizerFast")
+    tokenizer.init_kwargs["tokenizer_class"] = "PreTrainedTokenizerFast"
+    # Forza l'allineamento del pad token sull'EOS 
+    tokenizer.pad_token = tokenizer.eos_token
+    tokenizer.pad_token_id = tokenizer.eos_token_id
+    # direzione del padding
+    tokenizer.padding_side = "right" 
+    model.config.pad_token_id = tokenizer.eos_token_id
     FastLanguageModel.for_training(model)
-
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
-    if tokenizer.pad_token_id is None:
-        tokenizer.pad_token_id = tokenizer.eos_token_id
 
     # -----------------------------------------------------------------------
     # DPO Training Arguments
@@ -178,6 +184,9 @@ def train(config_path: str = "config.yml", dry_run: bool = False, lineage_callba
         'save_steps': training_cfg.get('save_steps'),
         'bf16': training_cfg.get('bf16', True),
         'report_to': training_cfg.get('report_to', 'none'),
+
+        # NO file .pt dell'ottimizzatore 
+        'save_only_model': True,
     }
 
     # Remove None values and create config
@@ -227,19 +236,14 @@ def train(config_path: str = "config.yml", dry_run: bool = False, lineage_callba
         train_dataset=ds_train,
         eval_dataset=ds_eval,
         tokenizer=tokenizer,
-        callbacks=callbacks if callbacks else None,
+        callbacks=callbacks if callbacks else None
     )
 
     logger.info(str(dpo_args))
     logger.info("Starting DPO training (Unsloth full-weight)...")
 
+    trainer.args.max_shard_size = "1GB"
     trainer.train()
-    logger.info("Training complete. Saving to %s", output_dir)
-    try:
-        trainer.save_model(output_dir)
-    except Exception:
-        model.save_pretrained(output_dir)
-        tokenizer.save_pretrained(output_dir)
 
     # -- generate diagnostic plots from training history --
     try:

@@ -137,7 +137,7 @@ def train(config_path: str = "config.yml", dry_run: bool = False, lineage_callba
         torch_dtype=training_cfg["torch_dtype"],
         device_map=training_cfg.get("device_map")
     )
-    
+
     # Tokenizer (re)initialization with local_files_only to avoid unwanted downloads during training runs
     # Base tokenizer is loaded, if a known LLM is used, you can omit tokenizer_class.
     tokenizer = AutoTokenizer.from_pretrained(source, local_files_only=True, tokenizer_class="PreTrainedTokenizerFast")
@@ -176,9 +176,9 @@ def train(config_path: str = "config.yml", dry_run: bool = False, lineage_callba
         'report_to': training_cfg.get('report_to', 'none'),
 
         'evaluation_strategy': training_cfg.get('evaluation_strategy', 'steps'),
-       
+
         # NO file .pt dell'ottimizzatore 
-        'save_only_model': True, 
+        'save_only_model': True,
     }
 
     # Rimuovi i valori None e crea la config
@@ -207,14 +207,15 @@ def train(config_path: str = "config.yml", dry_run: bool = False, lineage_callba
         train_dataset=ds_train,
         eval_dataset=ds_eval,
         tokenizer=tokenizer,
+        loss_type="ipo",          # <--- ATTIVA L'ALGORITMO IPO
         callbacks=callbacks if callbacks else None,
     )
 
     logger.info(str(dpo_args))
     logger.info("Starting DPO training...")
+
     trainer.args.max_shard_size = "1GB"
     trainer.train()
-
     logger.info("Training complete. Saved to %s", output_dir)
 
     # -- generate diagnostic plots from training history --

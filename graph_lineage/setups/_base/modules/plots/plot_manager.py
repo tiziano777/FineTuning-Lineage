@@ -32,6 +32,7 @@ logger = logging.getLogger(__name__)
 # Import all plot functions from the plot_func sub-package
 # ---------------------------------------------------------------------------
 from modules.plots.plot_func.loss           import plot_loss
+from modules.plots.plot_func.eval_loss      import plot_eval_loss
 from modules.plots.plot_func.reward_margin  import plot_reward_margin
 from modules.plots.plot_func.reward_accuracy import plot_reward_accuracy
 from modules.plots.plot_func.log_ratio      import plot_log_ratio
@@ -58,6 +59,9 @@ class PlotManager:
     output_base : Path or None
         Override the base directory for plot output.  When None (default) the
         manager writes to ``<project_root>/modules/docs/images/``.
+    grad_norm_smoothing : int
+        Rolling-mean window for grad norm smoothing (default 20). Higher values
+        produce smoother curves; set to 1 to disable smoothing.
     """
 
     def __init__(
@@ -66,11 +70,13 @@ class PlotManager:
         beta: float = 0.1,
         max_grad_norm: Optional[float] = 1.0,
         output_base: Optional[Path] = None,
+        grad_norm_smoothing: int = 20,
     ) -> None:
         self.config_path   = config_path
         self.beta          = beta
         self.max_grad_norm = max_grad_norm
         self.output_base   = output_base
+        self.grad_norm_smoothing = grad_norm_smoothing
         self.run_dir: Optional[Path] = None   # set after run() is called
 
     # ------------------------------------------------------------------
@@ -129,6 +135,7 @@ class PlotManager:
         # Each callable receives (log_history, run_dir) plus extra kwargs.
         tasks = [
             ("loss",            self._run_loss),
+            ("eval_loss",       self._run_eval_loss),
             ("reward_margin",   self._run_reward_margin),
             ("reward_accuracy", self._run_reward_accuracy),
             ("log_ratio",       self._run_log_ratio),
@@ -183,6 +190,9 @@ class PlotManager:
     def _run_loss(self, log_history, run_dir):
         return plot_loss(log_history, run_dir)
 
+    def _run_eval_loss(self, log_history, run_dir):
+        return plot_eval_loss(log_history, run_dir)
+
     def _run_reward_margin(self, log_history, run_dir):
         return plot_reward_margin(log_history, run_dir)
 
@@ -196,7 +206,8 @@ class PlotManager:
         return plot_kl_divergence(log_history, self.beta, run_dir)
 
     def _run_grad_norm(self, log_history, run_dir):
-        return plot_grad_norm(log_history, run_dir, max_grad_norm=self.max_grad_norm)
+        return plot_grad_norm(log_history, run_dir, max_grad_norm=self.max_grad_norm,
+                             smoothing_window=self.grad_norm_smoothing)
 
     def _run_lr_schedule(self, log_history, run_dir):
         return plot_lr_schedule(log_history, run_dir)

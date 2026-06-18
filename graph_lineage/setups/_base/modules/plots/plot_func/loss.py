@@ -52,6 +52,8 @@ def plot_loss(
     if not train:
         logger.warning("plot_loss: no train-loss entries found in log_history.")
         raise ValueError("No train-loss entries found in log_history.")
+    if not evals:
+        logger.warning("plot_loss: no eval-loss entries found in log_history; eval will not be shown.")
     steps_t = np.array([x[0] for x in train])
     losses_t = np.array([x[1] for x in train], dtype=float)
 
@@ -68,17 +70,36 @@ def plot_loss(
             epoch_bounds.append(e["step"])
             prev_ep = ep_int
 
-    # -- build figure: transparent raw + smoothed train line + eval markers --
+    # -- build figure: transparent raw + smoothed train line + eval markers/line --
     fig, ax = plt.subplots(figsize=figsize)
     ax.plot(steps_t, losses_t, color="#2196F3", alpha=0.2, linewidth=0.8)
     ax.plot(steps_t, smoothed, color="#2196F3", linewidth=2.0,
             label=f"Train loss (smooth={smoothing_window})")
+
+    # -- plot eval loss (as dashed line with markers, or as reference line if single point) --
     if evals:
         steps_e, losses_e = zip(*evals)
-        ax.plot(steps_e, losses_e, color="#FF9800", linewidth=1.8,
-                linestyle="--", marker="o", markersize=5, label="Eval loss")
+        if len(evals) > 1:
+            ax.plot(steps_e, losses_e, color="#E91E63", linewidth=1.8,
+                    linestyle="--", marker="o", markersize=5, label="Eval loss (each eval_steps)")
+        else:
+            # Single eval entry: show as horizontal reference line + final marker
+            eval_loss_val = losses_e[0]
+            ax.axhline(eval_loss_val, color="#E91E63", linestyle="--", alpha=0.8,
+                      linewidth=2.0, label=f"Final eval loss = {eval_loss_val:.4f}")
+            ax.scatter(steps_e, losses_e, color="#E91E63", s=80, zorder=6, edgecolor="#C2185B", linewidth=2)
+    else:
+        # No eval loss: add visible warning text on plot
+        ax.text(0.98, 0.05, "⚠ NO EVAL LOSS FOUND",
+               transform=ax.transAxes, ha="right", va="bottom",
+               fontsize=11, color="#E91E63", weight="bold",
+               bbox=dict(boxstyle="round,pad=0.5", facecolor="white", edgecolor="#E91E63", alpha=0.8))
+        logger.warning("plot_loss: no eval_loss in log_history; ensure eval_size > 0 and eval_steps configured")
+
+    # -- epoch boundaries --
     for eb in epoch_bounds:
         ax.axvline(eb, color="gray", linestyle=":", alpha=0.4, linewidth=0.8)
+
     ax.set_xlabel("Step")
     ax.set_ylabel("Loss")
     ax.set_title("Train / Eval Loss")

@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import List, Dict, Optional, Tuple
 import matplotlib.pyplot as plt
 import numpy as np
+from modules.plots.plot_func._utils import rolling_mean
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +24,7 @@ def plot_grad_norm(
     log_history: List[Dict],
     output_dir: Path,
     max_grad_norm: Optional[float] = 1.0,
+    smoothing_window: int = 20,
     figsize: Tuple[float, float] = (10, 5),
 ) -> Path:
     """Save gradient-norm-over-steps plot to output_dir/grad_norm.png.
@@ -35,6 +37,8 @@ def plot_grad_norm(
         Directory where the figure is saved.
     max_grad_norm : float or None
         Clipping ceiling from DPOConfig; drawn as a reference line. Pass None to omit.
+    smoothing_window : int
+        Rolling-mean window applied to reduce noise (1 = no smoothing, default 20).
     figsize : tuple
         Matplotlib figure size in inches.
 
@@ -43,7 +47,7 @@ def plot_grad_norm(
     Path
         Path to the saved figure.
     """
-    # -- extract gradient norm entries (raw, no smoothing; spikes are signal here) --
+    # -- extract gradient norm entries --
     entries = [e for e in log_history if "grad_norm" in e]
     if not entries:
         logger.warning("No 'grad_norm' entries in log_history; plot will be empty.")
@@ -56,6 +60,9 @@ def plot_grad_norm(
     steps      = np.array([e["step"]      for e in entries])
     grad_norms = np.array([e["grad_norm"] for e in entries], dtype=float)
 
+    # -- apply rolling mean to reduce noise --
+    smoothed = rolling_mean(grad_norms, smoothing_window)
+
     # -- identify steps at or above the clip ceiling --
     clipped_mask = (
         np.zeros(len(steps), dtype=bool)
@@ -63,9 +70,11 @@ def plot_grad_norm(
         else (grad_norms >= max_grad_norm * 0.99)
     )
 
-    # -- build figure with raw norm, ceiling reference line, shaded over-ceiling region --
+    # -- build figure with raw norm (faint), smoothed, ceiling reference line, shaded over-ceiling --
     fig, ax = plt.subplots(figsize=figsize)
-    ax.plot(steps, grad_norms, color="#607D8B", linewidth=1.5, label="Grad norm (pre-clip)")
+    ax.plot(steps, grad_norms, color="#607D8B", alpha=0.2, linewidth=0.8, label="Grad norm (raw)")
+    ax.plot(steps, smoothed, color="#607D8B", linewidth=2.0,
+            label=f"Grad norm (smooth={smoothing_window})")
     if np.any(clipped_mask):
         ax.scatter(steps[clipped_mask], grad_norms[clipped_mask],
                    color="#F44336", s=30, zorder=5, label="At/above clip ceiling")

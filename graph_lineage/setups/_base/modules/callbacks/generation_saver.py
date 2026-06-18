@@ -26,7 +26,7 @@ class GenerationSaverCallback(TrainerCallback):
         output_dir: str = "modules/docs/generations",
         num_samples: int = 3,
         log_steps_interval: int = 500,
-        max_new_tokens: int = 512,
+        max_new_tokens: int = 1024,
     ):
         self.model = model
         self.tokenizer = tokenizer

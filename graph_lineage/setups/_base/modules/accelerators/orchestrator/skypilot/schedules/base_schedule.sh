@@ -157,17 +157,23 @@ SKY_MEMORY=$(py_extract_field "$BASE_CONFIG" "hardware.skypilot.resources.memory
 # -----------------------------------------------------------------------------
 for i in "${!VARIANT_FILES[@]}"; do
   variant_file="${VARIANT_FILES[$i]}"
-  run_id=$(date +%Y%m%d_%H%M%S)"_${i}"
   
+  # 1. Determiniamo PRIMA il nome della variante (Evita bug di precedenza)
+  variant_name="base"
+  if [[ "$variant_file" != "__base__" ]]; then
+    variant_name=$(basename "$variant_file" .yml)
+  fi
+
+  # 2. Generiamo l'ID e la cartella usando il nome appena estratto
+  run_id="${variant_name}_$(date +%Y%m%d_%H%M%S)_${i}"
   run_sandbox_dir="${GENERATED_DIR}/run_${run_id}"
   mkdir -p "$run_sandbox_dir"
   
-  variant_name="base"
+  # 3. Log e normalizzazione del path per lo script python successivo
   if [[ "$variant_file" == "__base__" ]]; then
     variant_file=""
     echo "=== Preparazione Variante: BASE ==="
   else
-    variant_name=$(basename "$variant_file" .yml)
     echo "=== Preparazione Variante: ${variant_name} ==="
   fi
 

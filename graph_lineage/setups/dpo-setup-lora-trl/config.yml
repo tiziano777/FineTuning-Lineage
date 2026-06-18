@@ -49,8 +49,7 @@ model:
 
 
     logging_steps: 10
-    eval_steps: 1500
-    save_steps: 1500
+    save_steps: 500
     max_steps: null
     
     bf16: true
@@ -62,6 +61,8 @@ model:
     max_prompt_length: 1024  # Lunghezza MASSIMA del system_prompt + user_prompt
     
     eval_size: 0.05
+    eval_steps: 50
+    evaluation_strategy: steps
 
     deepspeed:
       fp16:

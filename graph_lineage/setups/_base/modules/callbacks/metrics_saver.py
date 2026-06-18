@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -12,15 +13,8 @@ logger = logging.getLogger(__name__)
 
 
 class MetricsSaverCallback(TrainerCallback):
-    """Write trainer.state.log_history to JSON on every evaluate and save event.
-
-    This ensures intermediate metrics survive a crash and can be used
-    to generate partial diagnostic plots via PlotManager.
-
-    Every 500 global steps, also generates diagnostic plots via PlotManager
-    into a subdirectory named ``plots-iter-<step>/``.
-    """
-
+    """Write trainer.state.log_history to JSON on every evaluate and save event."""
+    
     def __init__(
         self,
         metrics_path: Path,
@@ -37,21 +31,39 @@ class MetricsSaverCallback(TrainerCallback):
         self._last_plot_step = 0
 
     def on_evaluate(self, args, state: TrainerState, control, **kwargs):
-        self._save(state)
-
-    def on_save(self, args, state: TrainerState, control, **kwargs):
-        self._save(state)
-
-    def on_log(self, args, state: TrainerState, control, **kwargs):
+        """Save log_history and trigger plots after eval (eval_loss now in log_history)."""
+        logger.info(f"📊 EVALUATION at step {state.global_step}")
         self._save(state)
         self._maybe_plot(state)
 
+    def on_log(self, args, state: TrainerState, control, **kwargs):
+        """Save log_history snapshot every logging_steps."""
+        self._save(state)
+
     def _save(self, state: TrainerState):
+        """Salva log_history con metadati."""
         self.metrics_path.mkdir(parents=True, exist_ok=True)
         out = self.metrics_path / "log_history.json"
+        
+        # Verifica presenza di eval_loss
+        log_history = state.log_history
+        eval_entries = [e for e in log_history if 'eval_loss' in e]
+        
         with open(out, "w") as f:
-            json.dump(state.log_history, f)
-        logger.info("Saved log_history (%d entries) to %s", len(state.log_history), out)
+            json.dump({
+                "log_history": log_history,
+                "metadata": {
+                    "total_entries": len(log_history),
+                    "eval_entries": len(eval_entries),
+                    "last_entry": log_history[-1] if log_history else None,
+                    "has_eval": len(eval_entries) > 0
+                }
+            }, f, indent=2)
+        
+        if eval_entries:
+            logger.info(f"✅ Saved log_history with {len(eval_entries)} eval entries")
+        else:
+            logger.warning("⚠️ No eval_loss entries in log_history!")
 
     def _maybe_plot(self, state: TrainerState):
         step = state.global_step

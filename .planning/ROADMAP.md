@@ -16,7 +16,7 @@ MILESTONE 1 (This Work)
 ├─ PHASE 3: DiffManager System (2.5-3h) ✅
 ├─ PHASE 4: Hook/Decorator (3.5-4h) ✅
 ├─ PHASE 5: Streamlit UI Redesign (5 plans, 3 waves) ✅
-├─ PHASE 6: Integration & E2E Testing (2.5-3h)
+├─ PHASE 6: Integration & E2E Testing (4 plans, 3 waves)
 ├─ PHASE 7: Documentation (1.5-2h)
 ├─ PHASE 8: Polish & Verification (1h)
 └─ PHASE 9: Commit & Prepare (0.5h)
@@ -178,34 +178,27 @@ Plans:
 
 ## PHASE 6: Integration & E2E Testing
 
-**Goal**: Full end-to-end testing with all 5 run scenarios + local Neo4j
+**Goal**: Fix all failing tests, correct server base_experiment_id logic, and implement 7 sequential integration scenarios (S-01 through S-07) covering NEW, RETRY, BRANCH, RESUME, and MERGE strategies.
 **Estimate**: 2.5-3h
+**Status**: Planning complete
+**Plans:** 4 plans
+
+Plans:
+- [ ] 06-01-PLAN.md — Fix 10 failing tests (Group A: rule_engine, Group B: server_api, Group C: checkpoint, Group D: e2e)
+- [ ] 06-02-PLAN.md — Server fix: base_experiment_id self-reference for NEW + integration_new assertions
+- [ ] 06-03-PLAN.md — Test infrastructure (logs/, ckp_factory, codebase_mutator fixtures) + S-01, S-02
+- [ ] 06-04-PLAN.md — Merge infrastructure (mock_neo4j, merge_client) + S-03, S-04, S-05, S-06, S-07
+
 **Success Criteria**:
-- [ ] All 5 scenarios (NEW, RETRY, BRANCH, RESUME, MERGE) pass
-- [ ] Neo4j shows correct nodes + relationships
-- [ ] Exit codes correct for all cases
-- [ ] Streamlit UI displays all created nodes
-- [ ] No crashes or hangs
-
-**Tasks**:
-1. **6.1** Create: `tests/fixtures/mock_train.py` (mock training function)
-2. **6.2** Create: Test scenarios (1-5: NEW, RETRY, BRANCH, RESUME, MERGE)
-3. **6.3** Create: `tests/integration/test_scenarios.py`
-4. **6.4** Test: Scenario 1 (NEW) → verify experiment.id generated + written
-5. **6.5** Test: Scenario 2 (RETRY) → same config, new experiment, RETRY_OF edge
-6. **6.6** Test: Scenario 3 (BRANCH) → modified file, DERIVED_FROM edge + diff_patch
-7. **6.7** Test: Scenario 4 (RESUME) → checkpoint_resume_from specified
-8. **6.8** Test: Scenario 5 (MERGE) → model_merging triggered
-9. **6.9** Manual test: docker-compose up + run mock_train locally
-10. **6.10** Manual verify: Streamlit UI shows all nodes + relationships
-11. **6.11** Test: All error cases (exit 2, 3, 4, 5)
-
-**Deliverables**:
-- `.planning/phases/06-integration/PLAN.md`
-- All 5 scenarios passing
-- Integration tests working
-- Manual testing complete
-- Neo4j visualization verified
+- [ ] 0 failing tests in pytest tests/
+- [ ] base_experiment_id == experiment_id for all NEW strategy experiments
+- [ ] S-01 (NEW→RETRY→RETRY): 2 RETRY_OF edges, 0 checkpoints
+- [ ] S-02 (NEW→BRANCH→BRANCH): 2 DERIVED_FROM edges with diff_patch
+- [ ] S-03 (NEW→BRANCH+ckp): DERIVED_FROM + STARTED_FROM + PRODUCED
+- [ ] S-04 (NEW→RETRY→RESUME): RETRY_OF + STARTED_FROM pointing to ckp
+- [ ] S-05 (MERGE intra-exp): MERGED_FROM x2, no PRODUCED from training
+- [ ] S-06 (MERGE inter-exp + PROMOTED_TO): MERGED_FROM x2 + PROMOTED_TO Model
+- [ ] S-07 (Full tree): all relationship types + no-circular-deps assertion
 
 **Depends On**: PHASE 5 (UI), PHASE 4 (decorator)
 
@@ -345,4 +338,4 @@ Next: `/gsd-execute-phase 1`
 
 ---
 
-**Status**: Phase 5 COMPLETE. Next: Phase 6 (Integration E2E).
+**Status**: Phase 5 COMPLETE. Phase 6 PLANNED. Next: Phase 6 (Integration E2E).
