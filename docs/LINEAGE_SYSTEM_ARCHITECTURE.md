@@ -154,9 +154,9 @@ Il campo `diff_patch` contiene il diff git-style completo tra i file dell'experi
 ### 3.3 Constraints e Indici Neo4j
 
 ```cypher
-CREATE CONSTRAINT recipe_id     IF NOT EXISTS FOR (r:Recipe)     REQUIRE r.recipe_id IS UNIQUE;
+CREATE CONSTRAINT recipe_id     IF NOT EXISTS FOR (r:Recipe)     REQUIRE r.id IS UNIQUE;
 CREATE CONSTRAINT name     IF NOT EXISTS FOR (r:Recipe)     REQUIRE r.name IS UNIQUE;
-CREATE CONSTRAINT experiment_id IF NOT EXISTS FOR (e:Experiment) REQUIRE e.exp_id IS UNIQUE;
+CREATE CONSTRAINT experiment_id IF NOT EXISTS FOR (e:Experiment) REQUIRE e.id IS UNIQUE;
 CREATE CONSTRAINT checkpoint_id IF NOT EXISTS FOR (c:Checkpoint) REQUIRE c.id IS UNIQUE;
 CREATE CONSTRAINT model_name    IF NOT EXISTS FOR (m:Model)      REQUIRE m.model_name IS UNIQUE;
 CREATE CONSTRAINT component_composite IF NOT EXISTS FOR (c:Component) REQUIRE (c.technique_code, c.framework_code) IS UNIQUE;

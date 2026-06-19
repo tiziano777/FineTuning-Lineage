@@ -104,8 +104,8 @@ class TestLineageCheckpointCallback:
 
     @pytest.fixture
     def mock_ctx(self):
-        from graph_lineage.setups._base.modules.lineage.client import ExecutionContext
-        from graph_lineage.setups._base.modules.lineage.config import ServerConfig
+        from graph_lineage.setups._base.modules.lineage.http.client import ExecutionContext
+        from graph_lineage.setups._base.modules.lineage.http.data_classes.server_config import ServerConfig
         from pathlib import Path
 
         config = ServerConfig(url="http://localhost:8000", protocol="http", timeout=10, retries=1, blocking=False)
@@ -120,8 +120,8 @@ class TestLineageCheckpointCallback:
     @patch("graph_lineage.setups._base.modules.lineage.callbacks.ConnectorFactory.create")
     def test_on_save_sends_checkpoint(self, mock_factory, mock_ctx):
         """on_save sends CheckpointRequest to connector."""
-        from graph_lineage.setups._base.modules.lineage.callbacks import LineageCheckpointCallback
-        from graph_lineage.setups._base.modules.lineage.models import CheckpointResponse
+        from graph_lineage.setups._base.modules.lineage.utils.callbacks import LineageCheckpointCallback
+        from graph_lineage.setups._base.modules.lineage.http.data_classes.http_config import CheckpointResponse
 
         mock_connector = MagicMock()
         mock_connector.send_checkpoint.return_value = CheckpointResponse(
@@ -154,7 +154,7 @@ class TestLineageCheckpointCallback:
     @patch("graph_lineage.setups._base.modules.lineage.callbacks.ConnectorFactory.create")
     def test_on_save_non_blocking_swallows_error(self, mock_factory, mock_ctx):
         """Non-blocking mode logs warning instead of raising."""
-        from graph_lineage.setups._base.modules.lineage.callbacks import LineageCheckpointCallback
+        from graph_lineage.setups._base.modules.lineage.utils.callbacks import LineageCheckpointCallback
 
         mock_connector = MagicMock()
         mock_connector.send_checkpoint.side_effect = ConnectionError("timeout")
@@ -176,7 +176,7 @@ class TestLineageCheckpointCallback:
     @patch("graph_lineage.setups._base.modules.lineage.callbacks.ConnectorFactory.create")
     def test_on_save_blocking_raises(self, mock_factory, mock_ctx):
         """Blocking mode re-raises connection errors."""
-        from graph_lineage.setups._base.modules.lineage.callbacks import LineageCheckpointCallback
+        from graph_lineage.setups._base.modules.lineage.utils.callbacks import LineageCheckpointCallback
 
         mock_connector = MagicMock()
         mock_connector.send_checkpoint.side_effect = ConnectionError("timeout")
@@ -198,8 +198,8 @@ class TestLineageCheckpointCallback:
     @patch("graph_lineage.setups._base.modules.lineage.callbacks.ConnectorFactory.create")
     def test_run_counter_increments(self, mock_factory, mock_ctx):
         """Each on_save increments the run counter."""
-        from graph_lineage.setups._base.modules.lineage.callbacks import LineageCheckpointCallback
-        from graph_lineage.setups._base.modules.lineage.models import CheckpointResponse
+        from graph_lineage.setups._base.modules.lineage.utils.callbacks import LineageCheckpointCallback
+        from graph_lineage.setups._base.modules.lineage.http.data_classes.http_config import CheckpointResponse
 
         mock_connector = MagicMock()
         mock_connector.send_checkpoint.return_value = CheckpointResponse(
@@ -236,8 +236,8 @@ class TestDecoratorInjection:
     def test_callback_injected_when_capture_checkpoints(self, mock_factory, mock_client_cls, mock_callback_cls, test_project):
         """Decorator injects lineage_callback kwarg when capture_checkpoints=True."""
         from graph_lineage.setups._base.modules.lineage import lineage_tracker
-        from graph_lineage.setups._base.modules.lineage.client import ExecutionContext
-        from graph_lineage.setups._base.modules.lineage.config import ServerConfig
+        from graph_lineage.setups._base.modules.lineage.http.client import ExecutionContext
+        from graph_lineage.setups._base.modules.lineage.http.data_classes.server_config import ServerConfig
         from pathlib import Path
 
         config = ServerConfig(url="http://localhost:8000", protocol="http", timeout=10, retries=1, blocking=False)

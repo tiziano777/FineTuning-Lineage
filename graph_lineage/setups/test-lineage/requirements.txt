@@ -1,0 +1,22 @@
+# DPO training with Unsloth (full weights, no quantization)
+# Target env: A100-80GB, CUDA 12.2
+skypilot>=0.10.0
+skypilot[kubernetes]
+torch>=2.5.0
+transformers>=4.46.0
+trl>=0.12.0
+accelerate>=0.25.0
+datasets>=2.14.0
+pyyaml
+pydantic>=2.0.0
+pandas>=2.0.0
+pyarrow>=12.0.0
+numpy<2
+rich
+python-dotenv
+matplotlib>=3.9.4
+huggingface_hub>=0.20.0
+rouge-score>=0.1.2
+scipy>=1.11.0
+yq
+eval_type_backport

@@ -10,7 +10,47 @@ from graph_lineage.streamlit_ui.utils.errors import UIError
 from graph_lineage.streamlit_ui.db.neo4j_async import AsyncNeo4jClient
 
 logger = logging.getLogger(__name__)
+"""
+PATCH per graph_lineage/streamlit_ui/db/repository/experiment_repository.py
+Aggiungere i seguenti metodi alla classe ExperimentRepository esistente.
+"""
 
+import json
+from datetime import datetime
+from typing import Any, Optional
+
+# ── Costanti per i campi agentici ─────────────────────────────────────────────
+
+SCOPE_OPTIONS = [
+    "baseline",
+    "ablation",
+    "hyperparameter_search",
+    "architecture_change",
+    "data_experiment",
+    "regression_check",
+]
+
+CONCLUSION_TYPE_OPTIONS = [
+    "confirmed",
+    "refuted",
+    "inconclusive",
+    "unexpected",
+    "error",
+]
+
+RETRY_POLICY_OPTIONS = [
+    "none",
+    "on_failure",
+    "always",
+    "if_promising",
+]
+
+VALIDATION_SCOPE_OPTIONS = [
+    "train_only",
+    "held_out",
+    "full_benchmark",
+    "human_eval",
+]
 
 class ExperimentRepository:
     """Data access layer for Experiment entity."""
@@ -384,4 +424,169 @@ class ExperimentRepository:
         result = await self.db.run_single(query, **params)
         if not result:
             raise UIError("Experiment not found")
+        return dict(result)
+
+    async def get_agentic_metadata(self, exp_id: str) -> Optional[dict]:
+        """Fetch only the agentic metadata fields for a given experiment.
+
+        Args:
+            exp_id: Experiment ID (exp_id property on the node).
+
+        Returns:
+            Dict with all agentic metadata fields, or None if experiment not found.
+        """
+        query = """
+        MATCH (e:Experiment {exp_id: $exp_id})
+        RETURN
+            e.scope                AS scope,
+            e.hypothesis           AS hypothesis,
+            e.motivation           AS motivation,
+            e.conclusion           AS conclusion,
+            e.conclusion_type      AS conclusion_type,
+            e.evidences            AS evidences,
+            e.open_questions       AS open_questions,
+            e.is_base              AS is_base,
+            e.exploration_priority AS exploration_priority,
+            e.dead_end             AS dead_end,
+            e.tags                 AS tags,
+            e.confidence           AS confidence,
+            e.retry_policy         AS retry_policy,
+            e.validation_scope     AS validation_scope,
+            e.compute_cost         AS compute_cost,
+            e.duration_seconds     AS duration_seconds,
+            e.estimated_gain       AS estimated_gain
+        """
+        result = await self.db.run_single(query, exp_id=exp_id)
+        if result is None:
+            return None
+
+        # Deserializza i campi JSON serializzati come stringa
+        for json_field in ("evidences", "open_questions", "tags"):
+            raw = result.get(json_field)
+            if isinstance(raw, str):
+                try:
+                    result[json_field] = json.loads(raw)
+                except (json.JSONDecodeError, TypeError):
+                    result[json_field] = []
+            elif raw is None:
+                result[json_field] = [] if json_field in ("open_questions", "tags") else None
+
+        return dict(result)
+
+    async def update_agentic_metadata(
+        self,
+        exp_id: str,
+        *,
+        # Gruppo 1 — identità
+        scope: Optional[str] = None,
+        hypothesis: Optional[str] = None,
+        motivation: Optional[str] = None,
+        # Gruppo 2 — conoscenza post-run
+        conclusion: Optional[str] = None,
+        conclusion_type: Optional[str] = None,
+        evidences: Optional[list[dict]] = None,
+        open_questions: Optional[list[str]] = None,
+        # Gruppo 3 — navigabilità
+        is_base: Optional[bool] = None,
+        exploration_priority: Optional[float] = None,
+        dead_end: Optional[bool] = None,
+        tags: Optional[list[str]] = None,
+        # Gruppo 4 — affidabilità
+        confidence: Optional[float] = None,
+        retry_policy: Optional[str] = None,
+        validation_scope: Optional[str] = None,
+        # Gruppo 5 — costi
+        compute_cost: Optional[float] = None,
+        duration_seconds: Optional[int] = None,
+        estimated_gain: Optional[float] = None,
+    ) -> dict:
+        """Update agentic/epistemic metadata fields on an :Experiment node.
+
+        Only fields explicitly passed (non-None) are written. Fields left as None
+        are NOT touched, preserving whatever was already stored.
+
+        JSON array fields (evidences, open_questions, tags) are serialised to
+        strings before writing, because Neo4j stores them as node properties
+        and the driver handles list<string> natively but list<dict> is safer
+        as JSON strings.
+
+        Args:
+            exp_id: Experiment ID (exp_id property, not internal id).
+            scope: Macro-category enum.
+            hypothesis: Claim to be verified, written pre-run.
+            motivation: Why this experiment was created.
+            conclusion: Post-run narrative summary.
+            conclusion_type: Epistemic outcome enum.
+            evidences: Structured list of metric observations.
+            open_questions: Open research questions generated by this run.
+            is_base: Whether this is a baseline/reference experiment.
+            exploration_priority: Agent's confidence in this direction [0-1].
+            dead_end: Whether this direction should not be explored further.
+            tags: Free-form labels for semantic clustering.
+            confidence: Reliability of result [0-1].
+            retry_policy: Retry behaviour enum.
+            validation_scope: Granularity of evaluation enum.
+            compute_cost: Estimated GPU-hours or token equivalent.
+            duration_seconds: Actual wall-clock duration of the run.
+            estimated_gain: Predicted delta on primary metric (pre-run).
+
+        Returns:
+            Dict with exp_id confirming the write.
+
+        Raises:
+            UIError: If no fields provided or experiment not found.
+        """
+        from graph_lineage.streamlit_ui.utils.errors import UIError  # local import to avoid circular
+
+        # Mappa campo → valore, serializzando dove necessario
+        field_map: dict[str, Any] = {}
+
+        # Scalari semplici
+        for name, val in [
+            ("scope", scope),
+            ("hypothesis", hypothesis),
+            ("motivation", motivation),
+            ("conclusion", conclusion),
+            ("conclusion_type", conclusion_type),
+            ("is_base", is_base),
+            ("exploration_priority", exploration_priority),
+            ("dead_end", dead_end),
+            ("confidence", confidence),
+            ("retry_policy", retry_policy),
+            ("validation_scope", validation_scope),
+            ("compute_cost", compute_cost),
+            ("duration_seconds", duration_seconds),
+            ("estimated_gain", estimated_gain),
+        ]:
+            if val is not None:
+                field_map[name] = val
+
+        # Array/JSON — serializzati come stringa per uniformità
+        if evidences is not None:
+            field_map["evidences"] = json.dumps(evidences, ensure_ascii=False)
+        if open_questions is not None:
+            field_map["open_questions"] = json.dumps(open_questions, ensure_ascii=False)
+        if tags is not None:
+            # tags è una lista di stringhe: il driver Neo4j la gestisce nativamente
+            field_map["tags"] = tags
+
+        if not field_map:
+            raise UIError("Nessun campo da aggiornare fornito")
+
+        # Costruisce SET dinamico (parametrizzato, nessun rischio di injection)
+        set_clauses = [f"e.{k} = ${k}" for k in field_map]
+        set_clauses.append("e.updated_at = $updated_at")
+        field_map["updated_at"] = datetime.utcnow().isoformat()
+        field_map["exp_id"] = exp_id
+
+        query = f"""
+        MATCH (e:Experiment {{exp_id: $exp_id}})
+        SET {', '.join(set_clauses)}
+        RETURN e.exp_id AS exp_id
+        """
+
+        result = await self.db.run_single(query, **field_map)
+        if not result:
+            raise UIError(f"Experiment '{exp_id}' non trovato")
+
         return dict(result)

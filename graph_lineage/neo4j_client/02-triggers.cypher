@@ -59,5 +59,3 @@ RETURN "Trigger orphan_checkpoint_validation installed" AS message;
 // ─────────────────────────────────────────────────────────────────────────
 // END OF TRIGGERS
 // ─────────────────────────────────────────────────────────────────────────
-// Next: Run 03-seeds.cypher for initial seed data population
-//

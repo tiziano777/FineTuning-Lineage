@@ -38,7 +38,6 @@ def _run_sync(coro) -> Any:
         loop = None
 
     if loop is not None and loop.is_running():
-        # Event loop already running — apply nest_asyncio (idempotent) and reuse it
         if not _nest_asyncio_applied:
             nest_asyncio.apply()
             _nest_asyncio_applied = True
@@ -63,14 +62,7 @@ async def _find_parent_experiment_async(uri: str) -> dict[str, Any] | None:
 
 
 def find_parent_experiment(uri: str) -> Experiment | None:
-    """Find the most recent experiment for a given project URI.
-
-    Args:
-        uri: Project URI to search for.
-
-    Returns:
-        Experiment instance or None if no prior experiment exists.
-    """
+    """Find the most recent experiment for a given project URI."""
     if not uri:
         return None
     data = _run_sync(_find_parent_experiment_async(uri))
@@ -92,14 +84,7 @@ async def _find_experiment_by_id_async(experiment_id: str) -> dict[str, Any] | N
 
 
 def find_experiment_by_id(experiment_id: str) -> Experiment | None:
-    """Find an experiment by its unique ID.
-
-    Args:
-        experiment_id: Experiment UUID to look up.
-
-    Returns:
-        Experiment instance or None if not found.
-    """
+    """Find an experiment by its unique ID."""
     data = _run_sync(_find_experiment_by_id_async(experiment_id))
     if data is None:
         return None
@@ -110,7 +95,6 @@ async def _create_experiment_node_async(exp: Experiment) -> str:
     """Create an Experiment node in Neo4j."""
     driver = await get_driver()
     props = exp.model_dump(mode="python")
-    # Convert datetime to ISO string for Neo4j
     for key in ("created_at", "updated_at"):
         if key in props and props[key] is not None:
             props[key] = props[key].isoformat()
@@ -125,18 +109,11 @@ async def _create_experiment_node_async(exp: Experiment) -> str:
 
 
 def create_experiment_node(exp: Experiment) -> str:
-    """Create an Experiment node in Neo4j and return its ID.
-
-    Args:
-        exp: Experiment instance to persist.
-
-    Returns:
-        The experiment ID.
-    """
+    """Create an Experiment node in Neo4j and return its ID."""
     return _run_sync(_create_experiment_node_async(exp))
 
 
-async def _create_edge_async(
+async def _create_experiment_edge_async(
     from_id: str,
     to_id: str,
     rel_type: str,
@@ -169,10 +146,35 @@ def create_edge(
     Args:
         from_id: Source experiment ID.
         to_id: Target experiment ID.
-        rel_type: Relationship type (DERIVED_FROM, RETRY_OF, STARTED_FROM).
+        rel_type: Relationship type (DERIVED_FROM, RETRY_FROM, DERIVED_FROM).
         properties: Optional relationship properties.
     """
-    _run_sync(_create_edge_async(from_id, to_id, rel_type, properties))
+    _run_sync(_create_experiment_edge_async(from_id, to_id, rel_type, properties))
+
+
+async def _create_started_from_edge_async(exp_id: str, ckp_id: str) -> None:
+    """Create STARTED_FROM relationship from Experiment to Checkpoint."""
+    driver = await get_driver()
+    query = """
+    MATCH (e:Experiment {id: $exp_id})
+    MATCH (c:Checkpoint {id: $ckp_id})
+    CREATE (e)-[:STARTED_FROM]->(c)
+    """
+    async with driver.session() as session:
+        await session.run(query, {"exp_id": exp_id, "ckp_id": ckp_id})
+
+
+def create_started_from_edge(exp_id: str, ckp_id: str) -> None:
+    """Create STARTED_FROM relationship from Experiment to Checkpoint.
+
+    Used for RESUME and BRANCH-with-checkpoint strategies where the new
+    experiment physically starts from a specific checkpoint's weights.
+
+    Args:
+        exp_id: Source experiment ID.
+        ckp_id: Target checkpoint ID (the one weights are loaded from).
+    """
+    _run_sync(_create_started_from_edge_async(exp_id, ckp_id))
 
 
 async def _update_experiment_status_async(
@@ -201,14 +203,7 @@ def update_experiment_status(
     exit_msg: str | None = None,
     metrics_uri: str | None = None,
 ) -> None:
-    """Update experiment status in Neo4j.
-
-    Args:
-        exp_id: Experiment ID to update.
-        status: New status (COMPLETED, FAILED, etc.).
-        exit_msg: Optional exit/error message.
-        metrics_uri: Optional URI for metrics logs (currently not stored in Neo4j).
-    """
+    """Update experiment status in Neo4j."""
     _run_sync(_update_experiment_status_async(exp_id, status, exit_msg, metrics_uri))
 
 
@@ -233,14 +228,7 @@ async def _create_checkpoint_node_async(ckp: Checkpoint) -> str:
 
 
 def create_checkpoint_node(ckp: Checkpoint) -> str:
-    """Create a Checkpoint node in Neo4j and return its ID.
-
-    Args:
-        ckp: Checkpoint instance to persist.
-
-    Returns:
-        The checkpoint ID.
-    """
+    """Create a Checkpoint node in Neo4j and return its ID."""
     return _run_sync(_create_checkpoint_node_async(ckp))
 
 
@@ -257,10 +245,5 @@ async def _create_checkpoint_edge_async(exp_id: str, ckp_id: str) -> None:
 
 
 def create_checkpoint_edge(exp_id: str, ckp_id: str) -> None:
-    """Create PRODUCED relationship from Experiment to Checkpoint.
-
-    Args:
-        exp_id: Source experiment ID.
-        ckp_id: Target checkpoint ID.
-    """
+    """Create PRODUCED relationship from Experiment to Checkpoint."""
     _run_sync(_create_checkpoint_edge_async(exp_id, ckp_id))

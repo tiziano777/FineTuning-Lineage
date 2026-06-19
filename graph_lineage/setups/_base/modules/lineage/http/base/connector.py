@@ -9,8 +9,8 @@ from __future__ import annotations
 import logging
 from typing import Protocol
 
-from .config import ServerConfig
-from .models import (
+from ..data_classes.server_config import ServerConfig
+from ..data_classes.http_config import (
     CheckpointRequest,
     CheckpointResponse,
     HealthResponse,
@@ -89,7 +89,6 @@ class Connector(Protocol):
     def close(self) -> None:
         """Release any held resources (connections, sessions)."""
         ...
-
 
 class ServerError(Exception):
     """Raised when the server returns an error response."""
