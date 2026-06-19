@@ -29,21 +29,19 @@ Usage as client:
         client.close()
 """
 from __future__ import annotations
-
 import functools
 import logging
 from typing import Any, Callable
-
-from .http.client import LineageClient
+from .client import LineageClient
 
 logger = logging.getLogger(__name__)
 
 
+
 def LineageCheckpointCallback(*args, **kwargs):
     """Lazy accessor — avoids importing transformers at module load time."""
-    from .utils.callbacks import LineageCheckpointCallback as _Cls
+    from .callbacks import LineageCheckpointCallback as _Cls
     return _Cls(*args, **kwargs)
-
 
 def _extract_metrics_uri_from_config(config_path: str, experiment_id: str) -> str | None:
     """Extract metrics_uri from config.yml, resolving ${experiment.id}."""
@@ -70,14 +68,7 @@ def lineage_tracker(config_path_arg: int = 0, capture_checkpoints: bool = False)
     """Decorator that wraps a training function with PRE/POST lifecycle.
 
     The decorated function's first positional argument (or the one at
-    `config_path_arg` index) is used to locate the project root AND to
-    read an optional 'experiment' block that overrides .lineage/experiment.yml.
-    This supports orchestration scenarios where experiment metadata is injected
-    per-run directly into the training config.
-
-    The wrapped function is expected to return None or 0 on success. If it
-    returns None, the decorator normalises the exit value to 0 so callers
-    can rely on a consistent integer return code.
+    `config_path_arg` index) is used to locate the project root.
 
     Args:
         config_path_arg: Index of the positional arg that is the config path.
@@ -94,7 +85,6 @@ def lineage_tracker(config_path_arg: int = 0, capture_checkpoints: bool = False)
         def train(config_path: str, lineage_callback=None):
             trainer = Trainer(..., callbacks=[lineage_callback])
             trainer.train()
-            # no explicit return needed — decorator normalises to 0
     """
 
     def decorator(fn: Callable) -> Callable:
@@ -105,19 +95,19 @@ def lineage_tracker(config_path_arg: int = 0, capture_checkpoints: bool = False)
                 args[config_path_arg] if len(args) > config_path_arg else None
             )
 
-            # 2. Initialize client (passes config_path so experiment block is read)
+            # 2. Initialize client
             client = LineageClient(config_path=cp)
             ctx = client.pre_execution()
 
-            # 3. Non-blocking mode: server unreachable — run without tracking
+            # 3. Non-blocking mode: server unreachable
             if ctx is None:
                 logger.warning("Lineage server unreachable, running without tracking")
-                result = fn(*args, **kwargs)
-                return 0 if result is None else result
+                return fn(*args, **kwargs)
 
             # 4. Inject checkpoint callback if requested
             if capture_checkpoints:
-                from .utils.callbacks import LineageCheckpointCallback
+                # Import the callback (lazy to avoid circular imports)
+                from .callbacks import LineageCheckpointCallback
                 callback = LineageCheckpointCallback(ctx=ctx)
                 kwargs["lineage_callback"] = callback
 
@@ -142,20 +132,17 @@ def lineage_tracker(config_path_arg: int = 0, capture_checkpoints: bool = False)
                     status="COMPLETED",
                     metrics_uri=metrics_uri,
                 )
-
-                # 9. Normalise return: training functions typically return None;
-                #    return 0 as a clean success exit code for callers that check it.
-                return 0 if result is None else result
+                return result
 
             except Exception as e:
-                # 10. Extract metrics_uri from config even on failure
+                # 9. Extract metrics_uri from config even on failure
                 if metrics_uri is None and cp:
                     try:
                         metrics_uri = _extract_metrics_uri_from_config(cp, ctx.experiment_id)
                     except Exception:
                         pass
 
-                # 11. POST-execution (failure)
+                # 10. POST-execution (failure)
                 client.post_execution(
                     ctx=ctx,
                     status="FAILED",

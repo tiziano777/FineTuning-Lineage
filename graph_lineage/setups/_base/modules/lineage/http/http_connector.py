@@ -10,9 +10,9 @@ import logging
 
 import httpx
 
-from .config import ServerConfig
-from .connector import ConnectorFactory, ServerError
-from .models import (
+from .data_classes.server_config import ServerConfig
+from .base.connector import ConnectorFactory, ServerError
+from .data_classes.http_config import (
     CheckpointRequest,
     CheckpointResponse,
     HealthResponse,

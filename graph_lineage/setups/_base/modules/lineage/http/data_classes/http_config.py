@@ -7,7 +7,6 @@ from pydantic import BaseModel, Field
 
 # ─── PRE-EXECUTION ─────────────────────────────────────────────────────────────
 
-
 class PreRequest(BaseModel):
     """Payload sent to server before training execution starts.
 
@@ -32,7 +31,6 @@ class PreRequest(BaseModel):
     # Optional: checkpoint resume reference
     checkpoint_resume_from: str | None = None
 
-
 class PreResponse(BaseModel):
     """Server response after PRE-execution processing.
 
@@ -48,9 +46,7 @@ class PreResponse(BaseModel):
     previous_experiment_id: str | None = None
     changed_files: list[str] = Field(default_factory=list)
 
-
 # ─── POST-EXECUTION ───────────────────────────────────────────────────────────
-
 
 class PostRequest(BaseModel):
     """Payload sent to server after training execution ends.
@@ -63,7 +59,6 @@ class PostRequest(BaseModel):
     exit_message: str | None = None
     metrics_uri: str | None = None
 
-
 class PostResponse(BaseModel):
     """Server acknowledgement of POST-execution update."""
 
@@ -71,9 +66,7 @@ class PostResponse(BaseModel):
     status: str
     acknowledged: bool = True
 
-
 # ─── HEALTH ────────────────────────────────────────────────────────────────────
-
 
 class HealthResponse(BaseModel):
     """Server health check response."""
@@ -82,9 +75,7 @@ class HealthResponse(BaseModel):
     version: str = ""
     neo4j_connected: bool = False
 
-
 # ─── CHECKPOINT ────────────────────────────────────────────────────────────────
-
 
 class CheckpointRequest(BaseModel):
     """Payload sent to server when a checkpoint is saved during training."""
@@ -98,10 +89,10 @@ class CheckpointRequest(BaseModel):
     derived_from: str = ""
     is_merging: bool = False
 
-
 class CheckpointResponse(BaseModel):
     """Server acknowledgement of checkpoint creation."""
 
     checkpoint_id: str
     experiment_id: str
     acknowledged: bool = True
+

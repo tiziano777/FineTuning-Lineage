@@ -1,8 +1,4 @@
-"""LineageCheckpointCallback: TrainerCallback that sends checkpoint events to the lineage server.
-
-Injected by lineage_tracker(capture_checkpoints=True) into the wrapped function's kwargs.
-Requires an active ExecutionContext from the decorator's PRE phase.
-"""
+"""LineageCheckpointCallback: TrainerCallback that sends checkpoint events to the lineage server."""
 
 from __future__ import annotations
 
@@ -13,13 +9,12 @@ from typing import Any
 try:
     from transformers import TrainerCallback, TrainerState
 except ImportError:
-    # Allow import without transformers for testing/non-training contexts
     TrainerCallback = object  # type: ignore[assignment, misc]
     TrainerState = Any  # type: ignore[assignment, misc]
 
-from .client import ExecutionContext
-from .connector import ConnectorFactory, ServerError
-from .models import CheckpointRequest, CheckpointResponse
+from ..http.client import ExecutionContext
+from ..http.base.connector import ConnectorFactory, ServerError
+from ..http.data_classes.http_config import CheckpointRequest, CheckpointResponse
 
 logger = logging.getLogger(__name__)
 
@@ -45,10 +40,13 @@ class LineageCheckpointCallback(TrainerCallback):
         checkpoint_dir = state.best_model_checkpoint or args.output_dir
         metrics = state.log_history[-1] if state.log_history else {}
 
+        # state.epoch is float in HuggingFace (e.g. 1.0, 1.5) — cast to int for the schema
+        epoch = int(state.epoch) if state.epoch is not None else 0
+
         request = CheckpointRequest(
             experiment_id=self._ctx.experiment_id,
             name=Path(checkpoint_dir).name,
-            epoch=state.epoch,
+            epoch=epoch,
             run=self._run_counter,
             uri=str(checkpoint_dir),
             metrics=metrics,
@@ -70,3 +68,10 @@ class LineageCheckpointCallback(TrainerCallback):
             if self._blocking:
                 raise
             logger.warning("Unexpected error in checkpoint tracking: %s", e)
+
+    def on_train_end(self, args, state: TrainerState, control, **kwargs):
+        """Release connector resources when training ends."""
+        try:
+            self._connector.close()
+        except Exception as e:
+            logger.warning("Error closing checkpoint connector: %s", e)

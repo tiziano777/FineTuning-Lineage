@@ -5,6 +5,7 @@ __pycache__/
 dist/
 build/
 *.egg
+.claude/worktrees/
 
 # Virtual environments
 .venv/

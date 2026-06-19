@@ -1,19 +1,19 @@
 """Lineage Client SDK — Public API."""
 
-from .client import LineageClient, LineageClientError, ExecutionContext
-from .config import ServerConfig, ServerConfigError
-from .connector import Connector, ConnectorFactory, ServerError
-from .models import (
+from .http.client import LineageClient, LineageClientError, ExecutionContext
+from .http.data_classes.server_config import ServerConfig, ServerConfigError
+from .http.base.connector import Connector, ConnectorFactory, ServerError
+from .http.data_classes.http_config import (
     CheckpointRequest, CheckpointResponse,
     PostRequest, PostResponse,
     PreRequest, PreResponse,
     HealthResponse,
 )
-from .snapshot import FileTooLargeError, capture_codebase, content_hash
+from .utils.snapshot import FileTooLargeError, capture_codebase, content_hash
 from .tracker import lineage_tracker, LineageCheckpointCallback
 
 # Auto-register built-in connectors
-from . import http_connector as _http_connector  # noqa: F401
+from .http import http_connector as _http_connector  # noqa: F401
 
 __all__ = [
     "LineageClient",

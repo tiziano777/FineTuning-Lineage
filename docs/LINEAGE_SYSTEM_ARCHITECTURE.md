@@ -266,7 +266,7 @@ CALL apoc.trigger.install('neo4j', 'validateCheckpointHasExperiment', '
 - La UI disabilita "Resume" e "Download" per nodi con `uri = NULL`.
 - Le metriche sono comunque accessibili in un mount specifico
 
-### 5.2 Server dependent architecture — ✅ IMPLEMENTATA (Phase 6)
+### 5.2 Server dependent architecture 
 
 **Problema**: Worker (GPU train) e Master (sistema che salva lineage) possono essere macchine separate, necessitano di metodi di connessione, e ovviamente che il middleware possa inviare gli update attrverso essa
 
@@ -331,7 +331,7 @@ Neo4j non ha trigger nativi come SQL. APOC Procedures sono il meccanismo standar
 ### 5.7 Fragilità config.yml, madifica a id experiement, broke system
 Using comments to expose to the user what part of file you can modify freely, and what part of the configuration is the scope of the lineage system!
 
-### 5.8 Experimental Explosion — ✅ IMPLEMENTATA (Phase 6.1)
+### 5.8 Experimental Explosion 
 
 Il sistema ora gestisce l'esplosione di storage:
 - Il **base experiment** (strategy=NEW) salva il 100% del codice nel campo `codebase: dict`
@@ -379,7 +379,7 @@ Il template `_base/` include:
 - `.lineage/server.yml` — configurazione connessione al server
 - `modules/lineage/` — Client SDK autonomo (non richiede installazione di graph_lineage)
 
-### 6. UI del lineage system
+## 6. UI del lineage system
 
 **Stack**: Streamlit + streamlit-agraph + nest_asyncio
 **Pattern architetturale**: Repository async (Neo4j async driver) + Pydantic v2 per validazione form
@@ -413,7 +413,7 @@ Il template `_base/` include:
 
 ---
 
-## 7. Client-Server Architecture (Phase 6)
+## 7. Client-Server Architecture
 
 ### 7.1 Panoramica
 
@@ -427,14 +427,16 @@ Modulo autonomo copiato in ogni progetto di training. Non dipende da `graph_line
 
 | File | Ruolo |
 |------|-------|
-| `__init__.py` | Public API + `@lineage_tracker()` decorator |
-| `client.py` | `LineageClient` — PRE/POST lifecycle con retry |
-| `config.py` | `ServerConfig` da `.lineage/server.yml` |
-| `connector.py` | Protocol ABC (`Connector`) + `ConnectorFactory` |
-| `http_connector.py` | Implementazione HTTP (httpx) con auto-registration |
-| `models.py` | Payload Pydantic: `PreRequest/Response`, `PostRequest/Response`, `CheckpointRequest/Response` |
-| `callbacks.py` | `LineageCheckpointCallback` — TrainerCallback per cattura mid-training |
-| `snapshot.py` | Cattura codebase (scan root *.py/yml/txt, modules/ recursive, .lineage/) |
+| `__init____.py` | Public API  |
+| `tracker.py` | `@lineage_tracker()` decorator |
+| `http/client.py` | `LineageClient` — PRE/POST lifecycle con retry |
+| `http/data_classes/server_config.py` | `ServerConfig` da `.lineage/server.yml` |
+| `http/data_classes/http_config.py` | Payload Pydantic: `PreRequest/Response`, `PostRequest/Response`, `CheckpointRequest/Response` |
+| `http/base/connector.py` | Protocol ABC (`Connector`) + `ConnectorFactory` |
+| `http/http_connector.py` | Implementazione HTTP (httpx) con auto-registration |
+
+| `utils/callbacks.py` | `LineageCheckpointCallback` — TrainerCallback per cattura mid-training |
+| `utils/snapshot.py` | Cattura codebase (scan root *.py/yml/txt, modules/ recursive, .lineage/) |
 
 ### 7.3 Server API (`graph_lineage/server/`)
 
@@ -528,7 +530,7 @@ Il Client SDK cattura TUTTO il codice significativo del progetto:
 
 ---
 
-## 8. Module Structure (aggiornata)
+## 8. Module Structure
 
 ```
 graph_lineage/
@@ -563,7 +565,8 @@ graph_lineage/
 ├── setups/                     # Scaffolding templates for initializer user story
 │   ├── _base/                  # Base template
 │   │   ├── .lineage/           # experiment.yml + server.yml
-│   │   └── modules/*           # custom libraries + Client SDK for lineage (standalone, no pip install needed)
+│   │   ├── modules/*           # custom libraries + Client lineage SDK (no pip install needed)
+│   │   └── modules/lineage/*   # Client lineage SDK
 │   └── *                       # custom_setups_name ex DPO-setup, DPO-unsloth-setup, model-merging-setup..
 ├── streamlit_ui/*               # CRUD UI for Neo4j entities, setup generation  (Streamlit)
 ```
