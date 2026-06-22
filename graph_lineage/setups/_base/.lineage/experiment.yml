@@ -13,4 +13,4 @@ experiment:
 
   component: "{{COMPONENT_NAME}}"
   recipe: "{{RECIPE_NAME}}"
-  base_model_id: "{{MODEL_ID}}"
+  model_id: "{{MODEL_ID}}"

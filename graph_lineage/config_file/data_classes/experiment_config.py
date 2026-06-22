@@ -17,3 +17,6 @@ class ExperimentConfig(BaseModel):
     uri: str | None = None
     status: str | None = None
     checkpoint_resume_from: str | None = None
+    model_id: str | None = None
+    component_id: str | None = None
+    recipe_id: str | None = None

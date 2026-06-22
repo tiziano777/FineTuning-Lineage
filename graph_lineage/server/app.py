@@ -147,10 +147,13 @@ async def pre_execution(request: PreRequest) -> PreResponse:
                 "previous_experiment_id": request.previous_experiment_id,
                 "base_experiment_id": request.base_experiment_id,
                 "checkpoint_resume_from": request.checkpoint_resume_from,
+                "model_id": request.model_id or "",
+                "component_id": request.component_id or "",
+                "recipe_id": request.recipe_id or "",
             },
             "model": {
-                "model_uri": request.model_uri or "",
                 "model_id": request.model_id or "",
+                "model_uri": request.experiment_uri or "",
             }
         }, strict=False)
 
@@ -181,7 +184,6 @@ async def pre_execution(request: PreRequest) -> PreResponse:
             base=is_base,
             status="RUNNING",
             strategy=run_result.strategy,
-            model_uri=request.model_uri,
             model_id=request.model_id,
             codebase= json.dumps(snapshot.files) if is_base else json.dumps(run_result.diff_patch or {}),
             changed_files=run_result.changed_files or [],

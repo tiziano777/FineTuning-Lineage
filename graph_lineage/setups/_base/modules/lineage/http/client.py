@@ -180,8 +180,9 @@ class LineageClient:
                 base_experiment_id=exp_data.get("base_experiment_id"),
                 previous_experiment_id=exp_data.get("previous_experiment_id"),
                 description=exp_data.get("description"),
-                model_uri=exp_data.get("model_uri"),
                 model_id=exp_data.get("model_id"),
+                component_id=exp_data.get("component_id"),
+                recipe_id=exp_data.get("recipe_id"),
                 codebase=codebase,
                 checkpoint_resume_from=exp_data.get("checkpoint_resume_from"),
             )
@@ -223,6 +224,8 @@ class LineageClient:
                 server_config=self.server_config,
                 extra={
                     "model_id": exp_data.get("model_id", ""),
+                    "component_id": exp_data.get("component_id", ""),
+                    "recipe_id": exp_data.get("recipe_id", ""),
                     "config_path": self._config_path,
                 },
             )
