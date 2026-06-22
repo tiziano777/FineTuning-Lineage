@@ -19,13 +19,14 @@ class Experiment(BaseEntity):
     exit_msg: Optional[str] = None
     strategy: str = Field("", description="NEW | RESUME | BRANCH | RETRY")
 
-    model_uri: str = Field("", description="model_uri used for this run")
-    model_id: str = Field("", description="model_id used for entire lineage experimentations")
+    model_id: str | None = Field(None, description="model_id used for entire lineage experimentations")
+    recipe_id: str | None = Field(None, description="recipe_id used for entire lineage experimentations")
+    component_id: str | None = Field(None, description="component_id used for entire lineage experimentations")
 
-    codebase: dict = Field(default_factory=dict, description="base=True: full snapshot dict[str, str]; base=False: unified diff dict")
+    codebase: str = Field("", description="base=True: full snapshot dict[str, str]; base=False: unified diff dict")
     changed_files: list[str] = Field(default_factory=list, description="List of filenames that changed (for non-base experiments)")
 
     usable: bool = Field(True, description="Is experiment usable")
     manual_save: bool = Field(False, description="Manually saved")
 
-    metrics_uri: str = Field("", description="Pointer to unified training + HW metrics")
+    metrics_uri: str | None = Field( None, description="Pointer to unified training + HW metrics")

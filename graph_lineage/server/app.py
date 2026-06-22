@@ -12,9 +12,10 @@ Run with: uvicorn graph_lineage.server.app:app --host 0.0.0.0 --port 8000
 from __future__ import annotations
 
 import logging
+import sys
 import uuid
+import json
 from typing import Any
-
 from fastapi import FastAPI, HTTPException
 
 from graph_lineage.data_classes.neo4j.nodes.checkpoint import Checkpoint
@@ -42,6 +43,20 @@ from .schemas import (
     PreRequest,
     PreResponse,
 )
+# Configura logging base
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[logging.StreamHandler(sys.stdout)]
+)
+
+# Silenzia TUTTO Uvicorn
+for logger_name in ["uvicorn", "uvicorn.access", "uvicorn.error", "uvicorn.asgi"]:
+    logging.getLogger(logger_name).setLevel(logging.WARNING)
+
+# Silenzia httpx
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +74,7 @@ app = FastAPI(
 _STRATEGY_EXP_EDGE_MAP: dict[str, str] = {
     "BRANCH": "DERIVED_FROM",
     "RETRY": "RETRY_FROM",   # aligned with schema: (Experiment)-[:RETRY_FROM]→(Experiment)
-    "MERGE": "DERIVED_FROM",
+    "MERGE": "MERGED_FROM",
     # RESUME: no Experiment→Experiment edge — only Experiment→Checkpoint via STARTED_FROM
 }
 
@@ -102,9 +117,13 @@ async def pre_execution(request: PreRequest) -> PreResponse:
     7. Return strategy + experiment_id
     """
     try:
+        logger.info("START PRE: name=%s, uri=%s, base_exp_id=%s, prev_exp_id=%s",
+                    request.experiment_name, request.experiment_uri,
+                    request.base_experiment_id, request.previous_experiment_id)
         # 1. Build snapshot from client codebase content
-        snapshot = CodebaseSnapshot(files=request.codebase)
-
+        snapshot = CodebaseSnapshot(files=json.loads(request.codebase))
+        logger.info("snapshot type: %s, files: %d", type(snapshot), len(snapshot.files))
+        
         # 2. Find parent experiment
         parent: Experiment | None = None
         if request.base_experiment_id:
@@ -130,10 +149,10 @@ async def pre_execution(request: PreRequest) -> PreResponse:
                 "checkpoint_resume_from": request.checkpoint_resume_from,
             },
             "model": {
-                "model_uri": request.model_uri or "placeholder",
-                "model_id": request.model_id or "placeholder",
+                "model_uri": request.model_uri or "",
+                "model_id": request.model_id or "",
             }
-        })
+        }, strict=False)
 
         # 4. Detect run type
         # ModelIdMismatchError → HTTP 409 (client maps to exit code 7)
@@ -145,6 +164,7 @@ async def pre_execution(request: PreRequest) -> PreResponse:
         # 5. Build Experiment node
         exp_id = str(uuid.uuid4())
         is_base = run_result.strategy == "NEW"
+
 
         auto_description = generate_description(
             strategy=run_result.strategy,
@@ -163,7 +183,7 @@ async def pre_execution(request: PreRequest) -> PreResponse:
             strategy=run_result.strategy,
             model_uri=request.model_uri,
             model_id=request.model_id,
-            codebase=snapshot.files if is_base else (run_result.diff_patch or {}),
+            codebase= json.dumps(snapshot.files) if is_base else json.dumps(run_result.diff_patch or {}),
             changed_files=run_result.changed_files or [],
             # metrics_uri is populated at POST time (not known at PRE)
             metrics_uri=None,
@@ -190,15 +210,19 @@ async def pre_execution(request: PreRequest) -> PreResponse:
 
         # 8. Resolve base_experiment_id for response
         response_base_exp_id = request.base_experiment_id
-        if not response_base_exp_id and run_result.strategy != "NEW":
+
+        if run_result.strategy == "NEW":
+            # Per NEW, l'experiment_id è anche il base_experiment_id
+            response_base_exp_id = exp_id
+        elif not response_base_exp_id and run_result.strategy != "NEW":
             if parent and parent.base:
                 response_base_exp_id = parent.id
             elif request.previous_experiment_id:
                 response_base_exp_id = request.previous_experiment_id
 
         logger.info(
-            "PRE complete: strategy=%s, exp_id=%s, name=%s",
-            run_result.strategy, exp_id, request.experiment_name,
+            "PRE complete: strategy=%s, exp_id=%s, base_exp_id=%s, name=%s",
+            run_result.strategy, exp_id, response_base_exp_id, request.experiment_name,
         )
 
         return PreResponse(
@@ -207,8 +231,7 @@ async def pre_execution(request: PreRequest) -> PreResponse:
             base=is_base,
             description=description,
             base_experiment_id=response_base_exp_id,
-            previous_experiment_id=request.previous_experiment_id,
-            changed_files=run_result.changed_files or [],
+            previous_experiment_id=request.previous_experiment_id
         )
 
     except HTTPException:
@@ -286,3 +309,4 @@ async def checkpoint_created(request: CheckpointRequest) -> CheckpointResponse:
     except Exception as e:
         logger.error("Checkpoint server error: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+    

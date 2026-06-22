@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 class OutputConfig(BaseModel):
     """Output paths configuration."""
 
-    output_dir: str = Field(..., min_length=1)
+    output_dir: str | None = None
     metrics_uri: str | None = None
+    plots_uri: str | None = None
 

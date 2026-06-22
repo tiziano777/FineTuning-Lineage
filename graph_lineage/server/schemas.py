@@ -13,16 +13,28 @@ from pydantic import BaseModel, Field
 
 
 class PreRequest(BaseModel):
-    """Payload received from client before training starts."""
+    """Payload sent to server before training execution starts.
 
+    Contains the full experiment config and captured codebase content
+    for the server to run rule_engine detection and create the experiment node.
+    """
+
+    # Experiment identity
     experiment_name: str
     experiment_uri: str | None = None
     base_experiment_id: str | None = None
     previous_experiment_id: str | None = None
     description: str | None = None
-    model_uri: str = ""
-    model_id: str = ""
-    codebase: dict[str, str] = Field(default_factory=dict)
+
+    codebase: str # JSON string of {relative_path: content}
+
+    # BASE NODE RELATIONSHIPS
+    model_id: str | None = None
+    component_id: str | None = None
+    recipe_id: str | None = None
+
+
+    # Optional: checkpoint resume reference
     checkpoint_resume_from: str | None = None
 
 
@@ -35,7 +47,6 @@ class PreResponse(BaseModel):
     description: str
     base_experiment_id: str | None = None
     previous_experiment_id: str | None = None
-    changed_files: list[str] = Field(default_factory=list)
 
 
 # ─── POST-EXECUTION ───────────────────────────────────────────────────────────
@@ -80,7 +91,7 @@ class CheckpointRequest(BaseModel):
     epoch: int
     run: int
     uri: str
-    metrics: dict = Field(default_factory=dict)
+    metrics: str = Field(default_factory=str) 
     derived_from: str = ""
     is_merging: bool = False
 

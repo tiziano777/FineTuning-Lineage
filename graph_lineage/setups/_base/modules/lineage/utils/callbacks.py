@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 from typing import Any
-
+import json
 try:
     from transformers import TrainerCallback, TrainerState
 except ImportError:
@@ -49,7 +49,7 @@ class LineageCheckpointCallback(TrainerCallback):
             epoch=epoch,
             run=self._run_counter,
             uri=str(checkpoint_dir),
-            metrics=metrics,
+            metrics=json.dumps(metrics),
             derived_from=self._ctx.extra.get("model_id", ""),
             is_merging=False,
         )

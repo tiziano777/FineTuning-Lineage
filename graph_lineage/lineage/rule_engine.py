@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import json
 from dataclasses import dataclass
 
 from graph_lineage.config_file.data_classes.lineage_config import LineageConfig
@@ -27,7 +28,6 @@ class RunTypeResult:
     diff_patch: dict[str, str] | None = None  # only for BRANCH
     changed_files: list[str] | None = None  # filenames that differ (for description)
 
-
 class ModelIdMismatchError(Exception):
     """Raised when model_id changed between runs — user must fix or create new setup."""
 
@@ -40,11 +40,9 @@ class ModelIdMismatchError(Exception):
             f"Otherwise, create a new setup to train '{actual_id}'."
         )
 
-
 def _looks_like_checkpoint_id(value: str) -> bool:
     """Check if a string looks like a checkpoint reference."""
     return bool(_CHECKPOINT_PATTERN.search(value))
-
 
 def detect_run_type(
     config: LineageConfig,
@@ -131,7 +129,7 @@ def detect_run_type(
     # 6. Compare codebase content to decide RETRY vs BRANCH
     # Quick check via content hash, then detailed diff if different
     current_hashes = current_snapshot.hashes()
-    parent_snapshot = CodebaseSnapshot(files=parent_experiment.codebase)
+    parent_snapshot = CodebaseSnapshot(files=json.loads(parent_experiment.codebase))
     parent_hashes = parent_snapshot.hashes()
 
     if current_hashes == parent_hashes:
@@ -147,6 +145,6 @@ def detect_run_type(
     return RunTypeResult(
         strategy="BRANCH",
         parent_exp_id=parent_experiment.id,
-        diff_patch=diff_patch,
-        changed_files=changed_files,
+        diff_patch=json.dumps(diff_patch),
+        changed_files=json.dumps(changed_files),
     )

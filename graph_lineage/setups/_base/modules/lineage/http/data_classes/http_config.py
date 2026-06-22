@@ -21,12 +21,13 @@ class PreRequest(BaseModel):
     previous_experiment_id: str | None = None
     description: str | None = None
 
-    # Model info
-    model_uri: str = ""
-    model_id: str = ""
+    codebase: str # JSON string of {relative_path: content}
 
-    # Codebase content (full file contents, relative paths as keys)
-    codebase: dict[str, str] = Field(default_factory=dict)
+    # BASE NODE RELATIONSHIPS
+    model_id: str | None = None
+    component_id: str | None = None
+    recipe_id: str | None = None
+
 
     # Optional: checkpoint resume reference
     checkpoint_resume_from: str | None = None
@@ -44,7 +45,6 @@ class PreResponse(BaseModel):
     description: str
     base_experiment_id: str | None = None
     previous_experiment_id: str | None = None
-    changed_files: list[str] = Field(default_factory=list)
 
 # ─── POST-EXECUTION ───────────────────────────────────────────────────────────
 
@@ -78,14 +78,14 @@ class HealthResponse(BaseModel):
 # ─── CHECKPOINT ────────────────────────────────────────────────────────────────
 
 class CheckpointRequest(BaseModel):
-    """Payload sent to server when a checkpoint is saved during training."""
+    """Payload received from client when a checkpoint is saved."""
 
     experiment_id: str
     name: str
     epoch: int
     run: int
     uri: str
-    metrics: dict = Field(default_factory=dict)
+    metrics: str = Field(default_factory=str)  
     derived_from: str = ""
     is_merging: bool = False
 

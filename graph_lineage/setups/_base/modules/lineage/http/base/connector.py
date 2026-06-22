@@ -6,7 +6,6 @@ Concrete implementations (HTTP, gRPC) are in Phase 6.3.
 
 from __future__ import annotations
 
-import logging
 from typing import Protocol
 
 from ..data_classes.server_config import ServerConfig
@@ -20,7 +19,6 @@ from ..data_classes.http_config import (
     PreResponse,
 )
 
-logger = logging.getLogger(__name__)
 
 
 class Connector(Protocol):

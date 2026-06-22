@@ -45,8 +45,8 @@ class LineageConfig(BaseModel):
     experiment: ExperimentConfig
     model: dict[str, Any] = Field(default_factory=dict)
     recipe: RecipeConfig = Field(default_factory=RecipeConfig)
-    output: OutputConfig
-    hardware: dict[str, Any] = Field(default_factory=dict)
+    output: OutputConfig = Field(default_factory=OutputConfig)
+    hardware: dict[str, Any]  = Field(default_factory=dict)
     model_merging: ModelMergingConfig = Field(default_factory=ModelMergingConfig)
 
     @model_validator(mode="after")

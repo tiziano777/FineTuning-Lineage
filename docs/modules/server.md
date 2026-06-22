@@ -84,8 +84,9 @@ class PreRequest(BaseModel):
     base_experiment_id: str | None = None
     previous_experiment_id: str | None = None
     description: str | None = None
-    model_uri: str = ""
     model_id: str = ""
+    component_id: str = ""
+    recipe_id: str = ""
     codebase: dict[str, str] = Field(default_factory=dict)
     checkpoint_resume_from: str | None = None
 

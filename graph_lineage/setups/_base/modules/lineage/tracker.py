@@ -107,15 +107,20 @@ def lineage_tracker(config_path_arg: int = 0, capture_checkpoints: bool = False)
 
             # 2. Initialize client (passes config_path so experiment block is read)
             client = LineageClient(config_path=cp)
+            
+            logger.info("Lineage client initialized with config_path: %s, project_root: %s",
+                        client._config_path, client._project_root)
+            
+            # 3. PRE-execution: send metadata to server and get context
             ctx = client.pre_execution()
 
-            # 3. Non-blocking mode: server unreachable — run without tracking
+            # 4. Non-blocking mode: server unreachable — run without tracking
             if ctx is None:
                 logger.warning("Lineage server unreachable, running without tracking")
                 result = fn(*args, **kwargs)
                 return 0 if result is None else result
 
-            # 4. Inject checkpoint callback if requested
+            # 5. Inject checkpoint callback if requested
             if capture_checkpoints:
                 from .utils.callbacks import LineageCheckpointCallback
                 callback = LineageCheckpointCallback(ctx=ctx)
@@ -125,37 +130,37 @@ def lineage_tracker(config_path_arg: int = 0, capture_checkpoints: bool = False)
             metrics_uri = None
 
             try:
-                # 5. Execute training
+                # 6. Execute training
                 result = fn(*args, **kwargs)
 
-                # 6. Extract metrics_uri from result (if dict)
+                # 7. Extract metrics_uri from result (if dict)
                 if isinstance(result, dict) and "metrics_uri" in result:
                     metrics_uri = result["metrics_uri"]
 
-                # 7. Fallback: extract from config.yml
+                # 8. Fallback: extract from config.yml
                 if metrics_uri is None and cp:
                     metrics_uri = _extract_metrics_uri_from_config(cp, ctx.experiment_id)
 
-                # 8. POST-execution (success)
+                # 9. POST-execution (success)
                 client.post_execution(
                     ctx=ctx,
                     status="COMPLETED",
                     metrics_uri=metrics_uri,
                 )
 
-                # 9. Normalise return: training functions typically return None;
+                # 10. Normalise return: training functions typically return None;
                 #    return 0 as a clean success exit code for callers that check it.
                 return 0 if result is None else result
 
             except Exception as e:
-                # 10. Extract metrics_uri from config even on failure
+                # 11. Extract metrics_uri from config even on failure
                 if metrics_uri is None and cp:
                     try:
                         metrics_uri = _extract_metrics_uri_from_config(cp, ctx.experiment_id)
                     except Exception:
                         pass
 
-                # 11. POST-execution (failure)
+                # 12. POST-execution (failure)
                 client.post_execution(
                     ctx=ctx,
                     status="FAILED",

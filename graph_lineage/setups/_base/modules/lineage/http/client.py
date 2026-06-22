@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import logging
 import sys
+import json
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -23,10 +24,8 @@ logger = logging.getLogger(__name__)
 _MODEL_ID_MISMATCH_STATUS = 409  # ModelIdMismatchError → exit 7
 _BASE_EXP_NOT_FOUND_STATUS = 422  # base_experiment_id not found → exit 6
 
-
 class LineageClientError(Exception):
     """Raised on unrecoverable client errors."""
-
 
 @dataclass
 class ExecutionContext:
@@ -37,7 +36,6 @@ class ExecutionContext:
     project_root: Path
     server_config: ServerConfig
     extra: dict[str, Any] = field(default_factory=dict)
-
 
 def _find_project_root(start: Path) -> Path:
     """Walk up from start to find directory containing .lineage/."""
@@ -50,7 +48,6 @@ def _find_project_root(start: Path) -> Path:
         f"No .lineage/ directory found walking up from '{start}'. "
         f"Ensure .lineage/server.yml and .lineage/experiment.yml exist."
     )
-
 
 def _load_experiment_data(project_root: Path, config_path: str | None = None) -> dict[str, Any]:
     """Load experiment data with priority: config.yml > .lineage/experiment.yml.
@@ -96,13 +93,11 @@ def _load_experiment_data(project_root: Path, config_path: str | None = None) ->
 
     return exp_data
 
-
 def _save_experiment_yml(project_root: Path, experiment_data: dict[str, Any]) -> None:
     """Save updated experiment data back to .lineage/experiment.yml."""
     exp_path = project_root / ".lineage" / "experiment.yml"
     with open(exp_path, "w") as f:
         yaml.dump({"experiment": experiment_data}, f, default_flow_style=False, sort_keys=False)
-
 
 class LineageClient:
     """Client for lineage tracking communication with the server."""
@@ -168,26 +163,43 @@ class LineageClient:
         try:
             # 1. Load experiment config (config.yml takes priority over .lineage/experiment.yml)
             exp_data = _load_experiment_data(self._project_root, self._config_path)
+            logger.info("Loaded experiment config: %s", str(exp_data))
 
             # 2. Capture codebase snapshot
             codebase = capture_codebase(self._project_root)
-
+            # debug:
+            codebase_size = len(codebase.encode('utf-8'))
+            logger.info(f"Codebase: JSON size: {codebase_size / (1024*1024):.2f} MB")
+            logger.info(f"Codebase: Number of files: {len(json.loads(codebase))}")
+            
+            
             # 3. Build PRE request
             request = PreRequest(
-                experiment_name=exp_data.get("name", ""),
+                experiment_name=exp_data.get("name"),
                 experiment_uri=exp_data.get("uri") or str(self._project_root),
                 base_experiment_id=exp_data.get("base_experiment_id"),
-                previous_experiment_id=exp_data.get("id"),
+                previous_experiment_id=exp_data.get("previous_experiment_id"),
                 description=exp_data.get("description"),
-                model_uri=exp_data.get("model_uri", ""),
-                model_id=exp_data.get("model_id", ""),
+                model_uri=exp_data.get("model_uri"),
+                model_id=exp_data.get("model_id"),
                 codebase=codebase,
                 checkpoint_resume_from=exp_data.get("checkpoint_resume_from"),
             )
 
+            logger.info("PRE-execution: sending request to server: exp_name: %s, exp_uri: %s, model_id: %s, base_exp_id: %s, prev_exp_id: %s, description: %s",
+                request.experiment_name, request.experiment_uri, request.model_id, request.base_experiment_id, request.previous_experiment_id, request.description)
+
             # 4. Send to server (with retries)
             connector = self._get_connector()
+            logger.info("Sending PRE request with config %s", self.server_config)
+            
+            
+
             response: PreResponse = self._retry(lambda: connector.send_pre(request))
+            logger.info("Received PRE response from server: exp_id: %s, base %s, base_exp_id: %s, strategy: %s, previous_exp_id: %s",
+                response.experiment_id, response.base, response.base_experiment_id, response.strategy, response.previous_experiment_id)
+            
+            
 
             # 5. Update local .lineage/experiment.yml (always from base file, not merged)
             base_exp_data = _load_experiment_data(self._project_root)

@@ -2,14 +2,11 @@
 
 from __future__ import annotations
 
-import logging
 from pathlib import Path
 from typing import Literal
 
 import yaml
 from pydantic import BaseModel, Field
-
-logger = logging.getLogger(__name__)
 
 _DEFAULT_TIMEOUT: int = 30
 _DEFAULT_RETRIES: int = 3

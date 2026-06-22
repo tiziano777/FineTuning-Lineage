@@ -167,7 +167,6 @@ def _generate_config_yml(selections: dict) -> str:
 
     return yaml.dump(config, default_flow_style=False, sort_keys=False, allow_unicode=True)
 
-
 def _generate_experiment_yml(setup_name: str, selections: dict) -> str:
     """Generate .lineage/experiment.yml from template.
 
@@ -179,6 +178,9 @@ def _generate_experiment_yml(setup_name: str, selections: dict) -> str:
     content = content.replace("{{PROJECT_URI}}", "")
     content = content.replace("{{DESCRIPTION}}", selections.get("description", ""))
     content = content.replace("{{COMPONENT_NAME}}", selections.get("component_name", ""))
+    content = content.replace("{{RECIPE_NAME}}", selections.get("recipe_name", ""))
+    content = content.replace("{{MODEL_ID}}", selections.get("model_id", ""))
+
 
     # If the UI generated an in-memory UUID, inject it into the template
     # for both experiment.id and experiment.base_experiment_id only (not previous_experiment_id).
@@ -190,6 +192,19 @@ def _generate_experiment_yml(setup_name: str, selections: dict) -> str:
 
     return content
 
+def _generate_server_yml(selections: dict) -> str:
+    template = _safe_read_file(_BASE_DIR / ".lineage" / "server.yml")
+    url = selections.get("server_url", "http://localhost:8502")
+    protocol = selections.get("protocol", "http")
+    timeout = selections.get("timeout", 30)
+    retry = selections.get("retry", 3)
+    blocking = selections.get("blocking", True)
+    template = template.replace("{{SERVER_URL}}", url)
+    template = template.replace("{{PROTOCOL}}", protocol)
+    template = template.replace("{{TIMEOUT}}", str(timeout))
+    template = template.replace("{{RETRIES}}", str(retry))
+    template = template.replace("{{BLOCKING}}", str(blocking).lower())
+    return template
 
 def _build_zip(component_uri: str | None, selections: dict) -> bytes:
     """Build zip archive from template (via component_uri) + generated configs.
@@ -237,7 +252,11 @@ def _build_zip(component_uri: str | None, selections: dict) -> bytes:
         experiment_content = _generate_experiment_yml(setup_name, selections)
         zf.writestr(f"{setup_name}/.lineage/experiment.yml", experiment_content)
 
-        # 5. Save setup.json metadata
+        # 5. Generate server configuration on-the-fly
+        server_config_content = _generate_server_yml(selections)
+        zf.writestr(f"{setup_name}/.lineage/server.yml", server_config_content)
+
+        # 6. Save setup.json metadata
         metadata = {
             "name": setup_name,
             "component_name": selections.get("component_name", ""),
@@ -392,6 +411,15 @@ def _render_create_form() -> None:
         merge_method = st.selectbox("Merge Method", ["linear", "slerp", "ties", "dare", "task_arithmetic"])
         merge_sources = st.text_area("Sources (one per line)", placeholder="checkpoint-1\ncheckpoint-2")
 
+    # Server Options (optional)
+    with st.expander("Server Options (optional)"):
+        server_url = st.text_input("Server URL", placeholder="http://localhost:8502", help="URL of the server to connect to.")
+        protocol = st.selectbox("Protocol", ["http", "https", "gRPC"], help="Protocol to use for server communication.")
+        timeout = st.number_input("Timeout (seconds)", value=30, min_value=1, step=1, help="Timeout for server requests.")
+        retry = st.number_input("Retry Attempts", value=3, min_value=0, step=1, help="Number of retry attempts for server requests.")
+        blocking = st.checkbox("Blocking Mode", value=True, help="Whether to use blocking mode for server requests.")
+
+
     # Generate button
     st.divider()
     if st.button("Generate & Download", type="primary", disabled=not (setup_name and model_uri and model_id and output_dir)):
@@ -440,6 +468,11 @@ def _render_create_form() -> None:
             "merge_sources": [s.strip() for s in merge_sources.split("\n") if s.strip()] if merging_enabled else [],
             # Inject random UUID into scaffold (detached, registered by DB at first run)
             "injected_experiment_uuid": scaffold_uuid,
+            "server_url": server_url if server_url else "http://localhost:8502",
+            "protocol": protocol if protocol else "http",
+            "timeout": int(timeout) if timeout is not None else 30,
+            "retry": int(retry) if retry is not None else 3,
+            "blocking": bool(blocking) if blocking is not None else True,
         }
 
         if component_uri is None:

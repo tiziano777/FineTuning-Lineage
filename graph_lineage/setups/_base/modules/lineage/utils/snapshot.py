@@ -14,10 +14,8 @@ Scan rules:
 from __future__ import annotations
 
 import hashlib
-import logging
+import json 
 from pathlib import Path
-
-logger = logging.getLogger(__name__)
 
 # Extensions tracked at root level
 _ROOT_EXTENSIONS: set[str] = {".py", ".txt", ".yml", ".yaml"}
@@ -62,7 +60,7 @@ def _read_file_safe(filepath: Path) -> str:
     return filepath.read_text(encoding="utf-8", errors="replace")
 
 
-def capture_codebase(project_root: Path) -> dict[str, str]:
+def capture_codebase(project_root: Path) -> str:
     """Scan project and capture all tracked files into a dict.
 
     Args:
@@ -112,7 +110,7 @@ def capture_codebase(project_root: Path) -> dict[str, str]:
                 rel_key = str(item.relative_to(resolved_root))
                 files[rel_key] = _read_file_safe(item)
 
-    return files
+    return json.dumps(files, sort_keys=True)
 
 
 def content_hash(files: dict[str, str]) -> str:
