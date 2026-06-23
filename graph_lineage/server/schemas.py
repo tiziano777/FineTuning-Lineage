@@ -20,23 +20,27 @@ class PreRequest(BaseModel):
     """
 
     # Experiment identity
+    experiment_id: str | None = None
     experiment_name: str
     experiment_uri: str | None = None
     base_experiment_id: str | None = None
+    base: bool | None
     previous_experiment_id: str | None = None
     description: str | None = None
+    experiment_model_id: str | None = None
+    experiment_model_uri: str | None = None
+
+    merging: bool = False
 
     codebase: str # JSON string of {relative_path: content}
 
     # BASE NODE RELATIONSHIPS
     model_id: str | None = None
+    model_uri: str | None = None
     component_id: str | None = None
     recipe_id: str | None = None
 
-
-    # Optional: checkpoint resume reference
-    checkpoint_resume_from: str | None = None
-
+    checkpoint_resume_from: str | None = None  # checkpoint_id to resume from, if any
 
 class PreResponse(BaseModel):
     """Response sent back to client after PRE processing."""

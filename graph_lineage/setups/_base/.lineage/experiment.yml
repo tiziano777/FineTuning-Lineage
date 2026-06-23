@@ -13,4 +13,5 @@ experiment:
 
   component: "{{COMPONENT_NAME}}"
   recipe: "{{RECIPE_NAME}}"
-  model_id: "{{MODEL_ID}}"
+  model: "{{MODEL_ID}}"
+  merging: "{{MERGING}}"

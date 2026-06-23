@@ -11,7 +11,7 @@ class ExperimentConfig(BaseModel):
     id: str | None = None
     previous_experiment_id: str | None = None
     base_experiment_id: str | None = None
-    base: bool = True
+    base: bool | None
     name: str = Field(..., min_length=1)
     description: str = ""
     uri: str | None = None

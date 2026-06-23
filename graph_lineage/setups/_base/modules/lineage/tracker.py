@@ -32,18 +32,58 @@ from __future__ import annotations
 
 import functools
 import logging
+import os
+import yaml
 from typing import Any, Callable
 
 from .http.client import LineageClient
 
 logger = logging.getLogger(__name__)
 
+def _get_merged_config(config_path: str) -> Dict[str, Any]:
+    """Legge config_path e .lineage/experiment.yml, esegue il deep merge
+
+    e restituisce il dizionario unito SENZA modificare i file su disco.
+    """
+    lineage_path = os.path.join(".lineage", "experiment.yml")
+    
+    # 1. Carica la configurazione del progetto (Base)
+    config_data = {}
+    if config_path and os.path.exists(config_path):
+        try:
+            with open(config_path, 'r') as f:
+                config_data = yaml.safe_load(f) or {}
+        except Exception as e:
+            logger.error(f"Errore durante la lettura di {config_path}: {e}")
+    else:
+        logger.warning(f"File di configurazione non trovato in: {config_path}. Uso dizionario vuoto.")
+
+    # 2. Carica il lineage globale (.lineage/experiment.yml)
+    lineage_data = {}
+    if os.path.exists(lineage_path):
+        try:
+            with open(lineage_path, 'r') as f:
+                lineage_data = yaml.safe_load(f) or {}
+        except Exception as e:
+            logger.warning(f"Impossibile leggere il file lineage {lineage_path}: {e}")
+
+    # 3. Funzione interna di Deep Merge
+    def deep_merge(dict1: dict, dict2: dict):
+        for key, value in dict2.items():
+            if isinstance(value, dict) and key in dict1 and isinstance(dict1[key], dict):
+                deep_merge(dict1[key], value)
+            else:
+                dict1[key] = value
+
+
+    deep_merge(config_data, lineage_data)
+
+    return config_data
 
 def LineageCheckpointCallback(*args, **kwargs):
     """Lazy accessor — avoids importing transformers at module load time."""
     from .utils.callbacks import LineageCheckpointCallback as _Cls
     return _Cls(*args, **kwargs)
-
 
 def _extract_metrics_uri_from_config(config_path: str, experiment_id: str) -> str | None:
     """Extract metrics_uri from config.yml, resolving ${experiment.id}."""
@@ -64,7 +104,6 @@ def _extract_metrics_uri_from_config(config_path: str, experiment_id: str) -> st
     if metrics_uri and "${experiment.id}" in metrics_uri:
         metrics_uri = metrics_uri.replace("${experiment.id}", experiment_id)
     return metrics_uri
-
 
 def lineage_tracker(config_path_arg: int = 0, capture_checkpoints: bool = False) -> Callable:
     """Decorator that wraps a training function with PRE/POST lifecycle.
@@ -104,9 +143,18 @@ def lineage_tracker(config_path_arg: int = 0, capture_checkpoints: bool = False)
             cp = kwargs.get("config_path") or (
                 args[config_path_arg] if len(args) > config_path_arg else None
             )
+            # --- INSERIMENTO FASE DEEP MERGE (PUNTO ORA ZERO) ---
+            if cp:
+                logger.info(f"Esecuzione della fase di Deep Merge per il file: {cp}")
+                merged_config = _get_merged_config(cp)
+            else:
+                logger.warning("Nessun config_path rilevato. Fase di Deep Merge saltata.")
+            # ---------------------------------------------------
+
+            logger.info("Configurazione Experiment dopo Deep Merge: %s", str(merged_config.get('experiment', {})))
 
             # 2. Initialize client (passes config_path so experiment block is read)
-            client = LineageClient(config_path=cp)
+            client = LineageClient(config_dict=merged_config, config_path=cp)
             
             logger.info("Lineage client initialized with config_path: %s, project_root: %s",
                         client._config_path, client._project_root)

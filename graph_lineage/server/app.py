@@ -29,7 +29,6 @@ from graph_lineage.lineage.neo4j_ops import (
     create_experiment_node,
     create_started_from_edge,
     find_experiment_by_id,
-    find_parent_experiment,
     update_experiment_status,
 )
 from graph_lineage.lineage.rule_engine import ModelIdMismatchError, detect_run_type
@@ -117,24 +116,22 @@ async def pre_execution(request: PreRequest) -> PreResponse:
     7. Return strategy + experiment_id
     """
     try:
-        logger.info("START PRE: name=%s, uri=%s, base_exp_id=%s, prev_exp_id=%s",
-                    request.experiment_name, request.experiment_uri,
-                    request.base_experiment_id, request.previous_experiment_id)
+        logger.info("START PRE: %s", str(request.experiment_id))
         # 1. Build snapshot from client codebase content
         snapshot = CodebaseSnapshot(files=json.loads(request.codebase))
-        logger.info("snapshot type: %s, files: %d", type(snapshot), len(snapshot.files))
+        logger.info("snapshot files: %d", len(snapshot.files))
         
         # 2. Find parent experiment
         parent: Experiment | None = None
-        if request.base_experiment_id:
-            parent = find_experiment_by_id(request.base_experiment_id)
+        if request.previous_experiment_id:
+            parent = find_experiment_by_id(request.previous_experiment_id)
             if parent is None:
                 raise HTTPException(
                     status_code=422,
-                    detail=f"base_experiment_id '{request.base_experiment_id}' not found in DB",
+                    detail=f"previous_experiment_id '{request.previous_experiment_id}' not found in DB",
                 )
-        elif request.experiment_uri:
-            parent = find_parent_experiment(request.experiment_uri)
+        else:
+            logger.info("no parent experiment found")
 
         # 3. Build minimal LineageConfig for rule_engine
         from graph_lineage.config_file.data_classes.lineage_config import LineageConfig
@@ -143,18 +140,20 @@ async def pre_execution(request: PreRequest) -> PreResponse:
             "experiment": {
                 "name": request.experiment_name,
                 "uri": request.experiment_uri,
-                "id": request.previous_experiment_id,
+                "id": request.experiment_id,
                 "previous_experiment_id": request.previous_experiment_id,
-                "base_experiment_id": request.base_experiment_id,
-                "checkpoint_resume_from": request.checkpoint_resume_from,
-                "model_id": request.model_id or "",
-                "component_id": request.component_id or "",
-                "recipe_id": request.recipe_id or "",
+                "base_experiment_id": request.base_experiment_id,   
+                "base": request.base,
+                "model_id": request.model_id,
+                "component_id": request.component_id,
+                "recipe_id": request.recipe_id,
             },
             "model": {
                 "model_id": request.model_id or "",
                 "model_uri": request.experiment_uri or "",
-            }
+                "checkpoint_resume_from": request.checkpoint_resume_from,
+            },
+            "model_merging": {"enabled": request.merging},
         }, strict=False)
 
         # 4. Detect run type
@@ -163,6 +162,14 @@ async def pre_execution(request: PreRequest) -> PreResponse:
             run_result = detect_run_type(config, snapshot, parent)
         except ModelIdMismatchError as e:
             raise HTTPException(status_code=409, detail=str(e))
+        #except Exception as e:
+        #    raise HTTPException(status_code=400, detail=str(e))
+
+
+        logger.info(
+            "run type detected: strategy=%s, parent_exp_id=%s, parent_ckp_id=%s",
+            run_result.strategy, run_result.parent_exp_id, run_result.parent_ckp_id,
+        )
 
         # 5. Build Experiment node
         exp_id = str(uuid.uuid4())
@@ -194,6 +201,7 @@ async def pre_execution(request: PreRequest) -> PreResponse:
         # 6. Create node in Neo4j
         create_experiment_node(experiment)
 
+
         # 7. Create edges based on strategy
         #
         # Experiment→Experiment edges (DERIVED_FROM, RETRY_FROM, MERGE)
@@ -202,12 +210,18 @@ async def pre_execution(request: PreRequest) -> PreResponse:
             edge_props: dict[str, Any] = {}
             if run_result.diff_patch:
                 edge_props["diff_patch"] = str(run_result.diff_patch)
-            create_edge(exp_id, run_result.parent_exp_id, edge_type, edge_props or None)
+            logger.info(
+                "Creating %s edge: from=%s, to=%s, props=%s",
+                edge_type, run_result.parent_exp_id, exp_id, edge_props,
+            )
+            create_edge(to_id=run_result.parent_exp_id, from_id=exp_id, rel_type=edge_type, properties=edge_props or None)
 
         # Experiment→Checkpoint STARTED_FROM edge:
         # - RESUME always has parent_ckp_id (the checkpoint to resume from)
         # - BRANCH may also have parent_ckp_id (weights loaded from a specific checkpoint)
+        # ONLY IF A CHECKPOINT IS INVOLVED (parent_ckp_id is not None)
         if run_result.parent_ckp_id and run_result.strategy in ("RESUME", "BRANCH"):
+            logger.info("Creating STARTED_FROM edge: exp_id=%s, ckp_id=%s", exp_id, run_result.parent_ckp_id)
             create_started_from_edge(exp_id, run_result.parent_ckp_id)
 
         # 8. Resolve base_experiment_id for response
@@ -223,8 +237,8 @@ async def pre_execution(request: PreRequest) -> PreResponse:
                 response_base_exp_id = request.previous_experiment_id
 
         logger.info(
-            "PRE complete: strategy=%s, exp_id=%s, base_exp_id=%s, name=%s",
-            run_result.strategy, exp_id, response_base_exp_id, request.experiment_name,
+            "PRE complete: strategy=%s, exp_id=%s, base_exp_id=%s, previous_experiment_id=%s",
+            run_result.strategy, exp_id, response_base_exp_id, request.experiment_id,
         )
 
         return PreResponse(
@@ -233,7 +247,7 @@ async def pre_execution(request: PreRequest) -> PreResponse:
             base=is_base,
             description=description,
             base_experiment_id=response_base_exp_id,
-            previous_experiment_id=request.previous_experiment_id
+            previous_experiment_id=request.experiment_id
         )
 
     except HTTPException:
@@ -246,6 +260,7 @@ async def pre_execution(request: PreRequest) -> PreResponse:
 @app.post("/api/v1/post", response_model=PostResponse)
 async def post_execution(request: PostRequest) -> PostResponse:
     """POST-execution endpoint: update experiment status."""
+    logger.info("START POST: %s", str(request))
     try:
         update_experiment_status(
             exp_id=request.experiment_id,

@@ -180,15 +180,7 @@ def _generate_experiment_yml(setup_name: str, selections: dict) -> str:
     content = content.replace("{{COMPONENT_NAME}}", selections.get("component_name", ""))
     content = content.replace("{{RECIPE_NAME}}", selections.get("recipe_name", ""))
     content = content.replace("{{MODEL_ID}}", selections.get("model_id", ""))
-
-
-    # If the UI generated an in-memory UUID, inject it into the template
-    # for both experiment.id and experiment.base_experiment_id only (not previous_experiment_id).
-    injected_uuid = selections.get("injected_experiment_uuid") or selections.get("loaded_experiment_uuid")
-    if injected_uuid:
-        # Replace only specific fields using regex to avoid touching previous_experiment_id
-        content = re.sub(r"^(\s*)id:\s*null", rf"\1id: {injected_uuid}", content, flags=re.MULTILINE)
-        content = re.sub(r"^(\s*)base_experiment_id:\s*null", rf"\1base_experiment_id: {injected_uuid}", content, flags=re.MULTILINE)
+    content = content.replace("{{MERGING}}", str(selections.get("merging_enabled", False)).lower())
 
     return content
 
@@ -203,7 +195,7 @@ def _generate_server_yml(selections: dict) -> str:
     template = template.replace("{{PROTOCOL}}", protocol)
     template = template.replace("{{TIMEOUT}}", str(timeout))
     template = template.replace("{{RETRIES}}", str(retry))
-    template = template.replace("{{BLOCKING}}", str(blocking).lower())
+    template = template.replace("{{BLOCKING}}", blocking)
     return template
 
 def _build_zip(component_uri: str | None, selections: dict) -> bytes:

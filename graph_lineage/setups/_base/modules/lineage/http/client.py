@@ -102,21 +102,36 @@ def _save_experiment_yml(project_root: Path, experiment_data: dict[str, Any]) ->
 class LineageClient:
     """Client for lineage tracking communication with the server."""
 
-    def __init__(self, project_root: Path | None = None, config_path: str | None = None):
+    def __init__(
+        self, 
+        project_root: Path | None = None, 
+        config_dict: dict | None = None,  # <-- Sostituito/Aggiunto il dizionario
+        config_path: str | None = None    # <-- Tenuto opzionale solo per risolvere i path se serve
+    ):
+        # 1. Risoluzione della project_root
         if project_root is not None:
             self._project_root = project_root.resolve()
         elif config_path is not None:
             self._project_root = _find_project_root(Path(config_path).resolve().parent)
         else:
+            # Fallback sulla cartella di esecuzione corrente
             self._project_root = _find_project_root(Path.cwd())
 
+        # 2. Salviamo il dizionario e il path (opzionale) come metadato
+        self._config_dict = config_dict or {}
         self._config_path = config_path
+        
         self._server_config: ServerConfig | None = None
         self._connector: Connector | None = None
 
     @property
     def project_root(self) -> Path:
         return self._project_root
+
+    @property
+    def config_dict(self) -> dict:
+        """Ritorna il dizionario delle configurazioni mergiato in-memory."""
+        return self._config_dict
 
     @property
     def server_config(self) -> ServerConfig:
@@ -128,7 +143,7 @@ class LineageClient:
         if self._connector is None:
             self._connector = ConnectorFactory.create(self.server_config)
         return self._connector
-
+    
     def _retry(self, fn, retries: int | None = None):
         """Execute fn with retries on ConnectionError."""
         max_retries = retries if retries is not None else self.server_config.retries
@@ -162,8 +177,7 @@ class LineageClient:
 
         try:
             # 1. Load experiment config (config.yml takes priority over .lineage/experiment.yml)
-            exp_data = _load_experiment_data(self._project_root, self._config_path)
-            logger.info("Loaded experiment config: %s", str(exp_data))
+            exp_data = self._config_dict.get("experiment") 
 
             # 2. Capture codebase snapshot
             codebase = capture_codebase(self._project_root)
@@ -172,31 +186,45 @@ class LineageClient:
             logger.info(f"Codebase: JSON size: {codebase_size / (1024*1024):.2f} MB")
             logger.info(f"Codebase: Number of files: {len(json.loads(codebase))}")
             
-            
+            correct_model_id= self._config_dict.get("model").get("model_id") == self._config_dict.get("experiment").get("model")
+            correct_merging= self._config_dict.get("experiment").get("merging") == self._config_dict.get("model_merging").get("enabled")
+            correct_recipe= self._config_dict.get("experiment").get("recipe") == self._config_dict.get("recipe").get("name")
+            if not correct_model_id or not correct_merging or not correct_recipe:
+                logger.warning("Model ID, URI, merging, or recipe mismatch: model_id in config (%s) does not match model_id in experiment block (%s), merging in config (%s) does not match merging in experiment block (%s), recipe in config (%s) does not match recipe in experiment block (%s).",
+                    self._config_dict.get("model").get("model_id"), self._config_dict.get("experiment").get("model"),
+                    self._config_dict.get("model_merging").get("enabled"), self._config_dict.get("experiment").get("merging"),
+                    self._config_dict.get("recipe").get("name"), self._config_dict.get("experiment").get("recipe"))
+                sys.exit(7)
+
             # 3. Build PRE request
             request = PreRequest(
+                experiment_id=exp_data.get("id"),
                 experiment_name=exp_data.get("name"),
-                experiment_uri=exp_data.get("uri") or str(self._project_root),
+                experiment_uri=str(self._project_root),
                 base_experiment_id=exp_data.get("base_experiment_id"),
+                base=exp_data.get("base"),
                 previous_experiment_id=exp_data.get("previous_experiment_id"),
                 description=exp_data.get("description"),
-                model_id=exp_data.get("model_id"),
-                component_id=exp_data.get("component_id"),
-                recipe_id=exp_data.get("recipe_id"),
+
+                model_uri=self._config_dict.get("model").get("model_uri"),
+                model_id=self._config_dict.get("model").get("model_id"),
+                recipe_id=self._config_dict.get("experiment").get("recipe_id"),
+                component_id=self._config_dict.get("experiment").get("component_id"),
+
                 codebase=codebase,
-                checkpoint_resume_from=exp_data.get("checkpoint_resume_from"),
+
+                checkpoint_resume_from=self._config_dict.get("model").get("checkpoint_resume_from"),
             )
 
-            logger.info("PRE-execution: sending request to server: exp_name: %s, exp_uri: %s, model_id: %s, base_exp_id: %s, prev_exp_id: %s, description: %s",
-                request.experiment_name, request.experiment_uri, request.model_id, request.base_experiment_id, request.previous_experiment_id, request.description)
+            logger.info("PRE-execution: sending request to server: exp_name: %s, exp_uri: %s, model_id: %s, base_exp_id: %s, prev_exp_id: %s, description: %s, model_uri: %s, recipe_id: %s, component_id: %s, model_id %s, component_id %s, recipe_id: %s merging: %s, checkpoint_resume_from: %s",
+                request.experiment_name, request.experiment_uri, request.model_id, request.base_experiment_id, request.previous_experiment_id, request.description, request.model_uri, request.recipe_id, request.component_id, request.model_id, request.component_id, request.recipe_id, request.merging, request.checkpoint_resume_from)
 
             # 4. Send to server (with retries)
             connector = self._get_connector()
             logger.info("Sending PRE request with config %s", self.server_config)
-            
-            
 
             response: PreResponse = self._retry(lambda: connector.send_pre(request))
+            
             logger.info("Received PRE response from server: exp_id: %s, base %s, base_exp_id: %s, strategy: %s, previous_exp_id: %s",
                 response.experiment_id, response.base, response.base_experiment_id, response.strategy, response.previous_experiment_id)
             
@@ -205,13 +233,17 @@ class LineageClient:
             # 5. Update local .lineage/experiment.yml (always from base file, not merged)
             base_exp_data = _load_experiment_data(self._project_root)
             base_exp_data["id"] = response.experiment_id
-            base_exp_data["previous_experiment_id"] = request.previous_experiment_id
+            base_exp_data["previous_experiment_id"] = response.previous_experiment_id
             base_exp_data["base_experiment_id"] = response.base_experiment_id
             base_exp_data["base"] = response.base
             base_exp_data["status"] = "RUNNING"
             base_exp_data["uri"] = request.experiment_uri
-            _save_experiment_yml(self._project_root, base_exp_data)
 
+            logger.info("Updating .lineage/experiment.yml with data: %s", base_exp_data)
+            _save_experiment_yml(self._project_root, base_exp_data)
+            logger.info("Updated .lineage/experiment.yml with experiment_id: %s, base_experiment_id: %s, previous_experiment_id: %s, base: %s, status: RUNNING",
+                response.experiment_id, response.base_experiment_id, response.previous_experiment_id, response.base)
+            
             logger.info(
                 "PRE-execution complete: strategy=%s, exp_id=%s",
                 response.strategy, response.experiment_id,
@@ -224,8 +256,6 @@ class LineageClient:
                 server_config=self.server_config,
                 extra={
                     "model_id": exp_data.get("model_id", ""),
-                    "component_id": exp_data.get("component_id", ""),
-                    "recipe_id": exp_data.get("recipe_id", ""),
                     "config_path": self._config_path,
                 },
             )
@@ -281,7 +311,9 @@ class LineageClient:
 
             # Reload from disk to preserve all fields before writing status
             base_exp_data = _load_experiment_data(self._project_root)
+            logger.info("PRE Updating .lineage/experiment.yml with data: %s", base_exp_data)
             base_exp_data["status"] = status
+            logger.info("POST Updating .lineage/experiment.yml with data: %s", base_exp_data)
             _save_experiment_yml(self._project_root, base_exp_data)
 
             logger.info("POST-execution complete: status=%s, exp_id=%s", status, ctx.experiment_id)

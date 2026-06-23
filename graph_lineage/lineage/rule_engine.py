@@ -1,7 +1,7 @@
 """RuleEngine: detect run type strategy based on config and codebase state."""
 
 from __future__ import annotations
-
+import logging
 import re
 import json
 from dataclasses import dataclass
@@ -10,13 +10,15 @@ from graph_lineage.config_file.data_classes.lineage_config import LineageConfig
 from graph_lineage.data_classes.neo4j.nodes.experiment import Experiment
 from graph_lineage.diff.differ import compute_snapshot_diff
 from graph_lineage.diff.snapshot import CodebaseSnapshot
+from graph_lineage.lineage.neo4j_ops import find_experiment_by_id
+
+logger = logging.getLogger(__name__)
 
 # Pattern for checkpoint IDs: UUID or path-like with "checkpoint" in it
 _CHECKPOINT_PATTERN = re.compile(
     r"(checkpoint|ckpt)[-_/]",
     re.IGNORECASE,
 )
-
 
 @dataclass(frozen=True)
 class RunTypeResult:
@@ -55,9 +57,10 @@ def detect_run_type(
     1. model_merging.enabled → MERGE
     2. checkpoint_resume_from explicitly set → RESUME
     3. model_uri changed to checkpoint path (auto-detect) → RESUME
-    4. previous_experiment_id == id (explicit signal) → RETRY
-    5. No parent experiment → NEW
-    6. Compare hashes: all match → RETRY, any differ → BRANCH
+    4. No parent experiment → NEW
+    5. base_experiment_id == experiment_id → BRANCH or RETRY (if codebase identical)
+    6. base_experiment_id != experiment_id and codebase differs → BRANCH
+    7. base_experiment_id != experiment_id and codebase not differs → RETRY
 
     Blocking guard:
     - If model_id differs from parent → ModelIdMismatchError
@@ -79,6 +82,7 @@ def detect_run_type(
             strategy="MERGE",
             parent_exp_id=parent_experiment.id if parent_experiment else None,
         )
+    logger.info("model_merging not enabled, proceeding with run type detection")
 
     # 2. RESUME explicit: checkpoint_resume_from is set and looks like a checkpoint
     ckp_ref = config.experiment.checkpoint_resume_from
@@ -88,6 +92,7 @@ def detect_run_type(
             parent_exp_id=parent_experiment.id if parent_experiment else None,
             parent_ckp_id=ckp_ref,
         )
+    logger.info("checkpoint_resume_from not set or not a checkpoint, proceeding with run type detection")
 
     # Guard: model_id mismatch detection (only if parent exists)
     current_model_id = str(config.model.get("model_id", "")).strip()
@@ -113,22 +118,54 @@ def detect_run_type(
                 parent_exp_id=parent_experiment.id,
                 parent_ckp_id=current_model_uri,
             )
+    logger.info("model_uri not changed to checkpoint, proceeding with run type detection")
 
-    # 4. RETRY explicit: previous_experiment_id == id (user signal)
+    # 4. NEW OR BRANCH: no parent experiment in DB -> NEW, but if base=True -> BRANCH
     exp = config.experiment
-    if exp.previous_experiment_id and exp.id and exp.previous_experiment_id == exp.id:
-        return RunTypeResult(
-            strategy="RETRY",
-            parent_exp_id=exp.id,
-        )
+    if not parent_experiment and not exp.base:
+            return RunTypeResult(strategy="NEW")
 
-    # 5. NEW: no parent experiment in DB
-    if parent_experiment is None:
-        return RunTypeResult(strategy="NEW")
+    logger.info("parent experiment not found: %s. and base: %s", parent_experiment.id if parent_experiment else None, exp.base)
+
+    # CURRENT HASHES:
+    current_hashes = current_snapshot.hashes()
+    import copy
+    no_lineage_current_hashes = copy.deepcopy(current_hashes)
+    no_lineage_current_hashes.pop(".lineage/experiment.yml", None)
+
+    # 5. RETRY vs BRANCH: parent experiment exists, check codebase
+    if exp.base_experiment_id == exp.id: # Experiemnt is its own base, check if codebase matches previous run
+        base = find_experiment_by_id(exp.base_experiment_id)
+        previous_codebase_snapshot = CodebaseSnapshot(files=json.loads(base.codebase))
+        previous_codebase_hashes = previous_codebase_snapshot.hashes()
+
+        # drop lineage info from hashes for this comparison, since it will always differ but shouldn't trigger a BRANCH
+        no_lineage_previous_hashes = copy.deepcopy(previous_codebase_hashes)
+        no_lineage_previous_hashes.pop(".lineage/experiment.yml", None)
+
+
+        if no_lineage_current_hashes == no_lineage_previous_hashes:
+            logger.info("Codebase matches previous run, treating as RETRY")
+            diff_patch = compute_snapshot_diff(previous_codebase_snapshot, current_snapshot)
+            return RunTypeResult(
+                strategy="RETRY",
+                parent_exp_id=exp.id,
+                diff_patch=json.dumps(diff_patch),
+                changed_files=sorted(diff_patch.keys()),
+            )
+        else:
+            logger.info("Codebase differs from previous run, treating as BRANCH")
+            diff_patch = compute_snapshot_diff(previous_codebase_snapshot, current_snapshot)
+            return RunTypeResult(
+                strategy="BRANCH",
+                parent_exp_id=exp.id,
+                diff_patch=json.dumps(diff_patch),
+                changed_files=sorted(diff_patch.keys()),
+            )
+
 
     # 6. Compare codebase content to decide RETRY vs BRANCH
     # Quick check via content hash, then detailed diff if different
-    current_hashes = current_snapshot.hashes()
     parent_snapshot = CodebaseSnapshot(files=json.loads(parent_experiment.codebase))
     parent_hashes = parent_snapshot.hashes()
 
