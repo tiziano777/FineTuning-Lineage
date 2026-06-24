@@ -56,24 +56,24 @@ async def _list_rich(status_filter=None, search=None) -> list[dict]:
     return await repo.list_rich(status_filter=status_filter, search=search)
 
 
-async def _update_metadata(exp_id: str, description: str | None, notes: str | None) -> dict:
+async def _update_metadata(id: str, description: str | None, notes: str | None) -> dict:
     repo = ExperimentRepository(get_neo4j_client())
-    return await repo.update_metadata(exp_id=exp_id, description=description, notes=notes)
+    return await repo.update_metadata(id=id, description=description, notes=notes)
 
 
-async def _get_agentic(exp_id: str) -> dict | None:
+async def _get_agentic(id: str) -> dict | None:
     repo = ExperimentRepository(get_neo4j_client())
-    return await repo.get_agentic_metadata(exp_id)
+    return await repo.get_agentic_metadata(id)
 
 
-async def _update_agentic(exp_id: str, **kwargs) -> dict:
+async def _update_agentic(id: str, **kwargs) -> dict:
     repo = ExperimentRepository(get_neo4j_client())
-    return await repo.update_agentic_metadata(exp_id, **kwargs)
+    return await repo.update_agentic_metadata(id, **kwargs)
 
 
-async def _set_visibility(exp_id: str, usable: bool) -> list[str]:
+async def _set_visibility(id: str, usable: bool) -> list[str]:
     repo = HistoryRepository(get_neo4j_client())
-    return await repo.set_visibility(exp_id, usable)
+    return await repo.set_visibility(id, usable)
 
 
 # ── UI helpers ────────────────────────────────────────────────────────────────
@@ -320,7 +320,7 @@ def _render_tab_agentic(experiments: list[dict]) -> None:
         st.info("Nessun esperimento disponibile.")
         return
 
-    exp_ids = [e["exp_id"] for e in experiments]
+    exp_ids = [e["id"] for e in experiments]
     selected_exp_id = st.selectbox("Seleziona esperimento", exp_ids, key="ag_exp_select")
     if not selected_exp_id:
         return
@@ -402,7 +402,7 @@ def run() -> None:
         with col_filter:
             status_filter = st.selectbox("Status", ["All", "COMPLETED", "RUNNING", "FAILED"])
         with col_search:
-            search = st.text_input("Search", placeholder="Filter by exp_id or description")
+            search = st.text_input("Search", placeholder="Filter by id or description")
 
         try:
             filter_val = None if status_filter == "All" else status_filter
@@ -412,7 +412,7 @@ def run() -> None:
             if experiments:
                 for exp in experiments:
                     badge = _status_badge(exp.get("status"), exp.get("usable"))
-                    with st.expander(f"{exp.get('exp_id', 'N/A')} {badge}"):
+                    with st.expander(f"{exp.get('id', 'N/A')} {badge}"):
                         col1, col2 = st.columns(2)
                         with col1:
                             st.markdown(f"**Model:** {exp.get('model_name', 'N/A')}")
@@ -465,11 +465,11 @@ def run() -> None:
             if not experiments:
                 st.info("No experiments available to edit.")
             else:
-                exp_ids = [e["exp_id"] for e in experiments]
+                exp_ids = [e["id"] for e in experiments]
                 selected_exp_id = st.selectbox("Select Experiment", exp_ids, key="edit_exp")
 
                 if selected_exp_id:
-                    current = next((e for e in experiments if e["exp_id"] == selected_exp_id), None)
+                    current = next((e for e in experiments if e["id"] == selected_exp_id), None)
                     if current:
                         with st.form("edit_metadata_form"):
                             description = st.text_area(
@@ -506,11 +506,11 @@ def run() -> None:
             if not experiments:
                 st.info("No experiments available.")
             else:
-                exp_ids = [e["exp_id"] for e in experiments]
+                exp_ids = [e["id"] for e in experiments]
                 selected_exp_id = st.selectbox("Select Experiment", exp_ids, key="vis_exp")
 
                 if selected_exp_id:
-                    current = next((e for e in experiments if e["exp_id"] == selected_exp_id), None)
+                    current = next((e for e in experiments if e["id"] == selected_exp_id), None)
                     if current:
                         is_usable = current.get("usable", True)
                         if is_usable is not False:

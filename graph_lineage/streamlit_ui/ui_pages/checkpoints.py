@@ -67,7 +67,7 @@ def run() -> None:
         with col_exp:
             try:
                 experiments = run_async(list_experiments_async())
-                exp_options = ["All"] + [e.get("exp_id", "") for e in experiments]
+                exp_options = ["All"] + [e.get("id", "") for e in experiments]
             except UIError:
                 exp_options = ["All"]
             selected_exp = st.selectbox("Filter by experiment", exp_options)

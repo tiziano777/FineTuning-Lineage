@@ -16,9 +16,9 @@ logger = logging.getLogger(__name__)
 async def _get_experiment_ids(db_client) -> list[str]:
     """Fetch all experiment IDs for selection dropdowns."""
     records = await db_client.run_list(
-        "MATCH (e:Experiment) RETURN e.exp_id AS exp_id ORDER BY e.created_at DESC LIMIT 100"
+        "MATCH (e:Experiment) RETURN e.id AS id ORDER BY e.created_at DESC LIMIT 100"
     )
-    return [r["exp_id"] for r in records if r.get("exp_id")]
+    return [r["id"] for r in records if r.get("id")]
 
 
 def _render_navigate_tab(history_repo: HistoryRepository, experiment_ids: list[str]) -> None:
@@ -64,7 +64,7 @@ def _render_navigate_tab(history_repo: HistoryRepository, experiment_ids: list[s
         st.divider()
         st.subheader("Current Position")
         summary = nav_result.summary
-        st.write(f"**Experiment:** {summary.exp_id}")
+        st.write(f"**Experiment:** {summary.id}")
         st.write(f"**Status:** {summary.status}")
         st.write(f"**Description:** {summary.description}")
         st.caption(f"Strategy: {summary.strategy} | Checkpoints: {summary.checkpoint_count}")
@@ -120,7 +120,7 @@ def _render_rollback_tab(history_repo: HistoryRepository, experiment_ids: list[s
         if preview.affected_experiments:
             with st.expander("Affected Experiments"):
                 for exp_summary in preview.affected_experiments:
-                    st.write(f"- **{exp_summary.exp_id}** ({exp_summary.status}) -- {exp_summary.description}")
+                    st.write(f"- **{exp_summary.id}** ({exp_summary.status}) -- {exp_summary.description}")
 
         st.caption("Experiments after this point will be hidden (usable=false)")
 

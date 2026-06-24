@@ -42,7 +42,7 @@ async def fetch_lineage_graph(db_client, root_exp_id: str | None = None) -> dict
     # Build experiment query with optional filter
     if root_exp_id and root_exp_id != "All":
         query = """
-        MATCH (e:Experiment {exp_id: $exp_id})
+        MATCH (e:Experiment {id: $id})
         OPTIONAL MATCH path = (e)<-[:DERIVED_FROM|RETRY_FROM*0..50]-(desc:Experiment)
         OPTIONAL MATCH path2 = (e)-[:DERIVED_FROM|RETRY_FROM*0..50]->(anc:Experiment)
         WITH COLLECT(DISTINCT desc) + COLLECT(DISTINCT anc) + [e] AS all_exps
@@ -50,20 +50,20 @@ async def fetch_lineage_graph(db_client, root_exp_id: str | None = None) -> dict
         WITH DISTINCT exp
         OPTIONAL MATCH (exp)-[r:DERIVED_FROM|RETRY_FROM|STARTED_FROM|MERGED_FROM]->(target)
         OPTIONAL MATCH (ckp:Checkpoint)-[:PRODUCED_BY]->(exp)
-        RETURN exp.exp_id AS exp_id, exp.status AS status,
+        RETURN exp.id AS id, exp.status AS status,
                exp.description AS description, exp.usable AS usable,
-               type(r) AS rel_type, target.exp_id AS target_exp_id,
+               type(r) AS rel_type, target.id AS target_exp_id,
                COLLECT(DISTINCT ckp.id) AS checkpoint_ids
         """
-        records = await db_client.run_list(query, exp_id=root_exp_id)
+        records = await db_client.run_list(query, id=root_exp_id)
     else:
         query = """
         MATCH (e:Experiment)
         OPTIONAL MATCH (e)-[r:DERIVED_FROM|RETRY_FROM|STARTED_FROM|MERGED_FROM]->(target)
         OPTIONAL MATCH (ckp:Checkpoint)-[:PRODUCED_BY]->(e)
-        RETURN e.exp_id AS exp_id, e.status AS status,
+        RETURN e.id AS id, e.status AS status,
                e.description AS description, e.usable AS usable,
-               type(r) AS rel_type, target.exp_id AS target_exp_id,
+               type(r) AS rel_type, target.id AS target_exp_id,
                COLLECT(DISTINCT ckp.id) AS checkpoint_ids
         LIMIT 100
         """
@@ -74,12 +74,12 @@ async def fetch_lineage_graph(db_client, root_exp_id: str | None = None) -> dict
     edges: list[Edge] = []
 
     for record in records:
-        exp_id = record["exp_id"]
-        if not exp_id:
+        id = record["id"]
+        if not id:
             continue
 
         # Build experiment node
-        if exp_id not in seen_nodes:
+        if id not in seen_nodes:
             usable = record.get("usable", True)
             status = record.get("status", "") or ""
             if not usable:
@@ -87,12 +87,12 @@ async def fetch_lineage_graph(db_client, root_exp_id: str | None = None) -> dict
             else:
                 color = _STATUS_COLORS.get(status.upper(), _SECONDARY_COLOR)
 
-            label = exp_id
+            label = id
             if record.get("description"):
-                label = f"{exp_id}\n{record['description'][:30]}"
+                label = f"{id}\n{record['description'][:30]}"
 
-            seen_nodes[exp_id] = Node(
-                id=exp_id,
+            seen_nodes[id] = Node(
+                id=id,
                 label=label,
                 size=25,
                 color=color,
@@ -111,7 +111,7 @@ async def fetch_lineage_graph(db_client, root_exp_id: str | None = None) -> dict
                 )
                 edges.append(Edge(
                     source=ckp_id,
-                    target=exp_id,
+                    target=id,
                     label="produced",
                 ))
 
@@ -121,7 +121,7 @@ async def fetch_lineage_graph(db_client, root_exp_id: str | None = None) -> dict
         if rel_type and target_id:
             edge_label = _EDGE_LABELS.get(rel_type, rel_type)
             edges.append(Edge(
-                source=exp_id,
+                source=id,
                 target=target_id,
                 label=edge_label,
             ))
@@ -132,9 +132,9 @@ async def fetch_lineage_graph(db_client, root_exp_id: str | None = None) -> dict
 async def _get_experiment_ids(db_client) -> list[str]:
     """Fetch all experiment IDs for the selector dropdown."""
     records = await db_client.run_list(
-        "MATCH (e:Experiment) RETURN e.exp_id AS exp_id ORDER BY e.created_at DESC LIMIT 100"
+        "MATCH (e:Experiment) RETURN e.id AS id ORDER BY e.created_at DESC LIMIT 100"
     )
-    return [r["exp_id"] for r in records if r.get("exp_id")]
+    return [r["id"] for r in records if r.get("id")]
 
 
 def run() -> None:

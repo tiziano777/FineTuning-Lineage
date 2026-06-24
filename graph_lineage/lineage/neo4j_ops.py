@@ -70,8 +70,23 @@ def find_parent_experiment(uri: str) -> Experiment | None:
         return None
     return Experiment.model_validate(data)
 
+async def _find_parent_experiment_id_async(experiment_id: str) -> str | None:
+    """
+    Trova l'ID del parent di un esperimento attraverso le relazioni DERIVED_FROM o RETRY_FROM.
+    """
+    driver = await get_driver()
+    query = """
+    MATCH (e:Experiment {id: $id})-[r:DERIVED_FROM|RETRY_FROM]->(parent:Experiment)
+    RETURN parent.id AS parent_id
+    """
+    async with driver.session() as session:
+        result = await session.run(query, {"id": experiment_id})
+        record = await result.single()
+        if record is None:
+            return None
+        return record["parent_id"]
 
-async def _find_experiment_by_id_async(experiment_id: str) -> dict[str, Any] | None:
+async def _find_experiment_by_id_async(experiment_id: str) -> Experiment | None:
     """Query Neo4j for an experiment by its unique ID."""
     driver = await get_driver()
     query = "MATCH (e:Experiment {id: $exp_id}) RETURN e LIMIT 1"
@@ -80,7 +95,7 @@ async def _find_experiment_by_id_async(experiment_id: str) -> dict[str, Any] | N
         record = await result.single()
         if record is None:
             return None
-        return dict(record["e"])
+        return Experiment.model_validate(record["e"])
 
 
 def find_experiment_by_id(experiment_id: str) -> Experiment | None:

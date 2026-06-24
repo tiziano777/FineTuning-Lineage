@@ -2,6 +2,11 @@ FROM python:3.10-slim
 
 WORKDIR /app
 
+# Installa patch e altre utility necessarie
+RUN apt-get update && apt-get install -y \
+    patch \
+    && rm -rf /var/lib/apt/lists/*
+
 # Copia i requisiti dalla radice del progetto
 COPY graph_lineage/server/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt

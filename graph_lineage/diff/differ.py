@@ -7,12 +7,10 @@ import hashlib
 
 from .snapshot import CodebaseSnapshot
 
-
 def compute_file_hash(content: str) -> str:
     """Compute SHA-256 of content after normalizing CRLF to LF."""
     normalized = content.replace("\r\n", "\n")
     return hashlib.sha256(normalized.encode()).hexdigest()
-
 
 def compute_unified_diff(old_content: str, new_content: str, filename: str) -> str:
     """Generate unified diff between old and new content.
@@ -33,7 +31,6 @@ def compute_unified_diff(old_content: str, new_content: str, filename: str) -> s
         return ""
     return "".join(diff_lines)
 
-
 def detect_changes(old_hashes: dict[str, str], new_hashes: dict[str, str]) -> list[str]:
     """Return list of filenames where hash differs between old and new."""
     changed = []
@@ -42,7 +39,6 @@ def detect_changes(old_hashes: dict[str, str], new_hashes: dict[str, str]) -> li
         if old_hashes.get(fname) != new_hashes.get(fname):
             changed.append(fname)
     return changed
-
 
 def compute_snapshot_diff(
     old_snapshot: CodebaseSnapshot,

@@ -20,6 +20,7 @@ class Experiment(BaseEntity):
     strategy: str = Field("", description="NEW | RESUME | BRANCH | RETRY")
 
     model_id: str | None = Field(None, description="model_id used for entire lineage experimentations")
+    model_uri: str | None = Field(None, description="model_uri used for entire lineage experimentations")
     recipe_id: str | None = Field(None, description="recipe_id used for entire lineage experimentations")
     component_id: str | None = Field(None, description="component_id used for entire lineage experimentations")
 

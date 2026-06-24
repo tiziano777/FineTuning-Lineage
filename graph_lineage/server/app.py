@@ -28,7 +28,7 @@ from graph_lineage.lineage.neo4j_ops import (
     create_edge,
     create_experiment_node,
     create_started_from_edge,
-    find_experiment_by_id,
+    _find_experiment_by_id_async,
     update_experiment_status,
 )
 from graph_lineage.lineage.rule_engine import ModelIdMismatchError, detect_run_type
@@ -124,7 +124,7 @@ async def pre_execution(request: PreRequest) -> PreResponse:
         # 2. Find parent experiment
         parent: Experiment | None = None
         if request.previous_experiment_id:
-            parent = find_experiment_by_id(request.previous_experiment_id)
+            parent = await _find_experiment_by_id_async(request.previous_experiment_id)
             if parent is None:
                 raise HTTPException(
                     status_code=422,
@@ -150,7 +150,7 @@ async def pre_execution(request: PreRequest) -> PreResponse:
             },
             "model": {
                 "model_id": request.model_id or "",
-                "model_uri": request.experiment_uri or "",
+                "model_uri": request.model_uri or "",
                 "checkpoint_resume_from": request.checkpoint_resume_from,
             },
             "model_merging": {"enabled": request.merging},
@@ -159,7 +159,7 @@ async def pre_execution(request: PreRequest) -> PreResponse:
         # 4. Detect run type
         # ModelIdMismatchError → HTTP 409 (client maps to exit code 7)
         try:
-            run_result = detect_run_type(config, snapshot, parent)
+            run_result = await detect_run_type(config, snapshot, parent)
         except ModelIdMismatchError as e:
             raise HTTPException(status_code=409, detail=str(e))
         #except Exception as e:
@@ -196,6 +196,7 @@ async def pre_execution(request: PreRequest) -> PreResponse:
             changed_files=run_result.changed_files or [],
             # metrics_uri is populated at POST time (not known at PRE)
             metrics_uri=None,
+            model_uri=request.model_uri or None
         )
 
         # 6. Create node in Neo4j

@@ -16,27 +16,27 @@ logger = logging.getLogger(__name__)
 _QUERY_MISSING_USES_MODEL = """
 MATCH (e:Experiment)
 WHERE NOT EXISTS((e)-[:USES_MODEL]->())
-RETURN e.exp_id AS exp_id, e.status AS status
+RETURN e.id AS id, e.status AS status
 """
 
 _QUERY_MISSING_USES_RECIPE = """
 MATCH (e:Experiment)
 WHERE NOT EXISTS((e)-[:USES_RECIPE]->())
-RETURN e.exp_id AS exp_id, e.status AS status
+RETURN e.id AS id, e.status AS status
 """
 
 _QUERY_STALE_RUNNING = """
 MATCH (e:Experiment {status: 'RUNNING'})
 WHERE e.created_at < datetime() - duration('PT24H')
-RETURN e.exp_id AS exp_id, e.created_at AS created_at
+RETURN e.id AS id, e.created_at AS created_at
 """
 
 _QUERY_DUPLICATE_CONFIG_HASH = """
 MATCH (e1:Experiment), (e2:Experiment)
-WHERE e1.config_hash = e2.config_hash AND e1.exp_id < e2.exp_id
+WHERE e1.config_hash = e2.config_hash AND e1.id < e2.id
 AND NOT EXISTS((e2)-[:RETRY_FROM]->(e1))
 AND NOT EXISTS((e1)-[:RETRY_FROM]->(e2))
-RETURN e1.exp_id AS exp1, e2.exp_id AS exp2, e1.config_hash AS config_hash
+RETURN e1.id AS exp1, e2.id AS exp2, e1.config_hash AS config_hash
 """
 
 _QUERY_CYCLE_DETECTION = """

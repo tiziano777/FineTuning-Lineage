@@ -4,49 +4,33 @@ from __future__ import annotations
 
 import re
 
+MAX_CHAIN_DEPTH: int = 200
 
-MAX_CHAIN_DEPTH: int = 100
-
+import subprocess
+import tempfile
+import os
 
 def apply_unified_diff(original: str, patch: str) -> str:
-    """Apply a unified diff patch to the original content.
-
-    Args:
-        original: The original file content.
-        patch: Unified diff string. If empty, returns original unchanged.
-
-    Returns:
-        The patched content.
-    """
     if not patch:
         return original
-
-    original_lines = original.splitlines(keepends=True)
-    # Ensure all lines have newline for consistent processing
-    if original_lines and not original_lines[-1].endswith("\n"):
-        original_lines[-1] += "\n"
-
-    hunks = _parse_hunks(patch)
-
-    if not hunks:
-        # No hunks found - extract added lines (new file case)
-        result_lines = []
-        for line in patch.splitlines(keepends=True):
-            if line.startswith("+") and not line.startswith("+++"):
-                result_lines.append(line[1:])
-        if result_lines:
-            return "".join(result_lines)
-        return original
-
-    # Apply hunks in reverse order to preserve line numbers
-    result_lines = list(original_lines)
-    for hunk in reversed(hunks):
-        start, old_count, new_lines_content = hunk
-        # Find the actual position by matching context
-        result_lines[start : start + old_count] = new_lines_content
-
-    return "".join(result_lines)
-
+    
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.orig', delete=False) as f:
+        f.write(original)
+        orig_path = f.name
+    
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.patch', delete=False) as f:
+        f.write(patch)
+        patch_path = f.name
+    
+    try:
+        result = subprocess.run(
+            ['patch', '--output=-', orig_path, patch_path],
+            capture_output=True, text=True
+        )
+        return result.stdout
+    finally:
+        os.unlink(orig_path)
+        os.unlink(patch_path)
 
 def _parse_hunks(patch: str) -> list[tuple[int, int, list[str]]]:
     """Parse unified diff into hunks.
@@ -99,7 +83,6 @@ def _parse_hunks(patch: str) -> list[tuple[int, int, list[str]]]:
             i += 1
 
     return hunks
-
 
 def reconstruct_codebase(chain: list[dict[str, dict[str, str]]]) -> dict[str, str]:
     """Reconstruct codebase state from a lineage chain.

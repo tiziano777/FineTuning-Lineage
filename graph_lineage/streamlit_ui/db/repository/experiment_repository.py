@@ -61,7 +61,7 @@ class ExperimentRepository:
 
     async def create(
         self,
-        exp_id: str,
+        id: str,
         model_id: str,
         status: str = "PENDING",
         description: str = "",
@@ -69,7 +69,7 @@ class ExperimentRepository:
         """Create a new experiment.
 
         Args:
-            exp_id: Unique experiment ID.
+            id: Unique experiment ID.
             model_id: Associated Model ID.
             status: Experiment status.
             description: Experiment description.
@@ -82,7 +82,7 @@ class ExperimentRepository:
         query = """
         CREATE (e:Experiment {
             id: $id,
-            exp_id: $exp_id,
+            id: $id,
             model_id: $model_id,
             status: $status,
             description: $description,
@@ -90,15 +90,15 @@ class ExperimentRepository:
             updated_at: $updated_at,
             usable: true
         })
-        RETURN e.id as id, e.exp_id as exp_id, e.model_id as model_id,
+        RETURN e.id as id, e.id as id, e.model_id as model_id,
                e.status as status, e.description as description,
                e.created_at as created_at, e.updated_at as updated_at
         """
 
         result = await self.db.run_single(
             query,
-            id=exp_id,
-            exp_id=exp_id,
+            id=id,
+            id=id,
             model_id=model_id,
             status=status,
             description=description,
@@ -109,7 +109,7 @@ class ExperimentRepository:
         if not result:
             raise UIError("Failed to create experiment in Neo4j")
 
-        logger.info(f"Experiment created: id={exp_id}, model_id={model_id}")
+        logger.info(f"Experiment created: id={id}, model_id={model_id}")
         return result
 
     async def create_experiment(
@@ -129,36 +129,36 @@ class ExperimentRepository:
             Created experiment data.
         """
         import uuid
-        exp_id = str(uuid.uuid4())
+        id = str(uuid.uuid4())
         return await self.create(
-            exp_id=exp_id,
+            id=id,
             model_id=model_id,
             status=status,
             description=description,
         )
 
-    async def get_by_id(self, exp_id: str) -> Optional[dict]:
+    async def get_by_id(self, id: str) -> Optional[dict]:
         """Get experiment by ID.
 
         Args:
-            exp_id: Experiment ID.
+            id: Experiment ID.
 
         Returns:
             Experiment data or None if not found.
         """
         query = """
         MATCH (e:Experiment {id: $id})
-        RETURN e.id as id, e.exp_id as exp_id, e.model_id as model_id,
+        RETURN e.id as id, e.id as id, e.model_id as model_id,
                e.status as status, e.description as description,
                e.created_at as created_at, e.updated_at as updated_at
         """
 
-        result = await self.db.run_single(query, id=exp_id)
+        result = await self.db.run_single(query, id=id)
         return result
 
-    async def get_experiment(self, exp_id: str) -> Optional[dict]:
+    async def get_experiment(self, id: str) -> Optional[dict]:
         """Alias for get_by_id for manager compatibility."""
-        return await self.get_by_id(exp_id)
+        return await self.get_by_id(id)
 
     async def list_all(self, status: Optional[str] = None) -> list[dict]:
         """List experiments optionally filtered by status.
@@ -172,7 +172,7 @@ class ExperimentRepository:
         if status:
             query = """
             MATCH (e:Experiment {status: $status})
-            RETURN e.id as id, e.exp_id as exp_id, e.model_id as model_id,
+            RETURN e.id as id, e.id as id, e.model_id as model_id,
                    e.status as status, e.description as description,
                    e.created_at as created_at, e.updated_at as updated_at
             LIMIT 100
@@ -181,7 +181,7 @@ class ExperimentRepository:
         else:
             query = """
             MATCH (e:Experiment)
-            RETURN e.id as id, e.exp_id as exp_id, e.model_id as model_id,
+            RETURN e.id as id, e.id as id, e.model_id as model_id,
                    e.status as status, e.description as description,
                    e.created_at as created_at, e.updated_at as updated_at
             LIMIT 100
@@ -196,7 +196,7 @@ class ExperimentRepository:
 
     async def update(
         self,
-        exp_id: str,
+        id: str,
         status: Optional[str] = None,
         description: Optional[str] = None,
         exit_status: Optional[str] = None,
@@ -205,7 +205,7 @@ class ExperimentRepository:
         """Update experiment fields.
 
         Args:
-            exp_id: Experiment ID.
+            id: Experiment ID.
             status: New status.
             description: New description.
             exit_status: Exit status.
@@ -215,7 +215,7 @@ class ExperimentRepository:
             Updated experiment data.
         """
         now = datetime.utcnow().isoformat()
-        params = {"id": exp_id, "updated_at": now}
+        params = {"id": id, "updated_at": now}
 
         # Build parameterized query based on which fields are provided
         if status is not None and description is not None and exit_status is not None and exit_msg is not None:
@@ -224,7 +224,7 @@ class ExperimentRepository:
             SET e.status = $status, e.description = $description,
                 e.exit_status = $exit_status, e.exit_msg = $exit_msg,
                 e.updated_at = $updated_at
-            RETURN e.id as id, e.exp_id as exp_id, e.model_id as model_id,
+            RETURN e.id as id, e.id as id, e.model_id as model_id,
                    e.status as status, e.description as description,
                    e.updated_at as updated_at
             """
@@ -233,7 +233,7 @@ class ExperimentRepository:
             query = """
             MATCH (e:Experiment {id: $id})
             SET e.status = $status, e.description = $description, e.updated_at = $updated_at
-            RETURN e.id as id, e.exp_id as exp_id, e.model_id as model_id,
+            RETURN e.id as id, e.id as id, e.model_id as model_id,
                    e.status as status, e.description as description,
                    e.updated_at as updated_at
             """
@@ -242,7 +242,7 @@ class ExperimentRepository:
             query = """
             MATCH (e:Experiment {id: $id})
             SET e.status = $status, e.updated_at = $updated_at
-            RETURN e.id as id, e.exp_id as exp_id, e.model_id as model_id,
+            RETURN e.id as id, e.id as id, e.model_id as model_id,
                    e.status as status, e.description as description,
                    e.updated_at as updated_at
             """
@@ -251,7 +251,7 @@ class ExperimentRepository:
             query = """
             MATCH (e:Experiment {id: $id})
             SET e.description = $description, e.updated_at = $updated_at
-            RETURN e.id as id, e.exp_id as exp_id, e.model_id as model_id,
+            RETURN e.id as id, e.id as id, e.model_id as model_id,
                    e.status as status, e.description as description,
                    e.updated_at as updated_at
             """
@@ -259,7 +259,7 @@ class ExperimentRepository:
         else:
             query = """
             MATCH (e:Experiment {id: $id})
-            RETURN e.id as id, e.exp_id as exp_id, e.model_id as model_id,
+            RETURN e.id as id, e.id as id, e.model_id as model_id,
                    e.status as status, e.description as description,
                    e.updated_at as updated_at
             """
@@ -267,14 +267,14 @@ class ExperimentRepository:
         result = await self.db.run_single(query, **params)
 
         if not result:
-            raise UIError(f"Experiment {exp_id} not found")
+            raise UIError(f"Experiment {id} not found")
 
-        logger.info(f"Experiment updated: id={exp_id}")
+        logger.info(f"Experiment updated: id={id}")
         return result
 
     async def update_experiment(
         self,
-        exp_id: str,
+        id: str,
         status: Optional[str] = None,
         description: Optional[str] = None,
         exit_status: Optional[str] = None,
@@ -282,48 +282,48 @@ class ExperimentRepository:
     ) -> dict:
         """Alias for update for manager compatibility."""
         return await self.update(
-            exp_id=exp_id,
+            id=id,
             status=status,
             description=description,
             exit_status=exit_status,
             exit_msg=exit_msg,
         )
 
-    async def delete(self, exp_id: str) -> None:
+    async def delete(self, id: str) -> None:
         """Delete experiment with constraint checking.
 
         Args:
-            exp_id: Experiment ID to delete.
+            id: Experiment ID to delete.
 
         Raises:
             UIError: If experiment not found, has generated checkpoints,
                      or has derived/branched experiments.
         """
-        existing = await self.get_by_id(exp_id)
+        existing = await self.get_by_id(id)
         if not existing:
-            raise UIError(f"Experiment '{exp_id}' not found")
+            raise UIError(f"Experiment '{id}' not found")
 
         # Check if experiment can be deleted
-        if not await self.is_deletable(exp_id):
+        if not await self.is_deletable(id):
             raise UIError(
-                f"Cannot delete experiment '{exp_id}': it has produced checkpoints "
+                f"Cannot delete experiment '{id}': it has produced checkpoints "
                 "or has derived/branched experiments. "
                 "Remove dependent experiments/checkpoints first."
             )
 
         try:
             query = "MATCH (e:Experiment {id: $id}) DETACH DELETE e"
-            await self.db.run(query, id=exp_id)
-            logger.warning(f"Experiment deleted: id={exp_id}")
+            await self.db.run(query, id=id)
+            logger.warning(f"Experiment deleted: id={id}")
         except Exception as e:
-            logger.error(f"Experiment deletion failed: {exp_id}", exc_info=True)
+            logger.error(f"Experiment deletion failed: {id}", exc_info=True)
             raise UIError(f"Failed to delete experiment: {str(e)}")
 
-    async def delete_experiment(self, exp_id: str) -> None:
+    async def delete_experiment(self, id: str) -> None:
         """Alias for delete for manager compatibility."""
-        await self.delete(exp_id)
+        await self.delete(id)
 
-    async def is_deletable(self, exp_id: str) -> bool:
+    async def is_deletable(self, id: str) -> bool:
         """Check if experiment can be deleted.
 
         Experiment cannot be deleted if:
@@ -333,12 +333,12 @@ class ExperimentRepository:
         - It has outgoing RETRY_OF relationships (experiment is base for retries)
 
         Args:
-            exp_id: Experiment ID to check.
+            id: Experiment ID to check.
 
         Returns:
             True if experiment has no blocking outgoing relationships, False otherwise.
         """
-        existing = await self.get_by_id(exp_id)
+        existing = await self.get_by_id(id)
         if not existing:
             return True
 
@@ -354,7 +354,7 @@ class ExperimentRepository:
                COUNT(DISTINCT cp2) as started_from_count,
                COUNT(DISTINCT e3) as retry_count
         """
-        result = await self.db.run_single(query, id=exp_id)
+        result = await self.db.run_single(query, id=id)
         if result:
             produced_count = result.get("produced_count", 0)
             derived_count = result.get("derived_count", 0)
@@ -368,11 +368,11 @@ class ExperimentRepository:
             )
         return True
 
-    async def count_dependencies(self, exp_id: str) -> int:
+    async def count_dependencies(self, id: str) -> int:
         """Count checkpoints for this experiment.
 
         Args:
-            exp_id: Experiment ID.
+            id: Experiment ID.
 
         Returns:
             Number of dependent checkpoints.
@@ -382,12 +382,12 @@ class ExperimentRepository:
         RETURN count(r) as dep_count
         """
 
-        result = await self.db.run_single(query, id=exp_id)
+        result = await self.db.run_single(query, id=id)
         return result["dep_count"] if result else 0
 
-    async def check_experiment_dependencies(self, exp_id: str) -> int:
+    async def check_experiment_dependencies(self, id: str) -> int:
         """Alias for count_dependencies for manager compatibility."""
-        return await self.count_dependencies(exp_id)
+        return await self.count_dependencies(id)
 
     async def list_rich(self, status_filter: str = None, search: str = None) -> list[dict]:
         """List experiments with USES_MODEL, USES_RECIPE, USES_TECHNIQUE relationships and checkpoint count."""
@@ -398,7 +398,7 @@ class ExperimentRepository:
         OPTIONAL MATCH (e)-[:USES_TECHNIQUE]->(c:Component)
         OPTIONAL MATCH (ckp:Checkpoint)-[:PRODUCED_BY]->(e)
         WITH e, m, r, c, COUNT(ckp) as ckp_count
-        RETURN e.exp_id as exp_id, e.status as status, e.description as description,
+        RETURN e.id as id, e.status as status, e.description as description,
                e.usable as usable, e.config_hash as config_hash, e.created_at as created_at,
                e.notes as notes, m.model_name as model_name, r.name as recipe_name,
                c.technique_code as technique_code, c.framework_code as framework_code,
@@ -408,10 +408,10 @@ class ExperimentRepository:
         """
         return await self.db.run_list(query)
 
-    async def update_metadata(self, exp_id: str, description: str = None, notes: str = None) -> dict:
+    async def update_metadata(self, id: str, description: str = None, notes: str = None) -> dict:
         """Update only description and notes fields (metadata edit)."""
         sets = []
-        params = {"exp_id": exp_id, "updated_at": datetime.utcnow().isoformat()}
+        params = {"id": id, "updated_at": datetime.utcnow().isoformat()}
         if description is not None:
             sets.append("e.description = $description")
             params["description"] = description
@@ -420,23 +420,23 @@ class ExperimentRepository:
             params["notes"] = notes
         if not sets:
             raise UIError("No fields to update")
-        query = f"MATCH (e:Experiment {{exp_id: $exp_id}}) SET {', '.join(sets)}, e.updated_at = $updated_at RETURN e.exp_id as exp_id"
+        query = f"MATCH (e:Experiment {{id: $id}}) SET {', '.join(sets)}, e.updated_at = $updated_at RETURN e.id as id"
         result = await self.db.run_single(query, **params)
         if not result:
             raise UIError("Experiment not found")
         return dict(result)
 
-    async def get_agentic_metadata(self, exp_id: str) -> Optional[dict]:
+    async def get_agentic_metadata(self, id: str) -> Optional[dict]:
         """Fetch only the agentic metadata fields for a given experiment.
 
         Args:
-            exp_id: Experiment ID (exp_id property on the node).
+            id: Experiment ID (id property on the node).
 
         Returns:
             Dict with all agentic metadata fields, or None if experiment not found.
         """
         query = """
-        MATCH (e:Experiment {exp_id: $exp_id})
+        MATCH (e:Experiment {id: $id})
         RETURN
             e.scope                AS scope,
             e.hypothesis           AS hypothesis,
@@ -456,7 +456,7 @@ class ExperimentRepository:
             e.duration_seconds     AS duration_seconds,
             e.estimated_gain       AS estimated_gain
         """
-        result = await self.db.run_single(query, exp_id=exp_id)
+        result = await self.db.run_single(query, id=id)
         if result is None:
             return None
 
@@ -475,7 +475,7 @@ class ExperimentRepository:
 
     async def update_agentic_metadata(
         self,
-        exp_id: str,
+        id: str,
         *,
         # Gruppo 1 — identità
         scope: Optional[str] = None,
@@ -511,7 +511,7 @@ class ExperimentRepository:
         as JSON strings.
 
         Args:
-            exp_id: Experiment ID (exp_id property, not internal id).
+            id: Experiment ID (id property, not internal id).
             scope: Macro-category enum.
             hypothesis: Claim to be verified, written pre-run.
             motivation: Why this experiment was created.
@@ -531,7 +531,7 @@ class ExperimentRepository:
             estimated_gain: Predicted delta on primary metric (pre-run).
 
         Returns:
-            Dict with exp_id confirming the write.
+            Dict with id confirming the write.
 
         Raises:
             UIError: If no fields provided or experiment not found.
@@ -577,16 +577,16 @@ class ExperimentRepository:
         set_clauses = [f"e.{k} = ${k}" for k in field_map]
         set_clauses.append("e.updated_at = $updated_at")
         field_map["updated_at"] = datetime.utcnow().isoformat()
-        field_map["exp_id"] = exp_id
+        field_map["id"] = id
 
         query = f"""
-        MATCH (e:Experiment {{exp_id: $exp_id}})
+        MATCH (e:Experiment {{id: $id}})
         SET {', '.join(set_clauses)}
-        RETURN e.exp_id AS exp_id
+        RETURN e.id AS id
         """
 
         result = await self.db.run_single(query, **field_map)
         if not result:
-            raise UIError(f"Experiment '{exp_id}' non trovato")
+            raise UIError(f"Experiment '{id}' non trovato")
 
         return dict(result)

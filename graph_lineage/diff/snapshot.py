@@ -65,7 +65,6 @@ class CodebaseSnapshot(BaseModel):
         )
         return hashlib.sha256(combined.encode()).hexdigest()
 
-
 def _is_dot_path(path: Path, root: Path) -> bool:
     """Check if any part of the relative path starts with '.' (except .lineage)."""
     rel = path.relative_to(root)
@@ -73,7 +72,6 @@ def _is_dot_path(path: Path, root: Path) -> bool:
         if part.startswith(".") and part != ".lineage":
             return True
     return False
-
 
 def _read_file_safe(filepath: Path) -> str:
     """Read file content with safety checks.
@@ -89,7 +87,6 @@ def _read_file_safe(filepath: Path) -> str:
         raise FileTooLargeError(filepath, size)
 
     return filepath.read_text(encoding="utf-8", errors="replace")
-
 
 def capture_snapshot(codebase_root: Path) -> CodebaseSnapshot:
     """Scan project and capture all tracked files into a frozen snapshot.
