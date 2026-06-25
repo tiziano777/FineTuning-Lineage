@@ -23,25 +23,13 @@ from graph_lineage.data_classes.neo4j.nodes.experiment import Experiment
 from graph_lineage.diff.description import generate_description
 from graph_lineage.diff.snapshot import CodebaseSnapshot
 from graph_lineage.lineage.neo4j_ops import (
-    create_checkpoint_edge,
-    create_checkpoint_node,
-    create_edge,
-    create_experiment_node,
-    create_started_from_edge,
-    _find_experiment_by_id_async,
-    update_experiment_status,
-)
+    create_checkpoint_edge, create_checkpoint_node,create_experiment_edge,
+    create_experiment_node, create_resumed_from_edge, find_experiment_by_id,
+    update_experiment_status,create_ckp_derived_from_edge,retrieve_ckp_id_by_ckp_uri,retrieve_ckp_by_experiment_id )
 from graph_lineage.lineage.rule_engine import ModelIdMismatchError, detect_run_type
 
-from .schemas import (
-    CheckpointRequest,
-    CheckpointResponse,
-    HealthResponse,
-    PostRequest,
-    PostResponse,
-    PreRequest,
-    PreResponse,
-)
+from .schemas import CheckpointRequest, CheckpointResponse, HealthResponse, PostRequest, PostResponse, PreRequest, PreResponse
+
 # Configura logging base
 logging.basicConfig(
     level=logging.INFO,
@@ -69,12 +57,12 @@ app = FastAPI(
 
 # Edge type mapping per strategy — Experiment→Experiment edges only.
 # RESUME and BRANCH-with-checkpoint also create a separate Experiment→Checkpoint
-# STARTED_FROM edge via create_started_from_edge(), handled explicitly below.
+# RESUMED_FROM edge via create_resumed_from_edge(), handled explicitly below.
 _STRATEGY_EXP_EDGE_MAP: dict[str, str] = {
     "BRANCH": "DERIVED_FROM",
     "RETRY": "RETRY_FROM",   # aligned with schema: (Experiment)-[:RETRY_FROM]→(Experiment)
     "MERGE": "MERGED_FROM",
-    # RESUME: no Experiment→Experiment edge — only Experiment→Checkpoint via STARTED_FROM
+    "RESUME": "RESUMED_FROM"  # aligned with schema: (Experiment)-[:RESUMED_FROM]→(Experiment) (Experiment)-[:CKP_RESUMED_FROM]→(Checkpoint)
 }
 
 
@@ -109,9 +97,9 @@ async def pre_execution(request: PreRequest) -> PreResponse:
     4. Detect run type
     5. Create Experiment node in Neo4j
     6. Create edges based on strategy:
-       - BRANCH  → DERIVED_FROM (Exp→Exp) + optionally STARTED_FROM (Exp→Ckp)
+       - BRANCH  → DERIVED_FROM (Exp→Exp) + optionally RESUMED_FROM (Exp→Ckp)
        - RETRY   → RETRY_FROM (Exp→Exp)
-       - RESUME  → STARTED_FROM (Exp→Ckp) only
+       - RESUME  → RESUMED_FROM (Exp→Ckp) only
        - MERGE   → DERIVED_FROM (Exp→Exp)
     7. Return strategy + experiment_id
     """
@@ -121,10 +109,10 @@ async def pre_execution(request: PreRequest) -> PreResponse:
         snapshot = CodebaseSnapshot(files=json.loads(request.codebase))
         logger.info("snapshot files: %d", len(snapshot.files))
         
-        # 2. Find parent experiment
-        parent: Experiment | None = None
+        # 2.a Find parent experiment if exists (by previous_experiment_id)
+        
         if request.previous_experiment_id:
-            parent = await _find_experiment_by_id_async(request.previous_experiment_id)
+            parent = find_experiment_by_id(request.previous_experiment_id)
             if parent is None:
                 raise HTTPException(
                     status_code=422,
@@ -132,6 +120,18 @@ async def pre_execution(request: PreRequest) -> PreResponse:
                 )
         else:
             logger.info("no parent experiment found")
+        
+        # 2.b Find current experiment if exists (by experiment_id)
+        if request.experiment_id:
+            t_exp = find_experiment_by_id(request.experiment_id)
+            if t_exp is None:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"experiment_id '{request.experiment_id}' not found in DB",
+                )
+        else:
+            logger.info("no current experiment found")
+        
 
         # 3. Build minimal LineageConfig for rule_engine
         from graph_lineage.config_file.data_classes.lineage_config import LineageConfig
@@ -159,7 +159,7 @@ async def pre_execution(request: PreRequest) -> PreResponse:
         # 4. Detect run type
         # ModelIdMismatchError → HTTP 409 (client maps to exit code 7)
         try:
-            run_result = await detect_run_type(config, snapshot, parent)
+            run_result = await detect_run_type(config, snapshot)
         except ModelIdMismatchError as e:
             raise HTTPException(status_code=409, detail=str(e))
         #except Exception as e:
@@ -202,10 +202,8 @@ async def pre_execution(request: PreRequest) -> PreResponse:
         # 6. Create node in Neo4j
         create_experiment_node(experiment)
 
-
-        # 7. Create edges based on strategy
-        #
-        # Experiment→Experiment edges (DERIVED_FROM, RETRY_FROM, MERGE)
+        # 7. Create exp2exp edges based on strategy
+        # Experiment→Experiment edges (DERIVED_FROM, RETRY_FROM, RESUMED_FROM) are created here.
         if run_result.parent_exp_id and run_result.strategy in _STRATEGY_EXP_EDGE_MAP:
             edge_type = _STRATEGY_EXP_EDGE_MAP[run_result.strategy]
             edge_props: dict[str, Any] = {}
@@ -215,15 +213,14 @@ async def pre_execution(request: PreRequest) -> PreResponse:
                 "Creating %s edge: from=%s, to=%s, props=%s",
                 edge_type, run_result.parent_exp_id, exp_id, edge_props,
             )
-            create_edge(to_id=run_result.parent_exp_id, from_id=exp_id, rel_type=edge_type, properties=edge_props or None)
+            create_experiment_edge(to_id=run_result.parent_exp_id, from_id=exp_id, rel_type=edge_type, properties=edge_props or None)
 
-        # Experiment→Checkpoint STARTED_FROM edge:
+        # Experiment→Checkpoint RESUMED_FROM edge:
         # - RESUME always has parent_ckp_id (the checkpoint to resume from)
-        # - BRANCH may also have parent_ckp_id (weights loaded from a specific checkpoint)
         # ONLY IF A CHECKPOINT IS INVOLVED (parent_ckp_id is not None)
-        if run_result.parent_ckp_id and run_result.strategy in ("RESUME", "BRANCH"):
-            logger.info("Creating STARTED_FROM edge: exp_id=%s, ckp_id=%s", exp_id, run_result.parent_ckp_id)
-            create_started_from_edge(exp_id, run_result.parent_ckp_id)
+        if run_result.strategy =="RESUME":
+            logger.info("Creating CKP_RESUMED_FROM edge: exp_id=%s, ckp_uri=%s", exp_id, run_result.parent_ckp_id)
+            create_resumed_from_edge(exp_id, run_result.parent_ckp_id)
 
         # 8. Resolve base_experiment_id for response
         response_base_exp_id = request.base_experiment_id
@@ -243,7 +240,7 @@ async def pre_execution(request: PreRequest) -> PreResponse:
         )
 
         return PreResponse(
-            experiment_id=exp_id,
+            experiment_id=exp_id, # New Experiment ID created 
             strategy=run_result.strategy,
             base=is_base,
             description=description,
@@ -269,6 +266,25 @@ async def post_execution(request: PostRequest) -> PostResponse:
             exit_msg=request.exit_message,
             metrics_uri=request.metrics_uri,
         )
+        
+        # ckp2ckp edge creation for RESUME strategy after experiment is completed
+        if request.status == "COMPLETED" and request.strategy == "RESUME" and request.checkpoint_resume_from:
+            old_checkpoint = retrieve_ckp_id_by_ckp_uri(request.checkpoint_resume_from)
+            new_ckps = retrieve_ckp_by_experiment_id(request.experiment_id)
+            if new_ckps:
+                first_ckp = None
+                min=0
+                for ckp in new_ckps:
+                    if min == 0 or ckp.epoch < min:
+                        min = ckp.epoch
+                        first_ckp = ckp
+                
+                logger.info(
+                    "Creating CKP_DERIVED_FROM edge: base_ckp_id=%s, new_ckp_id=%s",
+                    old_checkpoint, first_ckp.id,
+                )
+                create_ckp_derived_from_edge(base_ckp_id=old_checkpoint, new_ckp_id=first_ckp.id)
+            
 
         logger.info(
             "POST complete: exp_id=%s, status=%s",

@@ -186,19 +186,20 @@ class LineageClient:
             logger.info(f"Codebase: JSON size: {codebase_size / (1024*1024):.2f} MB")
             logger.info(f"Codebase: Number of files: {len(json.loads(codebase))}")
             
-            correct_model_id= self._config_dict.get("model").get("model_id") == self._config_dict.get("experiment").get("model")
-            correct_merging= self._config_dict.get("experiment").get("merging") == self._config_dict.get("model_merging").get("enabled")
-            correct_recipe= self._config_dict.get("experiment").get("recipe") == self._config_dict.get("recipe").get("name")
+            
+            correct_model_id= self._config_dict.get("model").get("model_id") == exp_data.get("model")
+            correct_merging= self._config_dict.get("model_merging").get("enabled") == exp_data.get("merging")
+            correct_recipe= self._config_dict.get("recipe").get("name") == exp_data.get("recipe")
             if not correct_model_id or not correct_merging or not correct_recipe:
                 logger.warning("Model ID, URI, merging, or recipe mismatch: model_id in config (%s) does not match model_id in experiment block (%s), merging in config (%s) does not match merging in experiment block (%s), recipe in config (%s) does not match recipe in experiment block (%s).",
-                    self._config_dict.get("model").get("model_id"), self._config_dict.get("experiment").get("model"),
-                    self._config_dict.get("model_merging").get("enabled"), self._config_dict.get("experiment").get("merging"),
-                    self._config_dict.get("recipe").get("name"), self._config_dict.get("experiment").get("recipe"))
+                    self._config_dict.get("model").get("model_id"), exp_data.get("model"),
+                    self._config_dict.get("model_merging").get("enabled"), exp_data.get("merging"),
+                    self._config_dict.get("recipe").get("name"), exp_data.get("recipe"))
                 sys.exit(7)
 
             # 3. Build PRE request
             request = PreRequest(
-                experiment_id=exp_data.get("id"),
+                experiment_id=exp_data.get("id"), # this is the old experiment id! 
                 experiment_name=exp_data.get("name"),
                 experiment_uri=str(self._project_root),
                 base_experiment_id=exp_data.get("base_experiment_id"),
@@ -228,8 +229,6 @@ class LineageClient:
             logger.info("Received PRE response from server: exp_id: %s, base %s, base_exp_id: %s, strategy: %s, previous_exp_id: %s",
                 response.experiment_id, response.base, response.base_experiment_id, response.strategy, response.previous_experiment_id)
             
-            
-
             # 5. Update local .lineage/experiment.yml (always from base file, not merged)
             base_exp_data = _load_experiment_data(self._project_root)
             base_exp_data["id"] = response.experiment_id
@@ -257,6 +256,7 @@ class LineageClient:
                 extra={
                     "model_id": exp_data.get("model_id", ""),
                     "config_path": self._config_path,
+                    "checkpoint_resume_from": request.checkpoint_resume_from,
                 },
             )
 
@@ -304,6 +304,8 @@ class LineageClient:
                 status=status,
                 exit_message=exit_message,
                 metrics_uri=metrics_uri,
+                strategy=ctx.strategy,
+                checkpoint_resume_from=ctx.extra.get("checkpoint_resume_from"),
             )
 
             connector = self._get_connector()

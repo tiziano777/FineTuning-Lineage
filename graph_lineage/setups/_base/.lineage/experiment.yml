@@ -9,7 +9,6 @@ experiment:
   description: "{{DESCRIPTION}}"
   uri: null  # Set automatically by tracker to project_root at first execution
   status: null
-  checkpoint_resume_from: null
 
   component: "{{COMPONENT_NAME}}"
   recipe: "{{RECIPE_NAME}}"

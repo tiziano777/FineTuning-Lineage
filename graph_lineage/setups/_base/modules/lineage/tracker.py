@@ -34,7 +34,7 @@ import functools
 import logging
 import os
 import yaml
-from typing import Any, Callable
+from typing import Any, Callable, Dict
 
 from .http.client import LineageClient
 
@@ -58,16 +58,7 @@ def _get_merged_config(config_path: str) -> Dict[str, Any]:
     else:
         logger.warning(f"File di configurazione non trovato in: {config_path}. Uso dizionario vuoto.")
 
-    # 2. Carica il lineage globale (.lineage/experiment.yml)
-    lineage_data = {}
-    if os.path.exists(lineage_path):
-        try:
-            with open(lineage_path, 'r') as f:
-                lineage_data = yaml.safe_load(f) or {}
-        except Exception as e:
-            logger.warning(f"Impossibile leggere il file lineage {lineage_path}: {e}")
-
-    # 3. Funzione interna di Deep Merge
+    # 2. Funzione interna di Deep Merge
     def deep_merge(dict1: dict, dict2: dict):
         for key, value in dict2.items():
             if isinstance(value, dict) and key in dict1 and isinstance(dict1[key], dict):
@@ -75,8 +66,17 @@ def _get_merged_config(config_path: str) -> Dict[str, Any]:
             else:
                 dict1[key] = value
 
+    # 3. Carica il lineage globale (.lineage/experiment.yml)
+    if not config_data.get("experiment"):
+        lineage_data = {}
+        if os.path.exists(lineage_path):
+            try:
+                with open(lineage_path, 'r') as f:
+                    lineage_data = yaml.safe_load(f) or {}
+            except Exception as e:
+                logger.warning(f"Impossibile leggere il file lineage {lineage_path}: {e}")
 
-    deep_merge(config_data, lineage_data)
+        deep_merge(config_data, lineage_data)
 
     return config_data
 

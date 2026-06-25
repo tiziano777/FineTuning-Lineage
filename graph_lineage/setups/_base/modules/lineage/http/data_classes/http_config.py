@@ -64,6 +64,8 @@ class PostRequest(BaseModel):
     status: str  # COMPLETED or FAILED
     exit_message: str | None = None
     metrics_uri: str | None = None
+    strategy: str | None = None  # NEW, RETRY, BRANCH, RESUME, MERGE or None
+    checkpoint_resume_from: str | None = None  # checkpoint_uri to resume from, if any
 
 class PostResponse(BaseModel):
     """Server acknowledgement of POST-execution update."""

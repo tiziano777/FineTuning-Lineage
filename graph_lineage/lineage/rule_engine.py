@@ -1,7 +1,7 @@
 """RuleEngine: detect run type strategy based on config and codebase state."""
 
 from __future__ import annotations
-from typing import Dict
+import copy
 import logging
 import re
 import json
@@ -12,13 +12,13 @@ from graph_lineage.data_classes.neo4j.nodes.experiment import Experiment
 from graph_lineage.diff.differ import compute_snapshot_diff
 from graph_lineage.diff.snapshot import CodebaseSnapshot
 from graph_lineage.diff.reconstructor import reconstruct_codebase
-from graph_lineage.lineage.neo4j_ops import _find_experiment_by_id_async, _find_parent_experiment_id_async
+from graph_lineage.lineage.neo4j_ops import find_experiment_by_id, find_parent_experiment_id, retrieve_ckp_by_experiment_id, find_experiment_from_chain
 
 logger = logging.getLogger(__name__)
 
 # Pattern for checkpoint IDs: UUID or path-like with "checkpoint" in it
 _CHECKPOINT_PATTERN = re.compile(
-    r"(checkpoint|ckpt)[-_/]",
+    r"(checkpoint|ckpt|ckp)[-_/]",
     re.IGNORECASE,
 )
 
@@ -32,7 +32,7 @@ async def reconstruct_full_codebase_from_experiment(
     current_id = experiment_id
     
     while True:
-        exp = await _find_experiment_by_id_async(current_id)
+        exp = find_experiment_by_id(current_id)
         if not exp:
             raise ValueError(f"Experiment {current_id} not found")
         
@@ -48,7 +48,7 @@ async def reconstruct_full_codebase_from_experiment(
             break
             
         # Trova il parent attraverso le relazioni
-        parent_id = await _find_parent_experiment_id_async(current_id)
+        parent_id = find_parent_experiment_id(current_id)
         if parent_id is None:
             break  # Non dovrebbe succedere se non è base, ma safety
             
@@ -81,7 +81,6 @@ async def get_full_codebase_for_experiment(
     else:
         return await reconstruct_full_codebase_from_experiment(experiment.id)
 
-
 @dataclass(frozen=True)
 class RunTypeResult:
     """Result of run type detection."""
@@ -104,32 +103,26 @@ class ModelIdMismatchError(Exception):
             f"Otherwise, create a new setup to train '{actual_id}'."
         )
 
-def _looks_like_checkpoint_id(value: str) -> bool:
-    """Check if a string looks like a checkpoint reference."""
-    return bool(_CHECKPOINT_PATTERN.search(value))
-
 async def detect_run_type(
     config: LineageConfig,
     current_snapshot: CodebaseSnapshot,
-    parent_experiment: Experiment | None,
 ) -> RunTypeResult:
     """Detect the run type strategy based on config and parent state.
 
     Decision order:
+    0. No current experiment → NEW
     1. model_merging.enabled → MERGE
     2. checkpoint_resume_from explicitly set → RESUME
     3. model_uri changed to checkpoint path (auto-detect) → RESUME
-    4. No parent experiment → NEW
-    5. base_experiment_id == experiment_id → BRANCH or RETRY (if codebase identical)
-    6. base_experiment_id != experiment_id and codebase differs → BRANCH, else RETRY
+    4. base_experiment_id == experiment_id → BRANCH or RETRY (if codebase identical)
+    5. base_experiment_id != experiment_id and codebase differs → BRANCH, else RETRY
 
     Blocking guard:
-    - If model_id differs from parent → ModelIdMismatchError
+        - If model_id differs from parent → ModelIdMismatchError
 
     Args:
         config: Parsed LineageConfig.
         current_snapshot: Current codebase snapshot with file hashes.
-        parent_experiment: Parent Experiment from DB, or None.
 
     Returns:
         RunTypeResult with strategy and relevant context.
@@ -137,69 +130,86 @@ async def detect_run_type(
     Raises:
         ModelIdMismatchError: If model_id changed between runs.
     """
-
+    # CURRENT EXPERIMENT STATE, exp IS THE NEW OLD EXPERIMENT (PARENT) FOR THIS RUN
     exp = config.experiment
+    # CURRENT HASHES:
+    current_hashes = current_snapshot.hashes()
+
+    # 0. NEW case: no current experiment and not base
+    if not exp.id and not exp.base:
+            return RunTypeResult(strategy="NEW")
 
     # 1. MERGE: model_merging is enabled
     if config.model_merging.enabled:
+        logger.info("model_merging enabled, proceeding with MERGE strategy")
         return RunTypeResult(
             strategy="MERGE",
-            parent_exp_id=parent_experiment.id if parent_experiment else None,
         )
-    logger.info("model_merging not enabled, proceeding with run type detection")
 
     # 2. RESUME explicit: checkpoint_resume_from is set and looks like a checkpoint
-    ckp_ref = config.experiment.checkpoint_resume_from
-    if ckp_ref and _looks_like_checkpoint_id(ckp_ref):
-        return RunTypeResult(
-            strategy="RESUME",
-            parent_exp_id=exp.id,
-            parent_ckp_id=ckp_ref,
-        )
-    logger.info("checkpoint_resume_from not set or not a checkpoint, proceeding with run type detection")
+    if config.model.get("checkpoint_resume_from"):
+        logger.info("checkpoint_resume_from set, proceeding with RESUME run type")
+        # retrive ckp from previous experiment if parent exists:
+        candidates_ckps= retrieve_ckp_by_experiment_id(exp.id)
+        for ckp in candidates_ckps:
+            if ckp.uri == config.model.get("checkpoint_resume_from"):
+                logger.info("checkpoint_resume_from explicitly set and found in previous experiment, treating as RESUME")
+                # adesso dobbiamo vedere se ci sono diff!
+                # Snapshot of parent experiment's codebase
+                parent_snapshot = await reconstruct_full_codebase_from_experiment(exp.id) # actual experiment is the new parent of this run
+                parent_hashes = parent_snapshot.hashes()
+                no_lineage_parent_hashes = copy.deepcopy(parent_hashes)
+                no_lineage_parent_hashes.pop(".lineage/experiment.yml", None) 
+                no_lineage_current_hashes = copy.deepcopy(current_hashes)
+                no_lineage_current_hashes.pop(".lineage/experiment.yml", None)
+                diff_patch = compute_snapshot_diff(old_snapshot= parent_snapshot, new_snapshot= current_snapshot) 
 
-    # Guard: model_id mismatch detection (only if parent exists)
-    current_model_id = str(config.model.get("model_id", "")).strip()
-    if parent_experiment and parent_experiment.model_id:
-        if current_model_id and current_model_id != parent_experiment.model_id:
+                return RunTypeResult(
+                    strategy="RESUME",
+                    parent_exp_id=exp.id,
+                    parent_ckp_id=config.model.get("checkpoint_resume_from"),
+                    diff_patch=diff_patch,
+                    changed_files=sorted(diff_patch.keys())
+                )
+        # checkpoint_resume_from is set but not found in previous experiment, find other ckp in the chain
+        new_experiment = find_experiment_from_chain(exp.base_experiment_id, config.model.get("checkpoint_resume_from"))
+        # REBASE: check if checkpoint_resume_from exists in the chain of experiments
+        logger.info(
+            f"Found experiment in chain: description={new_experiment.description}, "
+            f"id={new_experiment.id}, base={new_experiment.base}, "
+            f"model_uri={new_experiment.model_uri}, model_id={new_experiment.model_id}, "
+            f"changed_files={new_experiment.changed_files}"
+            )
+        '''
+        INFO - Found experiment in chain: 
+        description=desc,
+          id=757a1b38-7553-4555-963c-a3c96ba7ae75,
+          base=True,
+          model_uri=/Users/T.Finizzi/repo/SFT-data-Forge/nfs/training-output/velvet-cycle2/Velvet-2B-1.5/l06_f5/001_s_09_5/ba53454, model_id=velvet-2b-1.5_ba53454,
+          changed_files=[]
+          metric_uri/codebase also
+        '''
+        raise ValueError(f"checkpoint_resume_from '{config.model.get('checkpoint_resume_from')}' not found in chain of experiments {exp.id}")
+    
+
+    # Guard: model_uri mismatch detection (only if parent exists)
+    current_model_uri = str(config.model.get("model_uri", "")).strip()
+    old_experiment = find_experiment_by_id(exp.id)
+    if old_experiment and old_experiment.model_uri:
+        if current_model_uri and current_model_uri != old_experiment.model_uri:
             raise ModelIdMismatchError(
-                actual_id=current_model_id,
-                expected_id=parent_experiment.model_id,
+                actual_id=current_model_uri,
+                expected_id=old_experiment.model_uri,
             )
 
-    # 3. RESUME auto-detect: model_uri changed and looks like a checkpoint
-    if parent_experiment:
-        current_model_uri = str(config.model.get("model_uri", "")).strip()
-        parent_model_uri = parent_experiment.model_uri or ""
-        if (
-            current_model_uri
-            and parent_model_uri
-            and current_model_uri != parent_model_uri
-            and _looks_like_checkpoint_id(current_model_uri)
-        ):
-            return RunTypeResult(
-                strategy="RESUME",
-                parent_exp_id=parent_experiment.id,
-                parent_ckp_id=current_model_uri,
-            )
-    logger.info("model_uri not changed to checkpoint, proceeding with run type detection")
+    # 3. experiment is the BASE: RETRY vs BRANCH: parent experiment exists, check codebase
 
-    # 4. NEW case: no parent experiment and not base
-    if not parent_experiment and not exp.base:
-            return RunTypeResult(strategy="NEW")
-
-    logger.info("parent experiment: %s. and base: %s", parent_experiment.id if parent_experiment else None, exp.base)
-
-    # 5. experiment is the BASE: RETRY vs BRANCH: parent experiment exists, check codebase
-    # CURRENT HASHES:
-    current_hashes = current_snapshot.hashes()
-    import copy
     no_lineage_current_hashes = copy.deepcopy(current_hashes)
     no_lineage_current_hashes.pop(".lineage/experiment.yml", None)
 
-    # 5. experiment is the BASE: RETRY vs BRANCH: parent experiment exists, check codebase
+    # 4. experiment is the BASE: RETRY vs BRANCH: parent experiment exists, check codebase
     if exp.base_experiment_id == exp.id: # Experiment is its own base, check if codebase matches previous run
-        base = await _find_experiment_by_id_async(exp.base_experiment_id)
+        base = find_experiment_by_id(exp.base_experiment_id)
         previous_codebase_snapshot = CodebaseSnapshot(files=json.loads(base.codebase))
         previous_codebase_hashes = previous_codebase_snapshot.hashes()
 
@@ -228,7 +238,7 @@ async def detect_run_type(
             )
 
     # EXPERIMENT IS NOT BASE: RETRY vs BRANCH: parent experiment exists, check codebase
-    # 6. Compare codebase content to decide RETRY vs BRANCH
+    # 5. Compare codebase content to decide RETRY vs BRANCH
     # Quick check via content hash, then detailed diff if different
     
     # Snapshot of parent experiment's codebase

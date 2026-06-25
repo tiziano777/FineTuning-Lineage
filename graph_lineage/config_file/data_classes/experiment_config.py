@@ -14,9 +14,9 @@ class ExperimentConfig(BaseModel):
     base: bool | None
     name: str = Field(..., min_length=1)
     description: str = ""
-    uri: str | None = None
+    uri: str | None = None # da config.yml model.model_uri
     status: str | None = None
     checkpoint_resume_from: str | None = None
-    model_id: str | None = None
+    model_id: str | None = None # da config.yml model.model_id
     component_id: str | None = None
     recipe_id: str | None = None
