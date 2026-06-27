@@ -45,6 +45,7 @@ Each sample is expected to have:
 from __future__ import annotations
 
 import json
+import gzip
 import logging
 import math
 import re
@@ -507,7 +508,7 @@ class HardNegativeConfig:
         suffix = self._uri.suffix.lower()
         if suffix == ".arrow":
             yield from self._iter_arrow(self._uri)
-        elif suffix in {".jsonl", ".json", ".jsonlines"}:
+        elif suffix in {".jsonl", ".json", ".jsonlines", ".jsonl.gz", ".gz"}:
             yield from self._iter_jsonl(self._uri)
         else:
             try:
@@ -522,7 +523,7 @@ class HardNegativeConfig:
             for f in arrow_files:
                 yield from self._iter_arrow(f)
             return
-        jsonl_files = sorted(self._uri.glob("*.jsonl")) + sorted(self._uri.glob("*.jsonlines"))
+        jsonl_files = sorted(self._uri.glob("*.jsonl")) + sorted(self._uri.glob("*.jsonlines")) + sorted(self._uri.glob("*.jsonl.gz")) + sorted(self._uri.glob("*.gz"))
         if jsonl_files:
             for f in jsonl_files:
                 yield from self._iter_jsonl(f)
@@ -555,7 +556,15 @@ class HardNegativeConfig:
 
     def _iter_jsonl(self, filepath: Path | None = None):
         target = filepath or self._uri
-        with open(target, encoding="utf-8") as fh:
+
+        # Verifica se il file è compresso controllando l'estensione
+        is_gzip = str(target).endswith(".gz")
+
+        # Seleziona la funzione di apertura e la modalità corretta
+        open_func = gzip.open if is_gzip else open
+        mode = "rt" if is_gzip else "r"
+
+        with open_func(target, mode=mode, encoding="utf-8") as fh:
             for line in fh:
                 line = line.strip()
                 if not line:
