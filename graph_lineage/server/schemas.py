@@ -27,8 +27,6 @@ class PreRequest(BaseModel):
     base: bool | None
     previous_experiment_id: str | None = None
     description: str | None = None
-    experiment_model_id: str | None = None
-    experiment_model_uri: str | None = None
 
     merging: bool = False
 

@@ -147,7 +147,7 @@ cd /home/velvet/DPO-unsloth-setup/modules/accelerators/orchestrator/skypilot
 Il dry-run permette di ispezionare l'output generato, la struttura del deep-merge e i file di task compilati senza impegnare la GPU o inviare istruzioni di calcolo a SkyPilot:
 
 ```bash
-bash schedules/base_schedule.sh --dry-run variants/lr_*.yml
+bash schedules/base_schedule.sh --dry-run variants/*.yml
 
 ```
 
@@ -157,13 +157,13 @@ Per lanciare la pipeline sequenziale di tutti gli esperimenti e le varianti trov
 
 ```bash
 # Esecuzione nativa sequenziale della coda
-bash schedules/base_schedule.sh variants/lr_*.yml
+bash schedules/base_schedule.sh variants/*.yml
 
 # Esecuzione raccomandata con storicizzazione del log dell'orchestratore
-bash schedules/base_schedule.sh variants/lr_*.yml 2>&1 | tee generated/submission_$(date +%Y%m%d_%H%M%S).log
+bash schedules/base_schedule.sh variants/*.yml 2>&1 | tee generated/submission_$(date +%Y%m%d_%H%M%S).log
 
 # Lancio impostando un prefisso personalizzato per identificare i compiti nel cluster
-bash schedules/base_schedule.sh --cluster-prefix dpo-sweep-1 variants/lr_*.yml
+bash schedules/base_schedule.sh --cluster-prefix dpo-sweep-1 variants/*.yml
 
 ```
 

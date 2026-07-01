@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from typing import Any
+import traceback
 
 import nest_asyncio
 
@@ -91,8 +92,14 @@ def create_experiment_node(exp: Experiment) -> str:
         for key in ("created_at", "updated_at"):
             if key in props and props[key] is not None:
                 props[key] = props[key].isoformat()
-        query = """
-        CREATE (e:Experiment $props)
+        # 1. Generiamo la stringa delle etichette (es: "Experiment:Training" o "Experiment:Evaluation")
+        # Usiamo exp.__labels__ che abbiamo definito nel modello Pydantic
+        labels_str = ":".join(exp.__labels__)
+        
+        # 2. Iniettiamo le label usando la f-string (sicuro, perché le label sono controllate dal tuo codice)
+        # Il resto delle proprietà ($props) rimane parametrizzato per evitare Cypher Injection
+        query = f"""
+        CREATE (e:{labels_str} $props)
         RETURN e.id AS id
         """
         async with driver.session() as session:
@@ -102,11 +109,7 @@ def create_experiment_node(exp: Experiment) -> str:
 
     return _run_sync(_create_experiment_node_async(exp))
 
-def create_experiment_edge(
-    from_id: str,
-    to_id: str,
-    rel_type: str,
-    properties: dict[str, Any] | None = None,
+def create_experiment_edge(from_id: str, to_id: str, rel_type: str, properties: dict[str, Any] | None = None,
 ) -> None:
     """Create a relationship between two Experiment nodes.
 
@@ -162,12 +165,7 @@ def create_resumed_from_edge(exp_id: str, ckp_uri: str) -> None:
 
     _run_sync(_create_resumed_from_edge_async(exp_id, ckp_uri))
 
-def update_experiment_status(
-    exp_id: str,
-    status: str,
-    exit_msg: str | None = None,
-    metrics_uri: str | None = None,
-) -> None:
+def update_experiment_status(exp_id: str, status: str, exit_msg: str | None = None, metrics_uri: str | None = None) -> None:
     """Update experiment status in Neo4j."""
 
     async def _update_experiment_status_async(
@@ -292,7 +290,7 @@ def find_experiment_from_chain(base_exp_id: str, ckp_uri: str) -> Experiment:
     """
     driver = _run_sync(get_driver())
     query = """
-    MATCH (base:Experiment {id: $base_exp_id})-[:DERIVED_FROM*0..]->(e:Experiment)-[:PRODUCED]->(c:Checkpoint {uri: $ckp_uri})
+    MATCH (base:Experiment {id: $base_exp_id})<-[:RESUMED_FROM|RETRY_FROM|DERIVED_FROM*0..]-(e:Experiment)-[:PRODUCED]->(c:Checkpoint {uri: $ckp_uri})
     RETURN e
     LIMIT 1
     """
@@ -301,7 +299,8 @@ def find_experiment_from_chain(base_exp_id: str, ckp_uri: str) -> Experiment:
             result = await session.run(query, {"base_exp_id": base_exp_id, "ckp_uri": ckp_uri})
             record = await result.single()
             if record is None:
-                raise ValueError(f"No experiment found that produced checkpoint with URI '{ckp_uri}' starting from base experiment '{base_exp_id}'.")
+                raise ValueError(f"No experiment found that produced checkpoint with URI '{ckp_uri}' starting from base experiment '{base_exp_id}'.\n{traceback.format_exc()}")
             return Experiment.model_validate(record["e"])
+    
     return _run_sync(_find_experiment_from_chain_async())
 

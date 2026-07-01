@@ -133,33 +133,11 @@ async def pre_execution(request: PreRequest) -> PreResponse:
             logger.info("no current experiment found")
         
 
-        # 3. Build minimal LineageConfig for rule_engine
-        from graph_lineage.config_file.data_classes.lineage_config import LineageConfig
-
-        config = LineageConfig.model_validate({
-            "experiment": {
-                "name": request.experiment_name,
-                "uri": request.experiment_uri,
-                "id": request.experiment_id,
-                "previous_experiment_id": request.previous_experiment_id,
-                "base_experiment_id": request.base_experiment_id,   
-                "base": request.base,
-                "model_id": request.model_id,
-                "component_id": request.component_id,
-                "recipe_id": request.recipe_id,
-            },
-            "model": {
-                "model_id": request.model_id or "",
-                "model_uri": request.model_uri or "",
-                "checkpoint_resume_from": request.checkpoint_resume_from,
-            },
-            "model_merging": {"enabled": request.merging},
-        }, strict=False)
-
-        # 4. Detect run type
+        # 3. Detect run type
         # ModelIdMismatchError → HTTP 409 (client maps to exit code 7)
         try:
-            run_result = await detect_run_type(config, snapshot)
+            # in pre_execution, invece di config, passa i valori
+            run_result = await detect_run_type(request=request)
         except ModelIdMismatchError as e:
             raise HTTPException(status_code=409, detail=str(e))
         #except Exception as e:
@@ -171,7 +149,7 @@ async def pre_execution(request: PreRequest) -> PreResponse:
             run_result.strategy, run_result.parent_exp_id, run_result.parent_ckp_id,
         )
 
-        # 5. Build Experiment node
+        # 4. Build Experiment node
         exp_id = str(uuid.uuid4())
         is_base = run_result.strategy == "NEW"
 
@@ -186,6 +164,7 @@ async def pre_execution(request: PreRequest) -> PreResponse:
 
         experiment = Experiment(
             id=exp_id,
+            name=request.experiment_name,
             description=description,
             uri=request.experiment_uri or "",
             base=is_base,
@@ -195,14 +174,15 @@ async def pre_execution(request: PreRequest) -> PreResponse:
             codebase= json.dumps(snapshot.files) if is_base else json.dumps(run_result.diff_patch or {}),
             changed_files=run_result.changed_files or [],
             # metrics_uri is populated at POST time (not known at PRE)
-            metrics_uri=None,
+            # it can be changed when a StorageSystem were included
+            metrics_uri=None, # log of relevations during run
             model_uri=request.model_uri or None
         )
 
-        # 6. Create node in Neo4j
+        # 5. Create node in Neo4j
         create_experiment_node(experiment)
 
-        # 7. Create exp2exp edges based on strategy
+        # 6. Create exp2exp edges based on strategy
         # Experiment→Experiment edges (DERIVED_FROM, RETRY_FROM, RESUMED_FROM) are created here.
         if run_result.parent_exp_id and run_result.strategy in _STRATEGY_EXP_EDGE_MAP:
             edge_type = _STRATEGY_EXP_EDGE_MAP[run_result.strategy]
@@ -213,6 +193,8 @@ async def pre_execution(request: PreRequest) -> PreResponse:
                 "Creating %s edge: from=%s, to=%s, props=%s",
                 edge_type, run_result.parent_exp_id, exp_id, edge_props,
             )
+            # HERE IS IMPORTANT: for resume2 strategy, we have to capture previous experiments in the chain,
+            #  returning entire node information also codebase from base.
             create_experiment_edge(to_id=run_result.parent_exp_id, from_id=exp_id, rel_type=edge_type, properties=edge_props or None)
 
         # Experiment→Checkpoint RESUMED_FROM edge:
@@ -222,7 +204,7 @@ async def pre_execution(request: PreRequest) -> PreResponse:
             logger.info("Creating CKP_RESUMED_FROM edge: exp_id=%s, ckp_uri=%s", exp_id, run_result.parent_ckp_id)
             create_resumed_from_edge(exp_id, run_result.parent_ckp_id)
 
-        # 8. Resolve base_experiment_id for response
+        # 7. Resolve base_experiment_id for response
         response_base_exp_id = request.base_experiment_id
 
         if run_result.strategy == "NEW":

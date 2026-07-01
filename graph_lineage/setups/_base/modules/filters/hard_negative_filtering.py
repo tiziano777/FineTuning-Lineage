@@ -626,6 +626,8 @@ class HardNegativeFilter:
             return candidates[0] if candidates else None
         if not candidates:
             return None
+        if len(candidates) == 1:
+            return candidates[0]
 
         # Phase 1.a: partition degenerate
         clean, quarantined = self._partition_degenerate(candidates, gold_content)

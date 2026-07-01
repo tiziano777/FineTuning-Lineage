@@ -3,3 +3,5 @@
 .pytest_cache/
 __pycache__/
 .env
+unsloth_compiled_cache/
+hallucinations.jsonl

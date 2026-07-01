@@ -44,7 +44,7 @@ def prepare(config_path: str,strategy: PromptAssignmentStrategy = PromptAssignme
 
     registry = ChatTypeRegistry(templates_mapping)
 
-    strategy_str = (config.get("model", {}).get("dataset", {}).get("prompt_strategy")or config.get("model", {}).get("dataset", {}).get("promptt_strategy"))
+    strategy_str = (config.get("model", {}).get("dataset", {}).get("prompt_strategy")or config.get("model", {}).get("dataset", {}).get("prompt_strategy"))
     if isinstance(strategy_str, str):
         try:
             strategy = PromptAssignmentStrategy(strategy_str.lower())

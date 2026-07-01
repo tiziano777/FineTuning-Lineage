@@ -16,8 +16,8 @@ BASE_CONFIG="${REPO_ROOT}/config.yml"
 LINEAGE_FILE="${REPO_ROOT}/.lineage/experiment.yml"
 TEMPLATE_FILE="${MODULE_DIR}/tasks/task_template.yaml"
 GENERATED_DIR="${MODULE_DIR}/generated"
-CLUSTER_NAME="azure-gpu-cluster"
-INFRA="ssh/azure-gpu-cluster"  # Configurazione infrastruttura SSH Node Pool
+CLUSTER_NAME="azure-gpu-cluster-2"
+INFRA="ssh/azure-gpu-cluster-2"  # Configurazione infrastruttura SSH Node Pool
 DRY_RUN=false
 PARALLEL=false 
 CLUSTER_PREFIX=""
@@ -108,42 +108,71 @@ py_deep_merge_and_lineage() {
   local out="$1" l_file="$2" b_file="$3" v_file="$4"
   python3 -c "
 import yaml
+import sys
 
 def deep_merge(dict1, dict2):
+    \"\"\"Merge ricorsivo che sovrascrive dict1 con dict2\"\"\"
     for key, value in dict2.items():
         if isinstance(value, dict) and key in dict1 and isinstance(dict1[key], dict):
             deep_merge(dict1[key], value)
         else:
             dict1[key] = value
 
-# 1. Carica la configurazione Base di default
+# 1. Carica tutti i file
 with open('$b_file') as f:
     base_config = yaml.safe_load(f) or {}
 
-# 2. Carica il lineage globale (.lineage/experiment.yml)
 with open('$l_file') as f:
-    lin = yaml.safe_load(f) or {}
-base_uuid = lin.get('experiment', {}).get('id', 'null')
+    lineage_data = yaml.safe_load(f) or {}
 
-# 3. Carica la variante se presente
 variant_config = {}
-if '$v_file':
-    with open('$v_file') as f:
-        variant_config = yaml.safe_load(f) or {}
+variant_file_path = '$v_file'
+if variant_file_path and variant_file_path != '':
+    try:
+        with open(variant_file_path) as f:
+            variant_config = yaml.safe_load(f) or {}
+    except FileNotFoundError:
+        pass
 
+# 2. Costruisci la configurazione finale
 final_dict = {}
-# Unisci prima la Base, poi il Lineage
+
+# 3. Prima applica la base
 deep_merge(final_dict, base_config)
+
+# 4. Poi applica il lineage (sovrascrive la base)
+if 'experiment' in lineage_data:
+    deep_merge(final_dict, lineage_data)
+
+# 5. Ora applica la variante MA gestisci experiment in modo speciale
+for key, value in variant_config.items():
+    if key == 'experiment':
+        # Per experiment: merge ricorsivo ma preserva tutti i campi
+        if 'experiment' not in final_dict:
+            final_dict['experiment'] = {}
+        # Merge dei campi experiment
+        for exp_key, exp_value in value.items():
+            final_dict['experiment'][exp_key] = exp_value
+    else:
+        # Per tutti gli altri campi: merge normale
+        if isinstance(value, dict) and key in final_dict and isinstance(final_dict[key], dict):
+            deep_merge(final_dict[key], value)
+        else:
+            final_dict[key] = value
+
+# 6. Assicura che i campi obbligatori ci siano
 if 'experiment' not in final_dict:
     final_dict['experiment'] = {}
-final_dict['experiment']['base_experiment_id'] = base_uuid
-final_dict['experiment']['previous_experiment_id'] = None
 
-# Applica infine la variante (Vince su tutto, compresi ID sovrascritti intenzionalmente)
-deep_merge(final_dict, variant_config)
+# Se l'ID non è stato impostato dalla variante, usa quello del lineage
+if 'id' not in final_dict['experiment'] and 'experiment' in lineage_data and 'id' in lineage_data['experiment']:
+    final_dict['experiment']['id'] = lineage_data['experiment']['id']
 
+# 7. Salva
 with open('$out', 'w') as f:
-    yaml.dump(final_dict, f, default_flow_style=False)
+    yaml.dump(final_dict, f, default_flow_style=False, allow_unicode=True)
+
+print(f'Configurazione salvata in $out')
 "
 }
 
