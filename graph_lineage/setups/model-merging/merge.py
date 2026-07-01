@@ -50,7 +50,6 @@ def preflight(config_path: str) -> dict:
     config = resolve_config(config)
 
     # Required fields
-    require_field(config, "model_merging", "enabled", config_file=config_path)
     merge_method = require_field(config, "model_merging", "merge_method", config_file=config_path)
     sources = require_field(config, "model_merging", "sources", config_file=config_path)
     output_dir = require_field(config, "output", "output_dir", config_file=config_path)

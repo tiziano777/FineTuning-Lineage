@@ -181,7 +181,8 @@ def lineage_tracker(config_path_arg: int = 0, capture_checkpoints: bool = False)
                 # 6. Execute training
                 result = fn(*args, **kwargs)
 
-                # 7. Extract metrics_uri from result (if dict)
+                # 7. Extract metrics_uri from result (if dict),
+                #  then store to Postgres
                 if isinstance(result, dict) and "metrics_uri" in result:
                     metrics_uri = result["metrics_uri"]
 

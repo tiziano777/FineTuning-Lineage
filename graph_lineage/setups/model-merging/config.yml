@@ -6,7 +6,6 @@ output:
   output_dir: /path/to/merged/output
 
 model_merging:
-  enabled: true
   merge_method: avg  # parametrico: avg | (future: slerp, task_arithmetic, ...)
   lora_enabled: false  # true per LoRA adapter merging
 

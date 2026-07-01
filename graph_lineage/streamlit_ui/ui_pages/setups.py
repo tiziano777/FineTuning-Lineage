@@ -149,9 +149,6 @@ def _generate_config_yml(selections: dict) -> str:
             "output_dir": selections["output_dir"],
         },
         "hardware": selections.get("hardware") or {},
-        "model_merging": {
-            "enabled": selections.get("merging_enabled", False),
-        },
     }
 
     # Add optional fields
@@ -180,7 +177,7 @@ def _generate_experiment_yml(setup_name: str, selections: dict) -> str:
     content = content.replace("{{COMPONENT_NAME}}", selections.get("component_name", ""))
     content = content.replace("{{RECIPE_NAME}}", selections.get("recipe_name", ""))
     content = content.replace("{{MODEL_ID}}", selections.get("model_id", ""))
-    content = content.replace("{{MERGING}}", str(selections.get("merging_enabled", False)).lower())
+    content = content.replace("{{EXPERIMENT_TYPE}}", selections.get("experiment_type", "training"))
 
     return content
 
@@ -411,6 +408,9 @@ def _render_create_form() -> None:
         retry = st.number_input("Retry Attempts", value=3, min_value=0, step=1, help="Number of retry attempts for server requests.")
         blocking = st.checkbox("Blocking Mode", value=True, help="Whether to use blocking mode for server requests.")
 
+    # Experiment Type
+    st.markdown("**Experiment Type**")
+    experiment_type = st.selectbox("Experiment Type", ["training", "evaluation", "inference", "merge"], index=0, help="Type of the experiment. YOU CAN'T CHOOSE WRONG. It determines the lineage tracking behavior.")
 
     # Generate button
     st.divider()
@@ -444,6 +444,7 @@ def _render_create_form() -> None:
             "setup_name": setup_name,
             "component_name": selected_component,
             "description": setup_description,
+            "experiment_type": experiment_type,
             "model_uri": model_uri,
             "model_id": model_id,
             "recipe_id": recipe_id,
@@ -455,7 +456,6 @@ def _render_create_form() -> None:
             "batch_size": int(batch_size),
             "epochs": float(epochs),
             "hardware": hardware,
-            "merging_enabled": merging_enabled,
             "merge_method": merge_method if merging_enabled else None,
             "merge_sources": [s.strip() for s in merge_sources.split("\n") if s.strip()] if merging_enabled else [],
             # Inject random UUID into scaffold (detached, registered by DB at first run)

@@ -9,8 +9,8 @@ experiment:
   description: "{{DESCRIPTION}}"
   uri: null  # Set automatically by tracker to project_root at first execution
   status: null
+  experiment_type: "{{EXPERIMENT_TYPE}}"
 
   component: "{{COMPONENT_NAME}}"
   recipe: "{{RECIPE_NAME}}"
   model: "{{MODEL_ID}}"
-  merging: "{{MERGING}}"

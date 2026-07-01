@@ -625,7 +625,6 @@ hardware:
     size: "216GB"
 
 model_merging:
-  enabled: false
   merge_method: 
   sources: 
 

@@ -65,13 +65,56 @@ This keeps lineage concerns separate from training configuration.
 
 ## Quick Start
 
-### 1. Start Neo4j
+### 1. Start the Complete Stack
 
 ```bash
-docker compose up neo4j -d
+docker compose up -d
 ```
 
-### 2. Install
+This starts:
+- **Neo4j** database with APOC plugin
+- **schema-init** container (initializes and verifies schema automatically)
+- **Lineage Server API** (fastapi on port 8502)
+- **Streamlit UI** (on port 8501)
+
+#### ✓ Automatic Schema Initialization
+
+The system handles schema setup automatically:
+
+1. **Neo4j container** starts and becomes healthy
+2. **schema-init container** runs once, loads Cypher schema (01-schema.cypher + 02-triggers.cypher)
+3. **API container** starts and verifies schema integrity
+4. **System ready** for tracking experiments
+
+Check initialization status:
+
+```bash
+# View schema init logs
+docker compose logs schema-init
+
+# View API startup verification
+docker compose logs api | grep "\[Startup\]\|\[Schema\]"
+
+# Verify all services are running
+docker compose ps
+```
+
+#### Manual Health Check
+
+```bash
+# Check Neo4j connection
+curl http://localhost:7474
+
+# Check API health
+curl http://localhost:8502/health
+
+# Access Streamlit UI
+open http://localhost:8501
+```
+
+See [docs/modules/neo4j_schema_initialization.md](docs/modules/neo4j_schema_initialization.md) for detailed schema initialization architecture and troubleshooting.
+
+### 2. Install Package
 
 ```bash
 pip install -e ".[dev]"

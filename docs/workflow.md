@@ -16,14 +16,30 @@ source .venv/bin/activate
 # Install dev deps
 pip install -e ".[dev]"
 
-# Start Neo4j container
-docker compose up neo4j -d
+# Start full stack (Neo4j + schema-init + API + Streamlit)
+docker compose up -d
 
-# Initialize schema
-python -m graph_lineage.neo4j_client.init_schema
+# Wait for services to be healthy
+docker compose logs schema-init  # Should show ✓ Schema initialization complete!
+docker compose logs api | grep "\[Startup\]"  # Should show ✓ verification passed
+```
 
-# Verify schema
-python -m graph_lineage.neo4j_client.verify_schema
+**✓ Schema is now automatically initialized and verified!**
+
+#### Verify Setup
+
+```bash
+# Check all containers
+docker compose ps
+
+# Test Neo4j connection
+curl http://localhost:7474
+
+# Test API
+curl http://localhost:8502/health
+
+# Access Streamlit UI
+open http://localhost:8501
 ```
 
 ### 2. Run Tests

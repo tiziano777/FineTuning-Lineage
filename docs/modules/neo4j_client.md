@@ -1,5 +1,90 @@
 # neo4j_client/ Module — Database Driver & Schema
 
+# Neo4j Client Module
+
+Fast, async Neo4j client with automatic schema initialization and verification.
+
+## Quick Usage
+
+### Automatic Initialization (Recommended)
+
+```python
+from graph_lineage.neo4j_client.client import Neo4jClient, get_driver
+
+async def main():
+    driver = await get_driver()
+    client = Neo4jClient(driver=driver, auto_init=True)
+    
+    # Initialize schema and verify it once, then safe to use
+    success = await client.ensure_initialized()
+    
+    if success:
+        print("✓ Schema ready!")
+    else:
+        print("✗ Schema verification failed")
+```
+
+### In FastAPI (Automatic on Startup)
+
+```python
+from fastapi import FastAPI
+from graph_lineage.neo4j_client.client import Neo4jClient, get_driver
+
+app = FastAPI()
+
+@app.on_event("startup")
+async def startup():
+    driver = await get_driver()
+    client = Neo4jClient(driver=driver, auto_init=True)
+    success = await client.ensure_initialized()
+    # API ready when this completes
+```
+
+## Core Functions
+
+- **`get_driver(reinit=False)`** → AsyncDriver singleton
+- **`close_driver()`** → Close and reset driver
+- **`initialize_schema(driver, scripts_dir)`** → Load Cypher files (01-schema.cypher, 02-triggers.cypher)
+- **`verify_schema(driver)`** → Validate schema integrity
+- **`Neo4jClient.ensure_initialized()`** → Idempotent entry point (calls both above)
+
+## Docker Usage
+
+Run schema initialization in a container:
+
+```bash
+docker run -e NEO4J_URI=bolt://neo4j:7687 \
+           -e NEO4J_USER=neo4j \
+           -e NEO4J_PASSWORD=password \
+           myapp python -m graph_lineage.neo4j_client
+```
+
+## Features
+
+✓ **Async/await support** — Non-blocking initialization  
+✓ **Idempotent** — Safe to call `ensure_initialized()` multiple times  
+✓ **Graceful errors** — APOC trigger failures don't block schema setup  
+✓ **Detailed logging** — Every step logged with [Schema Init] / [Verification] prefix  
+✓ **Connection pooling** — Configurable via `NEO4J_POOL_SIZE` env var  
+
+## Environment Variables
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `NEO4J_URI` | `bolt://localhost:7687` | Neo4j connection URI |
+| `NEO4J_USER` | `neo4j` | Username |
+| `NEO4J_PASSWORD` | `password` | Password |
+| `NEO4J_POOL_SIZE` | `50` | Connection pool size |
+
+## Troubleshooting
+
+See [docs/modules/neo4j_schema_initialization.md](../../docs/modules/neo4j_schema_initialization.md) for:
+- Architecture & design patterns
+- Error classification and recovery
+- Production deployment checklist
+- Debugging guide
+
+
 ## Overview
 
 Provides AsyncNeo4jClient abstraction layer, manages driver lifecycle, initializes graph schema (constraints, indexes, triggers), and verifies schema integrity.

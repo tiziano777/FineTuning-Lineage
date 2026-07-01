@@ -11,25 +11,23 @@ from pydantic import BaseModel, Field
 
 # ─── PRE-EXECUTION ─────────────────────────────────────────────────────────────
 
-
 class PreRequest(BaseModel):
     """Payload sent to server before training execution starts.
 
     Contains the full experiment config and captured codebase content
     for the server to run rule_engine detection and create the experiment node.
     """
-
     # Experiment identity
-    experiment_id: str | None = None
+    experiment_id: str | None = None  # current_exp_id, assigned as root first exp_id by server if not provided
     experiment_name: str
     experiment_uri: str | None = None
+    base: bool | None 
     base_experiment_id: str | None = None
-    base: bool | None
     previous_experiment_id: str | None = None
     description: str | None = None
+    experiment_type: str 
 
     merging: bool = False
-
     codebase: str # JSON string of {relative_path: content}
 
     # BASE NODE RELATIONSHIPS

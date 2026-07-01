@@ -186,14 +186,11 @@ class LineageClient:
             logger.info(f"Codebase: JSON size: {codebase_size / (1024*1024):.2f} MB")
             logger.info(f"Codebase: Number of files: {len(json.loads(codebase))}")
             
-            
             correct_model_id= self._config_dict.get("model").get("model_id") == exp_data.get("model")
-            correct_merging= self._config_dict.get("model_merging").get("enabled") == exp_data.get("merging")
             correct_recipe= self._config_dict.get("recipe").get("name") == exp_data.get("recipe")
-            if not correct_model_id or not correct_merging or not correct_recipe:
-                logger.warning("Model ID, URI, merging, or recipe mismatch: model_id in config (%s) does not match model_id in experiment block (%s), merging in config (%s) does not match merging in experiment block (%s), recipe in config (%s) does not match recipe in experiment block (%s).",
+            if not correct_model_id or not correct_recipe:
+                logger.warning("Model ID, URI, merging, or recipe mismatch: model_id in config (%s) does not match model_id in experiment block (%s), recipe in config (%s) does not match recipe in experiment block (%s).",
                     self._config_dict.get("model").get("model_id"), exp_data.get("model"),
-                    self._config_dict.get("model_merging").get("enabled"), exp_data.get("merging"),
                     self._config_dict.get("recipe").get("name"), exp_data.get("recipe"))
                 sys.exit(7)
 
@@ -206,6 +203,7 @@ class LineageClient:
                 base=exp_data.get("base"),
                 previous_experiment_id=exp_data.get("previous_experiment_id"),
                 description=exp_data.get("description"),
+                experiment_type=exp_data.get("experiment_type"),
 
                 model_uri=self._config_dict.get("model").get("model_uri"),
                 model_id=self._config_dict.get("model").get("model_id"),
@@ -217,8 +215,8 @@ class LineageClient:
                 checkpoint_resume_from=self._config_dict.get("model").get("checkpoint_resume_from"),
             )
 
-            logger.info("PRE-execution: sending request to server: exp_name: %s, exp_uri: %s, model_id: %s, base_exp_id: %s, prev_exp_id: %s, description: %s, model_uri: %s, recipe_id: %s, component_id: %s, model_id %s, component_id %s, recipe_id: %s merging: %s, checkpoint_resume_from: %s",
-                request.experiment_name, request.experiment_uri, request.model_id, request.base_experiment_id, request.previous_experiment_id, request.description, request.model_uri, request.recipe_id, request.component_id, request.model_id, request.component_id, request.recipe_id, request.merging, request.checkpoint_resume_from)
+            logger.info("PRE-execution: sending request to server: exp_name: %s, exp_uri: %s, model_id: %s, base_exp_id: %s, prev_exp_id: %s, description: %s, model_uri: %s, recipe_id: %s, component_id: %s, model_id %s, component_id %s, recipe_id: %s, checkpoint_resume_from: %s",
+                request.experiment_name, request.experiment_uri, request.model_id, request.base_experiment_id, request.previous_experiment_id, request.description, request.model_uri, request.recipe_id, request.component_id, request.model_id, request.component_id, request.recipe_id, request.checkpoint_resume_from)
 
             # 4. Send to server (with retries)
             connector = self._get_connector()

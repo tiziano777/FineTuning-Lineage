@@ -2,13 +2,13 @@
 // CONSTRAINTS
 // ─────────────────────────────────────────────────────────────────────────
 
-CREATE CONSTRAINT unique_recipe_id FOR (r:Recipe) REQUIRE r.id IS UNIQUE;
+CREATE CONSTRAINT unique_recipe_id IF NOT EXISTS FOR (r:Recipe) REQUIRE r.id IS UNIQUE;
 CREATE CONSTRAINT name IF NOT EXISTS FOR (r:Recipe) REQUIRE r.name IS UNIQUE;
-CREATE CONSTRAINT unique_exp_id FOR (e:Experiment) REQUIRE e.id IS UNIQUE;
-CREATE CONSTRAINT unique_ckp_id FOR (c:Checkpoint) REQUIRE c.id IS UNIQUE;
-CREATE CONSTRAINT unique_model_name FOR (m:Model) REQUIRE m.model_name IS UNIQUE;
-CREATE CONSTRAINT unique_model_name FOR (m:Model) REQUIRE m.id IS UNIQUE;
-CREATE CONSTRAINT composite_component FOR (co:Component) REQUIRE (co.technique_code, co.framework_code) IS UNIQUE;
+CREATE CONSTRAINT unique_exp_id IF NOT EXISTS FOR (e:Experiment) REQUIRE e.id IS UNIQUE;
+CREATE CONSTRAINT unique_ckp_id IF NOT EXISTS FOR (c:Checkpoint) REQUIRE c.id IS UNIQUE;
+CREATE CONSTRAINT unique_model_name IF NOT EXISTS FOR (m:Model) REQUIRE m.model_name IS UNIQUE;
+CREATE CONSTRAINT unique_model_name IF NOT EXISTS FOR (m:Model) REQUIRE m.id IS UNIQUE;
+CREATE CONSTRAINT composite_component IF NOT EXISTS FOR (co:Component) REQUIRE (co.technique_code, co.framework_code) IS UNIQUE;
 
 // ─────────────────────────────────────────────────────────────────────────
 // INDEXES

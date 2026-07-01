@@ -55,6 +55,36 @@ app = FastAPI(
     description="Receives experiment lifecycle events from remote GPU workers.",
 )
 
+
+# ─────────────────────────────────────────────────────────────────────────
+# STARTUP EVENT: Initialize and verify Neo4j schema
+# ─────────────────────────────────────────────────────────────────────────
+@app.on_event("startup")
+async def startup_initialize_schema():
+    """Initialize and verify Neo4j schema on server startup."""
+    try:
+        from graph_lineage.neo4j_client.client import Neo4jClient, get_driver
+
+        logger.info("[Startup] Initializing Neo4j schema and verification...")
+
+        # Get driver
+        driver = await get_driver()
+
+        # Create client and ensure schema is initialized and verified
+        client = Neo4jClient(driver=driver, auto_init=True)
+        success = await client.ensure_initialized()
+
+        if success:
+            logger.info("[Startup] ✓ Neo4j schema initialized and verified successfully")
+        else:
+            logger.error("[Startup] ✗ Neo4j schema initialization or verification failed")
+            logger.error("[Startup] API will continue but may encounter issues")
+
+    except Exception as e:
+        logger.error(f"[Startup] Unexpected error during schema initialization: {e}")
+        logger.error("[Startup] API will continue but may encounter issues")
+
+
 # Edge type mapping per strategy — Experiment→Experiment edges only.
 # RESUME and BRANCH-with-checkpoint also create a separate Experiment→Checkpoint
 # RESUMED_FROM edge via create_resumed_from_edge(), handled explicitly below.
@@ -105,6 +135,7 @@ async def pre_execution(request: PreRequest) -> PreResponse:
     """
     try:
         logger.info("START PRE: %s", str(request.experiment_id))
+        logger.info("Experiment_type: %s", request.experiment_type)
         # 1. Build snapshot from client codebase content
         snapshot = CodebaseSnapshot(files=json.loads(request.codebase))
         logger.info("snapshot files: %d", len(snapshot.files))
@@ -167,6 +198,7 @@ async def pre_execution(request: PreRequest) -> PreResponse:
             name=request.experiment_name,
             description=description,
             uri=request.experiment_uri or "",
+            experiment_type=request.experiment_type,
             base=is_base,
             status="RUNNING",
             strategy=run_result.strategy,
