@@ -13,7 +13,7 @@ from graph_lineage.data_classes.neo4j.nodes.experiment import Experiment
 from graph_lineage.diff.differ import compute_snapshot_diff
 from graph_lineage.diff.snapshot import CodebaseSnapshot
 from graph_lineage.diff.reconstructor import reconstruct_codebase
-from graph_lineage.lineage.neo4j_ops import find_experiment_by_id, find_parent_experiment_id, retrieve_ckp_by_experiment_id, find_experiment_from_chain
+from graph_lineage.lineage.neo4j_ops import find_experiment_by_id, find_parent_experiment_id, retrieve_ckp_by_experiment_id, find_experiment_from_chain, find_model_by_name
 
 logger = logging.getLogger(__name__)
 
@@ -104,7 +104,17 @@ class ModelIdMismatchError(Exception):
             f"Otherwise, create a new setup to train '{actual_id}'."
         )
 
-async def detect_run_type(
+class ModelDbMismatchError(Exception):
+    """Raised when model_db changed between runs — user must fix or create new setup."""
+
+    def __init__(self, db_model_name: str, db_model_uri: str, request_model_name: str, request_model_uri: str):
+        super().__init__(
+                f"model node in DB is '{db_model_name}' (URI: '{db_model_uri}') but in request we have '{request_model_name}' (URI: '{request_model_uri}'). "
+                f"If you have changed model uri, please update the model node by visiting the model page in the UI and changing the uri. "
+                f"Otherwise, create a new setup to train '{request_model_name}' (URI: '{request_model_uri}')."
+        )
+
+async def detect_training_run_type(
     request: PreRequest
 ) -> RunTypeResult:
     """Detect the run type strategy based on PreRequest.
@@ -119,16 +129,17 @@ async def detect_run_type(
 
     Blocking guard:
         - If model_id differs from parent → ModelIdMismatchError
+        - If model node in DB differs from request → ModelDbMismatchError
 
     Args:
-        config: PreRequest object containing the request data.
-        current_snapshot: Current codebase snapshot with file hashes.
+        request: PreRequest object containing the request data.
 
     Returns:
         RunTypeResult with strategy and relevant context.
 
     Raises:
         ModelIdMismatchError: If model_id changed between runs.
+        ModelDbMismatchError: If model node in DB differs from request.
     """
     # CURRENT EXPERIMENT STATE, exp IS THE NEW OLD EXPERIMENT (PARENT) FOR THIS RUN
     exp = ExperimentConfig(name= request.experiment_name,
@@ -137,9 +148,11 @@ async def detect_run_type(
                 previous_experiment_id= request.previous_experiment_id,
                 base_experiment_id= request.base_experiment_id,   
                 base= request.base,
-                model_id= request.model_id,
-                component_id= request.component_id,
-                recipe_id= request.recipe_id,)
+                model= request.model_id,
+                component= request.component_id,
+                recipe= request.recipe_id,
+                experiment_type= request.experiment_type
+            )
     
     snapshot = CodebaseSnapshot(files=json.loads(request.codebase))
     # CURRENT HASHES:
@@ -147,6 +160,8 @@ async def detect_run_type(
 
     # 0. NEW case: no current experiment and not base
     if not exp.id and not exp.base:
+            # YOU HAVE TO iNITIALIZE A NEW EXPERIMENT, THIS IS A NEW RUN
+            # REQUIRES USES_RECIPE,USES_MODEL,USES_COMPONENT RELATIONSHIPS TO BE CREATED in the app.py
             return RunTypeResult(strategy="NEW")
 
     # 1. MERGE: merging is enabled
@@ -156,6 +171,28 @@ async def detect_run_type(
             strategy="MERGE",
         )
 
+    # Guard: model_uri mismatch detection (only if parent exists)
+    current_model_uri = request.model_uri.strip()
+    current_model_name = request.model_id.strip()
+    old_experiment = find_experiment_by_id(exp.id)
+    if old_experiment and old_experiment.model_uri:
+        if current_model_uri and current_model_uri != old_experiment.model_uri:
+            raise ModelIdMismatchError(
+                actual_id=current_model_uri,
+                expected_id=old_experiment.model_uri,
+            )
+    if current_model_name and current_model_name:
+        db_model = find_model_by_name(current_model_name)
+        db_model_name = db_model.model_name if db_model else None
+        db_model_uri = db_model.uri if db_model else None
+        if db_model_name != current_model_name and db_model_uri != current_model_uri:
+            raise ModelDbMismatchError(
+                db_model_name=db_model_name,
+                db_model_uri=db_model_uri,
+                request_model_name=current_model_name,
+                request_model_uri=current_model_uri
+            )
+    
     # 2.a) RESUME explicit: checkpoint_resume_from is set and looks like a checkpoint
     if request.checkpoint_resume_from:
         logger.info("checkpoint_resume_from set, proceeding with RESUME run type")
@@ -198,16 +235,7 @@ async def detect_run_type(
             diff_patch=diff_patch,
             changed_files=sorted(diff_patch.keys())
         )
-    
-    # Guard: model_uri mismatch detection (only if parent exists)
-    current_model_uri = request.model_uri.strip()
-    old_experiment = find_experiment_by_id(exp.id)
-    if old_experiment and old_experiment.model_uri:
-        if current_model_uri and current_model_uri != old_experiment.model_uri:
-            raise ModelIdMismatchError(
-                actual_id=current_model_uri,
-                expected_id=old_experiment.model_uri,
-            )
+        
 
     # 3. experiment is the BASE: RETRY vs BRANCH: parent experiment exists, check codebase
     no_lineage_current_hashes = copy.deepcopy(current_hashes)

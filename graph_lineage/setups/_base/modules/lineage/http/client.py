@@ -206,9 +206,9 @@ class LineageClient:
                 experiment_type=exp_data.get("experiment_type"),
 
                 model_uri=self._config_dict.get("model").get("model_uri"),
-                model_id=self._config_dict.get("model").get("model_id"),
-                recipe_id=self._config_dict.get("experiment").get("recipe_id"),
-                component_id=self._config_dict.get("experiment").get("component_id"),
+                model_id=self._config_dict.get("experiment").get("model"),
+                recipe_id=self._config_dict.get("experiment").get("recipe"),
+                component_id=self._config_dict.get("experiment").get("component"),
 
                 codebase=codebase,
 

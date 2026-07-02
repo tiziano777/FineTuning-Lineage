@@ -98,7 +98,6 @@ class ExperimentRepository:
         result = await self.db.run_single(
             query,
             id=id,
-            id=id,
             model_id=model_id,
             status=status,
             description=description,

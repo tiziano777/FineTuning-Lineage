@@ -7,7 +7,24 @@ the API contract in sync.
 from __future__ import annotations
 
 from pydantic import BaseModel, Field
+from enum import Enum
 
+class StrategyType(str, Enum):
+    NEW = "NEW"
+    RESUME = "RESUME"
+    BRANCH = "BRANCH"
+    RETRY = "RETRY"
+
+class StatusType(str, Enum):
+    RUNNING = "RUNNING"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+
+class ExperimentType(str, Enum):
+    TRAINING = "training"
+    EVALUATION = "evaluation"
+    INFERENCE = "inference"
+    MERGING = "merging"
 
 # ─── PRE-EXECUTION ─────────────────────────────────────────────────────────────
 
@@ -25,7 +42,7 @@ class PreRequest(BaseModel):
     base_experiment_id: str | None = None
     previous_experiment_id: str | None = None
     description: str | None = None
-    experiment_type: str 
+    experiment_type: ExperimentType 
 
     merging: bool = False
     codebase: str # JSON string of {relative_path: content}
@@ -42,7 +59,7 @@ class PreResponse(BaseModel):
     """Response sent back to client after PRE processing."""
 
     experiment_id: str
-    strategy: str
+    strategy: StrategyType
     base: bool
     description: str
     base_experiment_id: str | None = None
@@ -56,10 +73,10 @@ class PostRequest(BaseModel):
     """Payload received from client after training ends."""
 
     experiment_id: str
-    status: str  # COMPLETED or FAILED
+    status: StatusType
     exit_message: str | None = None
     metrics_uri: str | None = None
-    strategy: str | None = None  # NEW, RETRY, BRANCH, RESUME, MERGE or None
+    strategy: StrategyType | None = None  # NEW, RETRY, BRANCH, RESUME, MERGE or None
     checkpoint_resume_from: str | None = None  # checkpoint_uri to resume from, if any
 
 
@@ -67,7 +84,7 @@ class PostResponse(BaseModel):
     """Acknowledgement sent back to client."""
 
     experiment_id: str
-    status: str
+    status: StatusType
     acknowledged: bool = True
 
 

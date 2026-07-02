@@ -23,6 +23,7 @@ class PreRequest(BaseModel):
     description: str | None = None
     experiment_type: str 
 
+    merging: bool = False
     codebase: str # JSON string of {relative_path: content}
 
     # BASE NODE RELATIONSHIPS

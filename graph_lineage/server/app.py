@@ -20,13 +20,14 @@ from fastapi import FastAPI, HTTPException
 
 from graph_lineage.data_classes.neo4j.nodes.checkpoint import Checkpoint
 from graph_lineage.data_classes.neo4j.nodes.experiment import Experiment
+from graph_lineage.data_classes.neo4j.nodes.experiment import ExperimentType, StatusType, StrategyType
 from graph_lineage.diff.description import generate_description
 from graph_lineage.diff.snapshot import CodebaseSnapshot
 from graph_lineage.lineage.neo4j_ops import (
-    create_checkpoint_edge, create_checkpoint_node,create_experiment_edge,
+    create_checkpoint_edge, create_checkpoint_node,create_experiment_edge, create_base_experiment_edge,
     create_experiment_node, create_resumed_from_edge, find_experiment_by_id,
     update_experiment_status,create_ckp_derived_from_edge,retrieve_ckp_id_by_ckp_uri,retrieve_ckp_by_experiment_id )
-from graph_lineage.lineage.rule_engine import ModelIdMismatchError, detect_run_type
+from graph_lineage.lineage.rule_engine import ModelIdMismatchError, ModelDbMismatchError, detect_training_run_type
 
 from .schemas import CheckpointRequest, CheckpointResponse, HealthResponse, PostRequest, PostResponse, PreRequest, PreResponse
 
@@ -54,7 +55,6 @@ app = FastAPI(
     version=__version__,
     description="Receives experiment lifecycle events from remote GPU workers.",
 )
-
 
 # ─────────────────────────────────────────────────────────────────────────
 # STARTUP EVENT: Initialize and verify Neo4j schema
@@ -167,12 +167,17 @@ async def pre_execution(request: PreRequest) -> PreResponse:
         # 3. Detect run type
         # ModelIdMismatchError → HTTP 409 (client maps to exit code 7)
         try:
-            # in pre_execution, invece di config, passa i valori
-            run_result = await detect_run_type(request=request)
+            if request.experiment_type == ExperimentType.TRAINING:
+                run_result = await detect_training_run_type(request=request)
+            else:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Unsupported experiment_type '{request.experiment_type}'",
+                )
         except ModelIdMismatchError as e:
             raise HTTPException(status_code=409, detail=str(e))
-        #except Exception as e:
-        #    raise HTTPException(status_code=400, detail=str(e))
+        except ModelDbMismatchError as e:
+            raise HTTPException(status_code=409, detail=str(e))
 
 
         logger.info(
@@ -182,7 +187,7 @@ async def pre_execution(request: PreRequest) -> PreResponse:
 
         # 4. Build Experiment node
         exp_id = str(uuid.uuid4())
-        is_base = run_result.strategy == "NEW"
+        is_base = run_result.strategy == StrategyType.NEW
 
 
         auto_description = generate_description(
@@ -200,8 +205,8 @@ async def pre_execution(request: PreRequest) -> PreResponse:
             uri=request.experiment_uri or "",
             experiment_type=request.experiment_type,
             base=is_base,
-            status="RUNNING",
-            strategy=run_result.strategy,
+            status=StatusType.RUNNING,
+            strategy=StrategyType(run_result.strategy),
             model_id=request.model_id,
             codebase= json.dumps(snapshot.files) if is_base else json.dumps(run_result.diff_patch or {}),
             changed_files=run_result.changed_files or [],
@@ -211,8 +216,13 @@ async def pre_execution(request: PreRequest) -> PreResponse:
             model_uri=request.model_uri or None
         )
 
-        # 5. Create node in Neo4j
+        # 5.a) Create node in Neo4j
         create_experiment_node(experiment)
+
+        # 5.b) Create base experiment edge if applicable
+        logger.info("is_base=%s, strategy=%s", is_base, run_result.strategy)
+        if is_base:
+            create_base_experiment_edge(exp_id=experiment.id, recipe_name=request.recipe_id, component_name=request.component_id, model_name=request.model_id)
 
         # 6. Create exp2exp edges based on strategy
         # Experiment→Experiment edges (DERIVED_FROM, RETRY_FROM, RESUMED_FROM) are created here.
@@ -232,17 +242,17 @@ async def pre_execution(request: PreRequest) -> PreResponse:
         # Experiment→Checkpoint RESUMED_FROM edge:
         # - RESUME always has parent_ckp_id (the checkpoint to resume from)
         # ONLY IF A CHECKPOINT IS INVOLVED (parent_ckp_id is not None)
-        if run_result.strategy =="RESUME":
+        if run_result.strategy == StrategyType.RESUME:
             logger.info("Creating CKP_RESUMED_FROM edge: exp_id=%s, ckp_uri=%s", exp_id, run_result.parent_ckp_id)
             create_resumed_from_edge(exp_id, run_result.parent_ckp_id)
 
         # 7. Resolve base_experiment_id for response
         response_base_exp_id = request.base_experiment_id
 
-        if run_result.strategy == "NEW":
+        if run_result.strategy == StrategyType.NEW:
             # Per NEW, l'experiment_id è anche il base_experiment_id
             response_base_exp_id = exp_id
-        elif not response_base_exp_id and run_result.strategy != "NEW":
+        elif not response_base_exp_id and run_result.strategy != StrategyType.NEW:
             if parent and parent.base:
                 response_base_exp_id = parent.id
             elif request.previous_experiment_id:
@@ -255,7 +265,7 @@ async def pre_execution(request: PreRequest) -> PreResponse:
 
         return PreResponse(
             experiment_id=exp_id, # New Experiment ID created 
-            strategy=run_result.strategy,
+            strategy=StrategyType(run_result.strategy),
             base=is_base,
             description=description,
             base_experiment_id=response_base_exp_id,
@@ -276,13 +286,13 @@ async def post_execution(request: PostRequest) -> PostResponse:
     try:
         update_experiment_status(
             exp_id=request.experiment_id,
-            status=request.status,
+            status=StatusType(request.status),
             exit_msg=request.exit_message,
             metrics_uri=request.metrics_uri,
         )
         
         # ckp2ckp edge creation for RESUME strategy after experiment is completed
-        if request.status == "COMPLETED" and request.strategy == "RESUME" and request.checkpoint_resume_from:
+        if request.status == StatusType.COMPLETED and request.strategy == StrategyType.RESUME and request.checkpoint_resume_from:
             old_checkpoint = retrieve_ckp_id_by_ckp_uri(request.checkpoint_resume_from)
             new_ckps = retrieve_ckp_by_experiment_id(request.experiment_id)
             if new_ckps:
@@ -307,7 +317,7 @@ async def post_execution(request: PostRequest) -> PostResponse:
 
         return PostResponse(
             experiment_id=request.experiment_id,
-            status=request.status,
+            status=StatusType(request.status),
             acknowledged=True,
         )
 

@@ -48,33 +48,27 @@ _VALIDATION_SCOPE_OPTIONS = [
     "human_eval",
 ]
 
-
 # ── Async helpers ─────────────────────────────────────────────────────────────
 
 async def _list_rich(status_filter=None, search=None) -> list[dict]:
     repo = ExperimentRepository(get_neo4j_client())
     return await repo.list_rich(status_filter=status_filter, search=search)
 
-
 async def _update_metadata(id: str, description: str | None, notes: str | None) -> dict:
     repo = ExperimentRepository(get_neo4j_client())
     return await repo.update_metadata(id=id, description=description, notes=notes)
-
 
 async def _get_agentic(id: str) -> dict | None:
     repo = ExperimentRepository(get_neo4j_client())
     return await repo.get_agentic_metadata(id)
 
-
 async def _update_agentic(id: str, **kwargs) -> dict:
     repo = ExperimentRepository(get_neo4j_client())
     return await repo.update_agentic_metadata(id, **kwargs)
 
-
 async def _set_visibility(id: str, usable: bool) -> list[str]:
     repo = HistoryRepository(get_neo4j_client())
     return await repo.set_visibility(id, usable)
-
 
 # ── UI helpers ────────────────────────────────────────────────────────────────
 
@@ -89,7 +83,6 @@ def _status_badge(status: str | None, usable: bool | None) -> str:
         return ":red[FAILED]"
     return f":blue[{status or 'UNKNOWN'}]"
 
-
 def _selectbox_with_none(label: str, options: list[str], current: str | None, key: str) -> str | None:
     """Selectbox che include un'opzione vuota iniziale."""
     display = ["— not set —"] + options
@@ -99,7 +92,6 @@ def _selectbox_with_none(label: str, options: list[str], current: str | None, ke
     chosen = st.selectbox(label, display, index=idx, key=key)
     return None if chosen == "— not set —" else chosen
 
-
 def _float_or_none(label: str, current: float | None, key: str, min_v=0.0, max_v=1.0, step=0.05) -> float | None:
     """Slider che ritorna None se l'utente non ha ancora impostato il valore."""
     use_it = st.checkbox(f"Set {label}", value=current is not None, key=f"{key}_enabled")
@@ -107,7 +99,6 @@ def _float_or_none(label: str, current: float | None, key: str, min_v=0.0, max_v
         return None
     default = current if current is not None else min_v
     return st.slider(label, min_value=min_v, max_value=max_v, value=float(default), step=step, key=key)
-
 
 def _parse_json_textarea(raw: str, field_name: str) -> tuple[list | None, str | None]:
     """Parsea testo JSON da textarea; ritorna (valore, errore)."""
@@ -122,7 +113,6 @@ def _parse_json_textarea(raw: str, field_name: str) -> tuple[list | None, str | 
     except json.JSONDecodeError as exc:
         return None, f"JSON non valido in {field_name}: {exc}"
 
-
 def _render_evidences_help() -> None:
     st.caption(
         "Array JSON di oggetti. Esempio:\n"
@@ -130,13 +120,11 @@ def _render_evidences_help() -> None:
         '"delta_vs_baseline": -0.05, "significant": true}]\n```'
     )
 
-
 def _render_open_questions_help() -> None:
     st.caption(
         'Array JSON di stringhe. Esempio:\n'
         '```json\n["Does this hold with 13B?", "Is improvement dataset-specific?"]\n```'
     )
-
 
 # ── Sezioni del form agentico ─────────────────────────────────────────────────
 
@@ -163,7 +151,6 @@ def _section_identity(current: dict) -> dict:
         "hypothesis": hypothesis.strip() or None,
         "motivation": motivation.strip() or None,
     }
-
 
 def _section_knowledge(current: dict) -> tuple[dict, list[str]]:
     """Gruppo 2 — Conoscenza estratta post-run. Ritorna (valori, errori)."""
@@ -205,7 +192,6 @@ def _section_knowledge(current: dict) -> tuple[dict, list[str]]:
         "evidences": evidences,
         "open_questions": open_questions,
     }, errors
-
 
 def _section_navigation(current: dict) -> dict:
     """Gruppo 3 — Navigabilità del grafo."""
@@ -252,7 +238,6 @@ def _section_navigation(current: dict) -> dict:
         "tags": tags,
     }
 
-
 def _section_reliability(current: dict) -> dict:
     """Gruppo 4 — Riproducibilità e affidabilità."""
     st.markdown("#### 🎯 Affidabilità")
@@ -274,7 +259,6 @@ def _section_reliability(current: dict) -> dict:
         "retry_policy": retry_policy,
         "validation_scope": validation_scope,
     }
-
 
 def _section_costs(current: dict) -> dict:
     """Gruppo 5 — Metadati computazionali."""
@@ -305,7 +289,6 @@ def _section_costs(current: dict) -> dict:
         "duration_seconds": int(duration_seconds) if duration_seconds is not None else None,
         "estimated_gain": estimated_gain,
     }
-
 
 # ── Tab agentic metadata ──────────────────────────────────────────────────────
 
@@ -382,7 +365,6 @@ def _render_tab_agentic(experiments: list[dict]) -> None:
     # Preview compatta dei valori correnti (letti dal DB, non dalla form)
     with st.expander("👁 Preview nodo Neo4j (valori correnti in DB)", expanded=False):
         st.json(current)
-
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 
@@ -539,3 +521,4 @@ def run() -> None:
                                     st.error(f"Error: {str(e)}")
         except UIError as e:
             st.error(f"Error: {e.user_message}")
+

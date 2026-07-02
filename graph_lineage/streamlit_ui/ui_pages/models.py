@@ -11,9 +11,16 @@ from graph_lineage.streamlit_ui.db.repository.model_repository import ModelRepos
 from graph_lineage.streamlit_ui.utils.async_helpers import run_async
 from graph_lineage.streamlit_ui.utils.errors import UIError
 from graph_lineage.streamlit_ui.utils import get_neo4j_client
+from graph_lineage.data_classes.neo4j.nodes.model import KindEnum
 
 logger = logging.getLogger(__name__)
 
+labels_mapping = {
+    KindEnum.NONE: "Not specified",
+    KindEnum.BASE: "BASE",
+    KindEnum.ADAPTER: "ADAPTER",
+    KindEnum.MERGED: "MERGED"
+}
 
 # Async helper functions for model operations
 async def create_model_async(
@@ -64,7 +71,7 @@ async def check_model_deps_async(model_id: str) -> int:
 
 
 async def upsert_model_async(
-    model_name: str, version: str, url: str, doc_url: str, description: str
+    model_name: str, version: str, url: str, doc_url: str, description: str, kind: str, architecture_info_ref: str
 ) -> dict:
     """Upsert model by name asynchronously (create if new, update if exists)."""
     db_client = get_neo4j_client()
@@ -75,6 +82,8 @@ async def upsert_model_async(
         url=url,
         doc_url=doc_url,
         description=description,
+        kind=kind,
+        architecture_info_ref=architecture_info_ref,
     )
 
 
@@ -99,6 +108,17 @@ def run() -> None:
             url = st.text_input("URL", value="")
             doc_url = st.text_input("Documentation URL", value="")
             description = st.text_area("Description", value="")
+            # KIND SELECTION
+            kind_options = [KindEnum.NONE, KindEnum.BASE, KindEnum.ADAPTER, KindEnum.MERGED]
+            default_index = kind_options.index(KindEnum.NONE)
+            kind = st.selectbox(
+                "Kind",
+                options=kind_options,
+                index=default_index,
+                format_func=lambda x: labels_mapping[x] 
+            )
+            architecture_info_ref = st.text_input("Architecture Info Reference", value="")
+
             upsert_mode = st.checkbox("Upsert mode (update if exists)")
             if upsert_mode:
                 st.info("Model will be created if new, or updated if a model with this name already exists.")
@@ -117,6 +137,8 @@ def run() -> None:
                                     url=url,
                                     doc_url=doc_url,
                                     description=description,
+                                    kind=kind,
+                                    architecture_info_ref=architecture_info_ref
                                 )
                             )
                             st.success(f"Model '{result['model_name']}' saved successfully!")
@@ -128,6 +150,8 @@ def run() -> None:
                                     url=url,
                                     doc_url=doc_url,
                                     description=description,
+                                    kind=kind,
+                                    architecture_info_ref=architecture_info_ref
                                 )
                             )
                             st.success(f"Model '{result['model_name']}' created successfully!")
@@ -151,10 +175,12 @@ def run() -> None:
                     with st.container(border=True):
                         col1, col2 = st.columns([3, 1])
                         with col1:
-                            st.write(f"**{model.get('model_name', 'N/A')}**")
+                            st.write(f"**{model.get('model_name', 'N/A')}**  --- **{model.get('kind', 'N/A')}**")
                             st.caption(f"Version: {model.get('version', 'N/A')}")
+                            st.caption(f"URI: {model.get('uri', 'N/A')}")
                         with col2:
                             st.caption(f"Created: {model.get('created_at', 'N/A')}")
+                            st.caption(f"Updated: {model.get('updated_at', 'N/A')}")
             else:
                 st.info("No models found.")
         except UIError as e:
@@ -180,6 +206,16 @@ def run() -> None:
                         url = st.text_input("URL", value=model.get("url", ""))
                         doc_url = st.text_input("Doc URL", value=model.get("doc_url", ""))
                         description = st.text_area("Description", value=model.get("description", ""))
+                        # KIND SELECTION
+                        kind_options = [KindEnum.NONE, KindEnum.BASE, KindEnum.ADAPTER, KindEnum.MERGED]
+                        default_index = kind_options.index(KindEnum.NONE)
+                        kind = st.selectbox(
+                            "Kind",
+                            options=kind_options,
+                            index=default_index,
+                            format_func=lambda x: labels_mapping[x] 
+                        )
+                        architecture_info_ref = st.text_input("Architecture Info Ref", value=model.get("architecture_info_ref", ""))
                         submitted = st.form_submit_button("Update Model")
 
                         if submitted:
@@ -191,6 +227,8 @@ def run() -> None:
                                         url=url,
                                         doc_url=doc_url,
                                         description=description,
+                                        kind=kind,
+                                        architecture_info_ref=architecture_info_ref,
                                     )
                                 )
                                 st.success("✓ Model updated!")

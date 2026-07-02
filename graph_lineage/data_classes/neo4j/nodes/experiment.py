@@ -2,13 +2,27 @@
 
 from __future__ import annotations
 
-from typing import Optional, List, Literal
+from typing import Optional, List
+from enum import Enum
 from pydantic import Field
 from .base import BaseEntity
 
-StatusType = Literal["RUNNING", "COMPLETED", "FAILED"]
-StrategyType = Literal["NEW", "RESUME", "BRANCH", "RETRY"]
-ExperimentType = Literal["training", "evaluation", "inference", "merge" ]
+class StatusType(str, Enum):
+    RUNNING = "RUNNING"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+
+class StrategyType(str, Enum):
+    NEW = "NEW"
+    RESUME = "RESUME"
+    BRANCH = "BRANCH"
+    RETRY = "RETRY"
+
+class ExperimentType(str, Enum):
+    TRAINING = "training"
+    EVALUATION = "evaluation"
+    INFERENCE = "inference"
+    MERGING = "merging"
 
 class Experiment(BaseEntity):
     """Experiment entity -- core tracking entity for a training run."""
@@ -23,7 +37,7 @@ class Experiment(BaseEntity):
     exit_status: Optional[str] = None
     exit_msg: Optional[str] = None
     strategy: StrategyType = Field("", description="NEW | RESUME | BRANCH | RETRY")
-    experiment_type: ExperimentType = Field("training", description="training | evaluation | inference | merge")
+    experiment_type: ExperimentType = Field("training", description="training | evaluation | inference | merging")
 
     model_id: str | None = Field(None, description="model_id used for entire lineage experimentations")
     model_uri: str | None = Field(None, description="model_uri used for entire lineage experimentations")
@@ -49,5 +63,4 @@ class Experiment(BaseEntity):
         if self.base:
             labels.append("Base")
         
-        labels.append(f"{self.name.replace('-', '_')}")
         return labels

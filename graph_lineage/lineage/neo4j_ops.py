@@ -17,6 +17,8 @@ import nest_asyncio
 
 from graph_lineage.data_classes.neo4j.nodes.checkpoint import Checkpoint
 from graph_lineage.data_classes.neo4j.nodes.experiment import Experiment
+from graph_lineage.data_classes.neo4j.nodes.model import Model
+
 from graph_lineage.neo4j_client.client import get_driver
 
 logger = logging.getLogger(__name__)
@@ -45,6 +47,7 @@ def _run_sync(coro) -> Any:
     else:
         return asyncio.run(coro)
 
+# ── Experiment operations ─────────────────────────────────────────────────
 
 def find_experiment_by_id(experiment_id: str) -> Experiment | None:
     """Find an experiment by its unique ID."""
@@ -92,9 +95,15 @@ def create_experiment_node(exp: Experiment) -> str:
         for key in ("created_at", "updated_at"):
             if key in props and props[key] is not None:
                 props[key] = props[key].isoformat()
-        # 1. Generiamo la stringa delle etichette (es: "Experiment:Training" o "Experiment:Evaluation")
+        
+        
+        # 0. Generiamo la stringa delle etichette (es: "Experiment:Training" o "Experiment:Evaluation")
         # Usiamo exp.__labels__ che abbiamo definito nel modello Pydantic
         labels_str = ":".join(exp.__labels__)
+
+        # 1. Rimuoviamo la proprietà "base" e Experiment_type, vogliamo che siano solo labels.
+        props.pop("base", None)
+        props.pop("experiment_type", None)
         
         # 2. Iniettiamo le label usando la f-string (sicuro, perché le label sono controllate dal tuo codice)
         # Il resto delle proprietà ($props) rimane parametrizzato per evitare Cypher Injection
@@ -188,6 +197,24 @@ def update_experiment_status(exp_id: str, status: str, exit_msg: str | None = No
             await session.run(query, params)
 
     _run_sync(_update_experiment_status_async(exp_id, status, exit_msg, metrics_uri))
+
+def create_base_experiment_edge(exp_id: str, recipe_name: str, component_name: str, model_name: str) -> None:
+    """Create BASE_EXPERIMENT relationship from Experiment to Recipe, Component, and Model."""
+    async def _create_base_experiment_edge_async(exp_name: str, recipe_name: str, component_name: str, model_name: str) -> None:
+        driver = await get_driver()
+        query = """
+        MATCH (e:Experiment {id: $exp_id})
+        MATCH (r:Recipe {name: $recipe_name})
+        MATCH (c:Component {name: $component_name})
+        MATCH (m:Model {model_name: $model_name})
+        CREATE (e)-[:USES_RECIPE]->(r)
+        CREATE (e)-[:USES_COMPONENT]->(c)
+        CREATE (e)-[:USES_MODEL]->(m)
+        """
+        async with driver.session() as session:
+            await session.run(query, {"exp_id": exp_id, "recipe_name": recipe_name, "component_name": component_name, "model_name": model_name})
+
+    _run_sync(_create_base_experiment_edge_async(exp_id, recipe_name, component_name, model_name))
 
 # ── Checkpoint operations ─────────────────────────────────────────────────────
 
@@ -303,4 +330,24 @@ def find_experiment_from_chain(base_exp_id: str, ckp_uri: str) -> Experiment:
             return Experiment.model_validate(record["e"])
     
     return _run_sync(_find_experiment_from_chain_async())
+
+# ── Model operations ─────────────────────────────────────────────────────
+
+def find_model_by_name(model_name: str) -> Model | None:
+    """Find a model node by its name."""
+    async def _find_model_by_name_async(model_name: str) -> Model | None:
+        """Query Neo4j for a model node by its name."""
+        driver = await get_driver()
+        query = "MATCH (m:Model {model_name: $model_name}) RETURN m LIMIT 1"
+        async with driver.session() as session:
+            result = await session.run(query, {"model_name": model_name})
+            record = await result.single()
+            if record is None:
+                return None
+            return Model.model_validate(record["m"])
+
+    data = _run_sync(_find_model_by_name_async(model_name))
+    if data is None:
+        return None
+    return data
 

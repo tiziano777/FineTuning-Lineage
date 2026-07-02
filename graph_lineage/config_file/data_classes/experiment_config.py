@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+# EXPERIMENT LINEAGE CONFIG FILE WRAPPER
 
 class ExperimentConfig(BaseModel):
     """Strict experiment configuration — managed by the lineage hook."""
@@ -14,9 +15,9 @@ class ExperimentConfig(BaseModel):
     base: bool | None
     name: str = Field(..., min_length=1)
     description: str = ""
-    uri: str | None = None # da config.yml model.model_uri
+    experiment_type: str = Field(..., min_length=1)
+    uri: str | None = None 
     status: str | None = None
-    checkpoint_resume_from: str | None = None
-    model_id: str | None = None # da config.yml model.model_id
-    component_id: str | None = None
-    recipe_id: str | None = None
+    model: str | None = None 
+    component: str | None = None
+    recipe: str | None = None

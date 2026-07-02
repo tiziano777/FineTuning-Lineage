@@ -6,12 +6,19 @@ import logging
 import uuid
 from datetime import datetime
 from typing import Optional
+from enum import Enum
 
 from graph_lineage.streamlit_ui.utils.errors import UIError
 from graph_lineage.streamlit_ui.utils.entity_constraints import EntityConstraints
 from graph_lineage.streamlit_ui.db.neo4j_async import AsyncNeo4jClient
 
 logger = logging.getLogger(__name__)
+
+class KindEnum(str, Enum):
+    """Enum for model kind."""
+    BASE = "BASE"
+    ADAPTER = "ADAPTER"
+    MERGED = "MERGED"
 
 
 class ModelRepository:
@@ -22,7 +29,7 @@ class ModelRepository:
         self.db = db_client
         self.constraints = EntityConstraints(db_client)
 
-    async def create(
+    async def _create(
         self,
         model_id: str,
         model_name: str,
@@ -31,6 +38,8 @@ class ModelRepository:
         url: str = "",
         doc_url: str = "",
         description: str = "",
+        kind: Optional[KindEnum] = None,
+        architecture_info_ref: str = "",
     ) -> dict:
         """Create a new model.
 
@@ -42,6 +51,8 @@ class ModelRepository:
             url: Model URL.
             doc_url: Documentation URL.
             description: Model description.
+            kind: Model kind (BASE | ADAPTER | MERGED).
+            architecture_info_ref: Reference to architecture document.
 
         Returns:
             Created model data.
@@ -56,12 +67,14 @@ class ModelRepository:
             url: $url,
             doc_url: $doc_url,
             description: $description,
+            kind: $kind,
+            architecture_info_ref: $architecture_info_ref,
             created_at: $created_at,
             updated_at: $updated_at
         })
         RETURN m.id as id, m.model_name as model_name, m.version as version,
                m.uri as uri, m.url as url, m.doc_url as doc_url,
-               m.description as description, m.created_at as created_at, m.updated_at as updated_at
+               m.description as description, m.kind as kind, m.architecture_info_ref as architecture_info_ref, m.created_at as created_at, m.updated_at as updated_at
         """
 
         result = await self.db.run_single(
@@ -73,6 +86,8 @@ class ModelRepository:
             url=url,
             doc_url=doc_url,
             description=description,
+            kind=kind,
+            architecture_info_ref=architecture_info_ref,
             created_at=now,
             updated_at=now,
         )
@@ -91,6 +106,8 @@ class ModelRepository:
         url: str = "",
         doc_url: str = "",
         description: str = "",
+        kind: Optional[KindEnum] = None,
+        architecture_info_ref: str = "",
     ) -> dict:
         """Create a new model (generates UUID automatically).
 
@@ -101,13 +118,15 @@ class ModelRepository:
             url: Model URL.
             doc_url: Documentation URL.
             description: Model description.
+            kind: Model kind (BASE | ADAPTER | MERGED).
+            architecture_info_ref: Reference to architecture document.
 
         Returns:
             Created model data.
         """
         import uuid
         model_id = str(uuid.uuid4())
-        return await self.create(
+        return await self._create(
             model_id=model_id,
             model_name=model_name,
             version=version,
@@ -115,6 +134,8 @@ class ModelRepository:
             url=url,
             doc_url=doc_url,
             description=description,
+            kind=kind,
+            architecture_info_ref=architecture_info_ref,
         )
 
     async def get_by_id(self, model_id: str) -> Optional[dict]:
@@ -130,7 +151,7 @@ class ModelRepository:
         MATCH (m:Model {id: $id})
         RETURN m.id as id, m.model_name as model_name, m.version as version,
                m.uri as uri, m.url as url, m.doc_url as doc_url,
-               m.description as description, m.created_at as created_at, m.updated_at as updated_at
+               m.description as description, m.kind as kind, m.architecture_info_ref as architecture_info_ref, m.created_at as created_at, m.updated_at as updated_at
         """
 
         result = await self.db.run_single(query, id=model_id)
@@ -146,7 +167,7 @@ class ModelRepository:
         MATCH (m:Model)
         RETURN m.id as id, m.model_name as model_name, m.version as version,
                m.uri as uri, m.url as url, m.doc_url as doc_url,
-               m.description as description, m.created_at as created_at, m.updated_at as updated_at
+               m.description as description, m.kind as kind, m.architecture_info_ref as architecture_info_ref, m.created_at as created_at, m.updated_at as updated_at
         LIMIT 100
         """
 
@@ -180,6 +201,8 @@ class ModelRepository:
         url: str = "",
         doc_url: str = "",
         description: str = "",
+        kind: Optional[KindEnum] = None,
+        architecture_info_ref: str = "",
     ) -> dict:
         """Alias for update for manager compatibility."""
         return await self.update(
@@ -189,6 +212,8 @@ class ModelRepository:
             url=url,
             doc_url=doc_url,
             description=description,
+            kind=kind,
+            architecture_info_ref=architecture_info_ref,
         )
 
     async def delete_model(self, model_id: str) -> None:
@@ -217,6 +242,8 @@ class ModelRepository:
         url: str = "",
         doc_url: str = "",
         description: str = "",
+        kind: Optional[KindEnum] = None,
+        architecture_info_ref: str = "",
     ) -> dict:
         """Upsert model by model_name using MERGE semantics.
 
@@ -229,6 +256,8 @@ class ModelRepository:
             url: Model URL.
             doc_url: Documentation URL.
             description: Model description.
+            kind: Model kind (BASE | ADAPTER | MERGED).
+            architecture_info_ref: Reference to architecture document.
 
         Returns:
             Upserted model data.
@@ -239,14 +268,18 @@ class ModelRepository:
         MERGE (m:Model {model_name: $model_name})
         ON CREATE SET m.id = $id, m.version = $version, m.url = $url,
                       m.doc_url = $doc_url, m.description = $description,
+                        m.kind = $kind, m.architecture_info_ref = $architecture_info_ref,
                       m.created_at = $created_at, m.updated_at = $updated_at
         ON MATCH SET m.version = CASE WHEN $version <> '' THEN $version ELSE m.version END,
                      m.url = CASE WHEN $url <> '' THEN $url ELSE m.url END,
                      m.doc_url = CASE WHEN $doc_url <> '' THEN $doc_url ELSE m.doc_url END,
                      m.description = CASE WHEN $description <> '' THEN $description ELSE m.description END,
+                     m.kind = CASE WHEN $kind IS NOT NULL THEN $kind ELSE m.kind END,
+                     m.architecture_info_ref = CASE WHEN $architecture_info_ref <> '' THEN $architecture_info_ref ELSE m.architecture_info_ref END,
                      m.updated_at = $updated_at
         RETURN m.id as id, m.model_name as model_name, m.version as version,
                m.url as url, m.doc_url as doc_url, m.description as description,
+                m.kind as kind, m.architecture_info_ref as architecture_info_ref,
                m.created_at as created_at, m.updated_at as updated_at
         """
         result = await self.db.run_single(
@@ -257,6 +290,8 @@ class ModelRepository:
             url=url,
             doc_url=doc_url,
             description=description,
+            kind=kind,
+            architecture_info_ref=architecture_info_ref,
             created_at=now,
             updated_at=now,
         )
@@ -273,6 +308,8 @@ class ModelRepository:
         url: str = "",
         doc_url: str = "",
         description: str = "",
+        kind: Optional[KindEnum] = None,
+        architecture_info_ref: str = "",
     ) -> dict:
         """Update model fields.
 
@@ -283,6 +320,8 @@ class ModelRepository:
             url: New URL.
             doc_url: New documentation URL.
             description: New description.
+            kind: New model kind (BASE | ADAPTER | MERGED).
+            architecture_info_ref: New reference to architecture document.
 
         Returns:
             Updated model data.
@@ -293,10 +332,11 @@ class ModelRepository:
         MATCH (m:Model {id: $id})
         SET m.version = $version, m.uri = $uri, m.url = $url,
             m.doc_url = $doc_url, m.description = $description,
-            m.updated_at = $updated_at
+            m.kind = $kind, m.architecture_info_ref = $architecture_info_ref, m.updated_at = $updated_at
         RETURN m.id as id, m.model_name as model_name, m.version as version,
                m.uri as uri, m.url as url, m.doc_url as doc_url,
-               m.description as description, m.updated_at as updated_at
+               m.description as description, m.kind as kind, m.architecture_info_ref as architecture_info_ref,
+               m.updated_at as updated_at
         """
 
         result = await self.db.run_single(
@@ -306,6 +346,8 @@ class ModelRepository:
             uri=uri,
             url=url,
             doc_url=doc_url,
+            kind=kind,
+            architecture_info_ref=architecture_info_ref,
             description=description,
             updated_at=now,
         )
