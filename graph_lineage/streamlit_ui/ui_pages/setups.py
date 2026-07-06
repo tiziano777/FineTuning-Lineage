@@ -6,34 +6,37 @@ Generates downloadable project scaffolds with:
 - Pre-filled config.yml with selected recipe, model, output, hardware
 - Virgin .lineage/experiment.yml for lineage tracking
 """
-
 from __future__ import annotations
-
 import io
 import json
 import zipfile
 from datetime import datetime, timezone
 import uuid
 from pathlib import Path
-
 import streamlit as st
 import yaml
 
 from graph_lineage.data_classes.neo4j.nodes.experiment import ExperimentType
-
+from graph_lineage.data_classes.neo4j.nodes.component import Component
+from graph_lineage.data_classes.neo4j.nodes.model import Model
 from graph_lineage.streamlit_ui.db.repository.component_repository import ComponentRepository
 from graph_lineage.streamlit_ui.db.repository.model_repository import ModelRepository
 from graph_lineage.streamlit_ui.db.repository.recipe_repository import RecipeRepository
+from graph_lineage.streamlit_ui.db.repository.recipe_repository import Recipe
+from typing import Optional
+
 from graph_lineage.streamlit_ui.utils import get_neo4j_client
 from graph_lineage.streamlit_ui.utils.async_helpers import run_async
 
+import logging  
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
- 
+
 _SETUPS_ROOT_DIR = Path(__file__).parent.parent.parent / "setups"
- 
+
 # File visibili nel tab "Browse Templates"
 _BROWSE_ALLOWED_FILES = {"requirements.txt", "prepare.py", "train.py", "config.yml"}
  
@@ -41,9 +44,9 @@ def _get_setups_dir(experiment_type: ExperimentType) -> Path:
     """Setups directory scoped al experiment type selezionato nel wizard."""
     return _SETUPS_ROOT_DIR / experiment_type.value
  
-def _get_base_dir(experiment_type: ExperimentType) -> Path:
-    """Base directory (file comuni: Makefile, modules/, .lineage templates) scoped al experiment type."""
-    return _get_setups_dir(experiment_type) / "_base"
+def _get_base_dir() -> Path:
+    """Base directory (file comuni: Makefile, modules/, .lineage templates) — shared across all experiment types."""
+    return _SETUPS_ROOT_DIR / "_base"
   
 def _safe_read_file(file_path: Path) -> str:
     """Read file with robust encoding handling.
@@ -62,17 +65,41 @@ def _safe_read_file(file_path: Path) -> str:
 # Async helpers
 # ---------------------------------------------------------------------------
  
-async def _list_components_async() -> list[dict]:
+async def _fetch_recipe_for_scaffold(
+    recipe_name: str,
+    recipe_repo: "RecipeRepository",
+) -> Optional[Recipe]:
+    """Retrieve a Recipe by name from the DB and return it as a validated dataclass.
+
+    Args:
+        recipe_name: Nome della recipe selezionata dall'utente nella selectbox.
+        recipe_repo: Istanza di RecipeRepository per l'accesso al DB.
+
+    Returns:
+        Recipe (pydantic model) se trovata, None altrimenti.
+
+    Raises:
+        UIError: Se la riga recuperata dal DB non supera la validazione del modello.
+    """
+    recipe = await recipe_repo.get_by_name(recipe_name)
+    if recipe is None:
+        return None
+    return recipe
+
+async def _list_components_async() -> list[Component]:
+    """List all components asynchronously. Returns list of Component dataclasses."""
     db = get_neo4j_client()
     repo = ComponentRepository(db)
     return await repo.list_all()
  
-async def _list_models_async() -> list[dict]:
+async def _list_models_async() -> list[Model]:
+    """List all models asynchronously. Returns list of Model dataclasses."""
     db = get_neo4j_client()
     repo = ModelRepository(db)
     return await repo.list_all()
  
 async def _list_recipes_async() -> list[dict]:
+    """List all recipes asynchronously."""
     db = get_neo4j_client()
     repo = RecipeRepository(db)
     return await repo.list_all()
@@ -80,7 +107,21 @@ async def _list_recipes_async() -> list[dict]:
 # ---------------------------------------------------------------------------
 # Scaffold generation
 # ---------------------------------------------------------------------------
- 
+
+def _deep_merge_dicts(base: dict, override: dict) -> dict:
+    """Deep merge override dict into base dict (override takes priority).
+    
+    Recursively merges dicts. For non-dict values, override wins.
+    Preserves None values in override if explicitly present.
+    """
+    result = base.copy()
+    for key, value in override.items():
+        if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+            result[key] = _deep_merge_dicts(result[key], value)
+        else:
+            result[key] = value
+    return result
+
 def _parse_accelerators(gpu_type: str, gpu_count: int) -> str | dict | list:
     """
     Parse gpu_type input into a valid SkyPilot accelerators value.
@@ -117,19 +158,39 @@ def _parse_accelerators(gpu_type: str, gpu_count: int) -> str | dict | list:
     # Case 4: plain name  A100-80GB  → append gpu_count
     return f"{gpu_type}:{int(gpu_count)}"
  
-def _generate_config_yml(selections: dict) -> str:
-    """Generate config.yml content from form selections."""
+# ---------------------------------------------------------------------------
+# SCAFFOLD GENERATION LOGIC (Business Logic — UI-independent)
+# ---------------------------------------------------------------------------
+# These functions implement the core scaffold generation pipeline.
+# They can be reused by different UI frameworks (Streamlit, FastAPI, etc.)
+
+# STEP 1: Config Generation (model + recipe merge)
+def _generate_config_yml(selections: dict, recipe: Recipe, template_config: dict | None = None) -> str:
+    """Generate config.yml with smart merging of template + user selections.
+    
+    Merge strategy (priority: highest → lowest):
+        1. User-selected values (always override)
+        2. Template config.yml (if exists)
+        3. Generated defaults
+    
+    Args:
+        selections: User form selections with model_uri, model_id, output_dir, etc.
+        recipe: Recipe object from DB (None if not selected)
+        template_config: Template config.yml dict (None if no template)
+    
+    Returns:
+        config.yml as YAML string
+    """
     setup_name = selections["setup_name"]
- 
-    # Use custom cache_dir if provided, otherwise use standard template
     cache_dir = selections.get("cache_dir", "").strip()
     if not cache_dir:
         cache_dir = f"/nfs/training-output/.dpo-cache/${{experiment.name}}/${{experiment.id}}/data"
  
+    # STEP 1a: Build initial config with user selections (highest priority)
     config = {
         "model": {
-            "model_uri": selections["model_uri"],
-            "model_id": selections["model_id"],
+            "model_uri": selections["model_uri"],  
+            "model_id": selections["model_id"],    
             "dataset": {
                 "cache_dir": cache_dir,
                 "cache_file": "train_dataset",
@@ -162,84 +223,120 @@ def _generate_config_yml(selections: dict) -> str:
         "hardware": selections.get("hardware") or {},
     }
  
-    # Add optional fields
+    # STEP 1b: Add optional output fields
     if selections.get("metrics_uri"):
         config["output"]["metrics_uri"] = selections["metrics_uri"]
-    if selections.get("recipe_id"):
-        config["recipe"]["recipe_id"] = selections["recipe_id"]
-    if selections.get("recipe_name"):
-        config["recipe"]["recipe_name"] = selections["recipe_name"]
+    if selections.get("plot_dir"):
+        config["output"]["plot_dir"] = selections["plot_dir"]
+    
+    # STEP 1c: Inject recipe if selected, else keep empty
+    if recipe is not None:
+        config["recipe"] = recipe.model_dump(mode="json", exclude_none=True)
+    else:
+        # Preserve fallback fields if recipe_id or recipe_name provided
+        if selections.get("recipe_id"):
+            config["recipe"]["recipe_id"] = selections["recipe_id"]
+        if selections.get("recipe_name"):
+            config["recipe"]["recipe_name"] = selections["recipe_name"]
+    
+    # STEP 1d: Add model merging if enabled
     if selections.get("merging_enabled"):
         config.setdefault("model_merging", {})
         config["model_merging"]["merge_method"] = selections.get("merge_method", "linear")
         config["model_merging"]["sources"] = selections.get("merge_sources", [])
+    
+    # STEP 1e: Deep merge with template (template provides non-critical fields)
+    if template_config:
+        # CRITICAL: Remove recipe skeleton from template BEFORE merge
+        # Otherwise recursive merge will preserve skeleton even if config["recipe"] = {}
+        if recipe is None and "recipe" in template_config:
+            del template_config["recipe"]
+        
+        config = _deep_merge_dicts(template_config, config)
+        
+        # Re-enforce critical fields from user selection (must always win)
+        config["model"]["model_uri"] = selections["model_uri"]
+        config["model"]["model_id"] = selections["model_id"]
+        config["output"]["output_dir"] = selections["output_dir"]
+        if recipe is not None:
+            config["recipe"] = recipe.model_dump(mode="json", exclude_none=True)
+        else:
+            config["recipe"] = {}
  
     return yaml.dump(config, default_flow_style=False, sort_keys=False, allow_unicode=True)
- 
+
+# STEP 2: Other manifest generation
 def _generate_experiment_yml(experiment_type: ExperimentType, setup_name: str, selections: dict) -> str:
-    """Generate .lineage/experiment.yml from template.
- 
-    URI is intentionally null — the tracker sets it to the actual project_root
-    on the remote machine at first execution.
-    """
-    template = _safe_read_file(_get_base_dir(experiment_type) / ".lineage" / "experiment.yml")
+    """Generate .lineage/experiment.yml from template with user values."""
+    template = _safe_read_file(_get_base_dir() / ".lineage" / "experiment.yml")
     content = template.replace("{{SETUP_NAME}}", setup_name)
     content = content.replace("{{PROJECT_URI}}", "")
     content = content.replace("{{DESCRIPTION}}", selections.get("description", ""))
     content = content.replace("{{COMPONENT_NAME}}", selections.get("component_name", ""))
-    content = content.replace("{{RECIPE_NAME}}", selections.get("recipe_name", ""))
+    content = content.replace("{{RECIPE_NAME}}", selections.get("recipe_name", "") or "")
     content = content.replace("{{MODEL_ID}}", selections.get("model_id", ""))
     content = content.replace("{{EXPERIMENT_TYPE}}", experiment_type.value)
- 
     return content
- 
+
 def _generate_server_yml(experiment_type: ExperimentType, selections: dict) -> str:
-    template = _safe_read_file(_get_base_dir(experiment_type) / ".lineage" / "server.yml")
-    url = selections.get("server_url", "http://localhost:8502")
-    protocol = selections.get("protocol", "http")
-    timeout = selections.get("timeout", 30)
-    retry = selections.get("retry", 3)
-    blocking = selections.get("blocking", True)
-    template = template.replace("{{SERVER_URL}}", url)
-    template = template.replace("{{PROTOCOL}}", protocol)
-    template = template.replace("{{TIMEOUT}}", str(timeout))
-    template = template.replace("{{RETRIES}}", str(retry))
-    template = template.replace("{{BLOCKING}}", str(blocking).lower())
+    """Generate .lineage/server.yml from template with user values."""
+    template = _safe_read_file(_get_base_dir() / ".lineage" / "server.yml")
+    template = template.replace("{{SERVER_URL}}", selections.get("server_url", "http://localhost:8502"))
+    template = template.replace("{{PROTOCOL}}", selections.get("protocol", "http"))
+    template = template.replace("{{TIMEOUT}}", str(selections.get("timeout", 30)))
+    template = template.replace("{{RETRIES}}", str(selections.get("retry", 3)))
+    template = template.replace("{{BLOCKING}}", str(selections.get("blocking", True)).lower())
     return template
- 
-def _build_zip(experiment_type: ExperimentType, component_uri: str | None, selections: dict) -> bytes:
-    """Build zip archive from template (via component_uri) + generated configs.
- 
+
+# STEP 3: Zip packaging
+def _build_zip(experiment_type: ExperimentType, component_uri: str | None, selections: dict, recipe: Recipe) -> bytes:
+    """Build zip archive: template + generated configs.
+    
+    Packaging logic (order matters):
+        1. Exclude config.yml from template copy (will be generated)
+        2. Copy base files (shared across all experiment types)
+        3. Generate config.yml dynamically (with template merge if needed)
+        4. Generate lineage manifests (.lineage/experiment.yml, .lineage/server.yml)
+        5. Save setup.json metadata
+    
     Args:
-        experiment_type: Tipo di esperimento selezionato nel wizard (step 1).
-        component_uri: URI to the component template directory (from DB).
-        selections: Form selections dict.
- 
+        experiment_type: TRAINING, EVALUATION, INFERENCE, or MERGING
+        component_uri: Path to component template (or None)
+        selections: User form selections dict
+        recipe: Recipe object (or None)
+    
     Returns:
-        Zip file bytes.
+        Zip file bytes
     """
     buffer = io.BytesIO()
- 
     setup_name = selections["setup_name"]
-    base_dir = _get_base_dir(experiment_type)
- 
+    base_dir = _get_base_dir()
+    
     # Resolve component URI to Path
     template_dir = None
     if component_uri:
-        template_dir = Path(component_uri)
-        if not template_dir.exists() or not template_dir.is_dir():
-            template_dir = None
+        uri_path = Path(component_uri)
+        if uri_path.is_absolute() and uri_path.exists():
+            template_dir = uri_path
+        else:
+            # Try extracting component name and building from experiment_type setups
+            component_name = uri_path.name
+            template_dir = _get_setups_dir(experiment_type) / component_name
+            if not template_dir.exists():
+                template_dir = None
+    
+    logger.info(f"Building zip: setup='{setup_name}', template_dir={template_dir}, base_dir={base_dir}")
  
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-        # 1. Copy template files recursively (train.py, requirements.txt, modules/, etc.)
+        # STEP 3.1: Copy template files (excluding config.yml — we generate it dynamically)
         if template_dir:
             for item in template_dir.rglob("*"):
-                if item.is_file():
+                if item.is_file() and item.name != "config.yml":
                     rel_path = item.relative_to(template_dir)
                     content = _safe_read_file(item)
                     zf.writestr(f"{setup_name}/{rel_path}", content)
  
-        # 2. Copy base files (Makefile, modules/, etc.) — scoped al experiment type
+        # STEP 3.2: Copy base files (Makefile, modules/, etc.) — shared across all experiment types
         if base_dir.exists():
             for item in base_dir.rglob("*"):
                 if item.is_file() and ".lineage" not in item.parts:
@@ -247,19 +344,29 @@ def _build_zip(experiment_type: ExperimentType, component_uri: str | None, selec
                     content = _safe_read_file(item)
                     zf.writestr(f"{setup_name}/{rel_path}", content)
  
-        # 3. Generate config.yml on-the-fly
-        config_content = _generate_config_yml(selections)
+        # STEP 3.3: Generate config.yml dynamically (merge template if exists)
+        template_config = None
+        if template_dir:
+            template_config_path = template_dir / "config.yml"
+            if template_config_path.exists():
+                try:
+                    template_yaml = _safe_read_file(template_config_path)
+                    template_config = yaml.safe_load(template_yaml) or {}
+                except Exception as e:
+                    logger.warning(f"Failed to parse template config.yml: {e}")
+                    template_config = None
+        
+        config_content = _generate_config_yml(selections, recipe, template_config=template_config)
         zf.writestr(f"{setup_name}/config.yml", config_content)
  
-        # 4. Generate .lineage/experiment.yml (uri=null, set by tracker at runtime)
+        # STEP 3.4: Generate lineage manifests
         experiment_content = _generate_experiment_yml(experiment_type, setup_name, selections)
         zf.writestr(f"{setup_name}/.lineage/experiment.yml", experiment_content)
- 
-        # 5. Generate server configuration on-the-fly
+        
         server_config_content = _generate_server_yml(experiment_type, selections)
         zf.writestr(f"{setup_name}/.lineage/server.yml", server_config_content)
  
-        # 6. Save setup.json metadata
+        # STEP 3.5: Save setup.json metadata
         metadata = {
             "name": setup_name,
             "experiment_type": experiment_type.value,
@@ -276,7 +383,7 @@ def _build_zip(experiment_type: ExperimentType, component_uri: str | None, selec
  
     buffer.seek(0)
     return buffer.read()
- 
+
 # ---------------------------------------------------------------------------
 # UI — Wizard entrypoint
 # ---------------------------------------------------------------------------
@@ -318,7 +425,6 @@ def run() -> None:
     with tab_browse:
         _render_browse_templates(experiment_type)
  
-
 def _render_experiment_type_step() -> None:
     """Step 1 del wizard: sola selezione del experiment type."""
     st.subheader("Step 1 — Seleziona l'Experiment Type")
@@ -335,7 +441,6 @@ def _render_experiment_type_step() -> None:
     if st.button("Avanti →", type="primary"):
         st.session_state.wizard_experiment_type = selected
         st.rerun()
- 
  
 # ---------------------------------------------------------------------------
 # UI — Create form (TRAINING)
@@ -365,8 +470,8 @@ def _render_create_form_training() -> None:
             help="Becomes the root folder name in the zip download (overrides component template name)",
         )
  
-        component_options = [c.get("name", "") for c in components if c.get("name")]
-        component_map = {c.get("name", ""): c for c in components}
+        component_options = [c.name for c in components if c.name]
+        component_map = {c.name: c for c in components}
  
         selected_component = st.selectbox(
             "Component Name *",
@@ -374,28 +479,34 @@ def _render_create_form_training() -> None:
             help="Component template from the database",
         )
  
-        model_options = [m.get("model_name", "unknown") for m in models]
+        model_options = [m.model_name for m in models]
         model_input_mode = st.radio("Model source", ["Select from DB", "Enter manually"], horizontal=True)
  
         if model_input_mode == "Select from DB" and model_options:
             selected_model = st.selectbox("Model *", options=model_options)
-            model_uri = next((m.get("url", "") for m in models if m.get("model_name") == selected_model), "")
+            model_uri = next((m.uri or "" for m in models if m.model_name == selected_model), "")
             model_id = selected_model
         else:
             model_uri = st.text_input("Model URI *", placeholder="/nfs/models/velvet-2b/checkpoint")
             model_id = st.text_input("Model ID *", placeholder="velvet-2b_ba53454_t0")
  
     with col2:
-        recipe_options = {r.get("name"): r for r in recipes}
+        recipe_options = {r.name: r for r in recipes}
         selected_recipe_name = st.selectbox(
             "Recipe (optional)",
             options=["None"] + list(recipe_options.keys()),
         )
-        recipe_id = None
-        recipe_name = None
-        if selected_recipe_name != "None":
-            recipe_id = recipe_options[selected_recipe_name].get("id")
-            recipe_name = selected_recipe_name
+        
+        # Initialize recipe variables to prevent NameError when building selections dict
+        recipe: Optional[Recipe] = None
+        recipe_id: str | None = None
+        recipe_name: str | None = None
+        recipe_repo = RecipeRepository(get_neo4j_client())
+        if selected_recipe_name and selected_recipe_name != "None":
+            recipe = run_async(_fetch_recipe_for_scaffold(selected_recipe_name, recipe_repo))
+            if recipe is not None:
+                recipe_id = recipe.id
+                recipe_name = recipe.name
  
         setup_description = st.text_area(
             "Description (optional)",
@@ -412,6 +523,11 @@ def _render_create_form_training() -> None:
             "Metrics URI (optional)",
             value="/nfs/training-output/.dpo-cache/${experiment.name}/${experiment.id}/metrics",
             help="Metrics output directory. Supports template variables: ${experiment.name}, ${experiment.id}",
+        )
+        plot_dir = st.text_input(
+            "Plots URI (optional)",
+            value="/nfs/merge-output/${experiment.name}/${experiment.id}/plots",
+            help="Plots output directory. Supports template variables: ${experiment.name}, ${experiment.id}",
         )
         cache_dir = st.text_input(
             "Dataset Cache Directory (optional)",
@@ -452,12 +568,7 @@ def _render_create_form_training() -> None:
             cpus = st.text_input("CPUs", placeholder="128+", help="""Numero di vCPU per nodo.\nFormati accettati: \n4 — esattamente 4 vCPU \n4+ — almeno 4 vCPU (SkyPilot sceglierà l'istanza più economica con ≥ 4 vCPU)\nEsempio: 128+ significa "almeno 128 vCPU".\n DOCS URL: https://docs.skypilot.co/en/latest/reference/yaml-spec.html#resources-cpus """)
             memory = st.text_input("Memory", placeholder="216+", help="""Quantità di RAM per nodo.\nFormati accettati:\n64 — esattamente 64 GB\n64+ — almeno 64 GB\nCon unità: 1024MB, 64GB, 2TB\nUnità supportate (case-insensitive): KB, MB, GB (default), TB, PB.\nEsempio: 216+ significa "almeno 216 GB di RAM". \n DOCS URL: https://docs.skypilot.co/en/latest/reference/yaml-spec.html#resources-memory""")
  
-    with st.expander("Model Merging (optional)"):
-        merging_enabled = st.checkbox("Enable Model Merging")
-        merge_method = st.selectbox("Merge Method", ["linear", "slerp", "ties", "dare", "task_arithmetic"])
-        merge_sources = st.text_area("Sources (one per line)", placeholder="checkpoint-1\ncheckpoint-2")
- 
-    with st.expander("Server Options (optional)"):
+    with st.expander("Server Options (optional, else default to http://localhost:8502)"):
         server_url = st.text_input("Server URL", placeholder="http://localhost:8502", help="URL of the server to connect to.")
         protocol = st.selectbox("Protocol", ["http", "https", "gRPC"], help="Protocol to use for server communication.")
         timeout = st.number_input("Timeout (seconds)", value=30, min_value=1, step=1, help="Timeout for server requests.")
@@ -484,7 +595,7 @@ def _render_create_form_training() -> None:
             }
  
         selected_component_obj = component_map.get(selected_component)
-        component_uri = selected_component_obj.get("uri", "") if selected_component_obj else None
+        component_uri = selected_component_obj.uri if selected_component_obj else None
  
         scaffold_uuid = str(uuid.uuid4())
  
@@ -499,14 +610,12 @@ def _render_create_form_training() -> None:
             "recipe_name": recipe_name,
             "output_dir": output_dir,
             "metrics_uri": metrics_uri,
+            "plot_dir": plot_dir,
             "cache_dir": cache_dir,
             "learning_rate": learning_rate,
             "batch_size": int(batch_size),
             "epochs": float(epochs),
             "hardware": hardware,
-            "merging_enabled": merging_enabled,
-            "merge_method": merge_method if merging_enabled else None,
-            "merge_sources": [s.strip() for s in merge_sources.split("\n") if s.strip()] if merging_enabled else [],
             "injected_experiment_uuid": scaffold_uuid,
             "server_url": server_url if server_url else "http://localhost:8502",
             "protocol": protocol if protocol else "http",
@@ -518,7 +627,7 @@ def _render_create_form_training() -> None:
         if component_uri is None:
             st.warning(f"No URI found for component '{selected_component}'. Generating config-only scaffold.")
  
-        zip_bytes = _build_zip(experiment_type, component_uri, selections)
+        zip_bytes = _build_zip(experiment_type=experiment_type, component_uri= component_uri, selections= selections, recipe=recipe)
  
         st.success(f"Scaffold generated: `{setup_name}/` (from template: `{selected_component}`)")
         st.download_button(
@@ -557,8 +666,8 @@ def _render_create_form_evaluation() -> None:
             help="Becomes the root folder name in the zip download (overrides component template name)",
         )
  
-        component_options = [c.get("name", "") for c in components if c.get("name")]
-        component_map = {c.get("name", ""): c for c in components}
+        component_options = [c.name for c in components if c.name]
+        component_map = {c.name: c for c in components}
  
         selected_component = st.selectbox(
             "Component Name *",
@@ -566,28 +675,33 @@ def _render_create_form_evaluation() -> None:
             help="Component template from the database",
         )
  
-        model_options = [m.get("model_name", "unknown") for m in models]
+        model_options = [m.model_name for m in models]
         model_input_mode = st.radio("Model source", ["Select from DB", "Enter manually"], horizontal=True)
  
         if model_input_mode == "Select from DB" and model_options:
             selected_model = st.selectbox("Model *", options=model_options)
-            model_uri = next((m.get("url", "") for m in models if m.get("model_name") == selected_model), "")
+            model_uri = next((m.uri or "" for m in models if m.model_name == selected_model), "")
             model_id = selected_model
         else:
             model_uri = st.text_input("Model URI *", placeholder="/nfs/models/velvet-2b/checkpoint")
             model_id = st.text_input("Model ID *", placeholder="velvet-2b_ba53454_t0")
  
     with col2:
-        recipe_options = {r.get("name"): r for r in recipes}
+        recipe_options = {r.name: r for r in recipes}
         selected_recipe_name = st.selectbox(
             "Recipe (optional)",
             options=["None"] + list(recipe_options.keys()),
         )
-        recipe_id = None
-        recipe_name = None
-        if selected_recipe_name != "None":
-            recipe_id = recipe_options[selected_recipe_name].get("id")
-            recipe_name = selected_recipe_name
+        # Initialize recipe variables to prevent NameError when building selections dict
+        recipe: Optional[Recipe] = None
+        recipe_id: str | None = None
+        recipe_name: str | None = None
+        recipe_repo = RecipeRepository(get_neo4j_client())
+        if selected_recipe_name and selected_recipe_name != "None":
+            recipe = run_async(_fetch_recipe_for_scaffold(selected_recipe_name, recipe_repo))
+            if recipe is not None:
+                recipe_id = recipe.id
+                recipe_name = recipe.name
  
         setup_description = st.text_area(
             "Description (optional)",
@@ -604,6 +718,11 @@ def _render_create_form_evaluation() -> None:
             "Metrics URI (optional)",
             value="/nfs/eval-output/${experiment.name}/${experiment.id}/metrics",
             help="Metrics output directory. Supports template variables: ${experiment.name}, ${experiment.id}",
+        )
+        plot_dir = st.text_input(
+            "Plots URI (optional)",
+            value="/nfs/merge-output/${experiment.name}/${experiment.id}/plots",
+            help="Plots output directory. Supports template variables: ${experiment.name}, ${experiment.id}",
         )
         cache_dir = st.text_input(
             "Dataset Cache Directory (optional)",
@@ -644,18 +763,13 @@ def _render_create_form_evaluation() -> None:
             cpus = st.text_input("CPUs", placeholder="128+", help="""Numero di vCPU per nodo.\nFormati accettati: \n4 — esattamente 4 vCPU \n4+ — almeno 4 vCPU (SkyPilot sceglierà l'istanza più economica con ≥ 4 vCPU)\nEsempio: 128+ significa "almeno 128 vCPU".\n DOCS URL: https://docs.skypilot.co/en/latest/reference/yaml-spec.html#resources-cpus """)
             memory = st.text_input("Memory", placeholder="216+", help="""Quantità di RAM per nodo.\nFormati accettati:\n64 — esattamente 64 GB\n64+ — almeno 64 GB\nCon unità: 1024MB, 64GB, 2TB\nUnità supportate (case-insensitive): KB, MB, GB (default), TB, PB.\nEsempio: 216+ significa "almeno 216 GB di RAM". \n DOCS URL: https://docs.skypilot.co/en/latest/reference/yaml-spec.html#resources-memory""")
  
-    with st.expander("Model Merging (optional)"):
-        merging_enabled = st.checkbox("Enable Model Merging")
-        merge_method = st.selectbox("Merge Method", ["linear", "slerp", "ties", "dare", "task_arithmetic"])
-        merge_sources = st.text_area("Sources (one per line)", placeholder="checkpoint-1\ncheckpoint-2")
- 
     with st.expander("Server Options (optional)"):
         server_url = st.text_input("Server URL", placeholder="http://localhost:8502", help="URL of the server to connect to.")
         protocol = st.selectbox("Protocol", ["http", "https", "gRPC"], help="Protocol to use for server communication.")
         timeout = st.number_input("Timeout (seconds)", value=30, min_value=1, step=1, help="Timeout for server requests.")
         retry = st.number_input("Retry Attempts", value=3, min_value=0, step=1, help="Number of retry attempts for server requests.")
         blocking = st.checkbox("Blocking Mode", value=True, help="Whether to use blocking mode for server requests.")
- 
+    
     st.divider()
     if st.button("Generate & Download", type="primary", disabled=not (setup_name and model_uri and model_id and output_dir)):
         hardware = None
@@ -676,7 +790,7 @@ def _render_create_form_evaluation() -> None:
             }
  
         selected_component_obj = component_map.get(selected_component)
-        component_uri = selected_component_obj.get("uri", "") if selected_component_obj else None
+        component_uri = selected_component_obj.uri if selected_component_obj else None
  
         scaffold_uuid = str(uuid.uuid4())
  
@@ -691,14 +805,12 @@ def _render_create_form_evaluation() -> None:
             "recipe_name": recipe_name,
             "output_dir": output_dir,
             "metrics_uri": metrics_uri,
+            "plot_dir": plot_dir,
             "cache_dir": cache_dir,
             "learning_rate": learning_rate,
             "batch_size": int(batch_size),
             "epochs": float(epochs),
             "hardware": hardware,
-            "merging_enabled": merging_enabled,
-            "merge_method": merge_method if merging_enabled else None,
-            "merge_sources": [s.strip() for s in merge_sources.split("\n") if s.strip()] if merging_enabled else [],
             "injected_experiment_uuid": scaffold_uuid,
             "server_url": server_url if server_url else "http://localhost:8502",
             "protocol": protocol if protocol else "http",
@@ -710,7 +822,7 @@ def _render_create_form_evaluation() -> None:
         if component_uri is None:
             st.warning(f"No URI found for component '{selected_component}'. Generating config-only scaffold.")
  
-        zip_bytes = _build_zip(experiment_type, component_uri, selections)
+        zip_bytes = _build_zip(experiment_type=experiment_type, component_uri= component_uri, selections= selections, recipe=recipe)
  
         st.success(f"Scaffold generated: `{setup_name}/` (from template: `{selected_component}`)")
         st.download_button(
@@ -749,8 +861,8 @@ def _render_create_form_inference() -> None:
             help="Becomes the root folder name in the zip download (overrides component template name)",
         )
  
-        component_options = [c.get("name", "") for c in components if c.get("name")]
-        component_map = {c.get("name", ""): c for c in components}
+        component_options = [c.name for c in components if c.name]
+        component_map = {c.name: c for c in components}
  
         selected_component = st.selectbox(
             "Component Name *",
@@ -758,28 +870,33 @@ def _render_create_form_inference() -> None:
             help="Component template from the database",
         )
  
-        model_options = [m.get("model_name", "unknown") for m in models]
+        model_options = [m.model_name for m in models]
         model_input_mode = st.radio("Model source", ["Select from DB", "Enter manually"], horizontal=True)
  
         if model_input_mode == "Select from DB" and model_options:
             selected_model = st.selectbox("Model *", options=model_options)
-            model_uri = next((m.get("url", "") for m in models if m.get("model_name") == selected_model), "")
+            model_uri = next((m.uri or "" for m in models if m.model_name == selected_model), "")
             model_id = selected_model
         else:
             model_uri = st.text_input("Model URI *", placeholder="/nfs/models/velvet-2b/checkpoint")
             model_id = st.text_input("Model ID *", placeholder="velvet-2b_ba53454_t0")
  
     with col2:
-        recipe_options = {r.get("name"): r for r in recipes}
+        recipe_options = {r.name: r for r in recipes}
         selected_recipe_name = st.selectbox(
             "Recipe (optional)",
             options=["None"] + list(recipe_options.keys()),
         )
-        recipe_id = None
-        recipe_name = None
-        if selected_recipe_name != "None":
-            recipe_id = recipe_options[selected_recipe_name].get("id")
-            recipe_name = selected_recipe_name
+        # Initialize recipe variables to prevent NameError when building selections dict
+        recipe: Optional[Recipe] = None
+        recipe_id: str | None = None
+        recipe_name: str | None = None
+        recipe_repo = RecipeRepository(get_neo4j_client())
+        if selected_recipe_name and selected_recipe_name != "None":
+            recipe = run_async(_fetch_recipe_for_scaffold(selected_recipe_name, recipe_repo))
+            if recipe is not None:
+                recipe_id = recipe.id
+                recipe_name = recipe.name
  
         setup_description = st.text_area(
             "Description (optional)",
@@ -796,6 +913,11 @@ def _render_create_form_inference() -> None:
             "Metrics URI (optional)",
             value="/nfs/inference-output/${experiment.name}/${experiment.id}/metrics",
             help="Metrics output directory. Supports template variables: ${experiment.name}, ${experiment.id}",
+        )
+        plot_dir = st.text_input(
+            "Plots URI (optional)",
+            value="/nfs/merge-output/${experiment.name}/${experiment.id}/plots",
+            help="Plots output directory. Supports template variables: ${experiment.name}, ${experiment.id}",
         )
         cache_dir = st.text_input(
             "Dataset Cache Directory (optional)",
@@ -836,11 +958,7 @@ def _render_create_form_inference() -> None:
             cpus = st.text_input("CPUs", placeholder="128+", help="""Numero di vCPU per nodo.\nFormati accettati: \n4 — esattamente 4 vCPU \n4+ — almeno 4 vCPU (SkyPilot sceglierà l'istanza più economica con ≥ 4 vCPU)\nEsempio: 128+ significa "almeno 128 vCPU".\n DOCS URL: https://docs.skypilot.co/en/latest/reference/yaml-spec.html#resources-cpus """)
             memory = st.text_input("Memory", placeholder="216+", help="""Quantità di RAM per nodo.\nFormati accettati:\n64 — esattamente 64 GB\n64+ — almeno 64 GB\nCon unità: 1024MB, 64GB, 2TB\nUnità supportate (case-insensitive): KB, MB, GB (default), TB, PB.\nEsempio: 216+ significa "almeno 216 GB di RAM". \n DOCS URL: https://docs.skypilot.co/en/latest/reference/yaml-spec.html#resources-memory""")
  
-    with st.expander("Model Merging (optional)"):
-        merging_enabled = st.checkbox("Enable Model Merging")
-        merge_method = st.selectbox("Merge Method", ["linear", "slerp", "ties", "dare", "task_arithmetic"])
-        merge_sources = st.text_area("Sources (one per line)", placeholder="checkpoint-1\ncheckpoint-2")
- 
+
     with st.expander("Server Options (optional)"):
         server_url = st.text_input("Server URL", placeholder="http://localhost:8502", help="URL of the server to connect to.")
         protocol = st.selectbox("Protocol", ["http", "https", "gRPC"], help="Protocol to use for server communication.")
@@ -868,7 +986,7 @@ def _render_create_form_inference() -> None:
             }
  
         selected_component_obj = component_map.get(selected_component)
-        component_uri = selected_component_obj.get("uri", "") if selected_component_obj else None
+        component_uri = selected_component_obj.uri if selected_component_obj else None
  
         scaffold_uuid = str(uuid.uuid4())
  
@@ -883,14 +1001,12 @@ def _render_create_form_inference() -> None:
             "recipe_name": recipe_name,
             "output_dir": output_dir,
             "metrics_uri": metrics_uri,
+            "plot_dir": plot_dir,
             "cache_dir": cache_dir,
             "learning_rate": learning_rate,
             "batch_size": int(batch_size),
             "epochs": float(epochs),
             "hardware": hardware,
-            "merging_enabled": merging_enabled,
-            "merge_method": merge_method if merging_enabled else None,
-            "merge_sources": [s.strip() for s in merge_sources.split("\n") if s.strip()] if merging_enabled else [],
             "injected_experiment_uuid": scaffold_uuid,
             "server_url": server_url if server_url else "http://localhost:8502",
             "protocol": protocol if protocol else "http",
@@ -902,7 +1018,7 @@ def _render_create_form_inference() -> None:
         if component_uri is None:
             st.warning(f"No URI found for component '{selected_component}'. Generating config-only scaffold.")
  
-        zip_bytes = _build_zip(experiment_type, component_uri, selections)
+        zip_bytes = _build_zip(experiment_type=experiment_type, component_uri= component_uri, selections= selections, recipe=recipe)
  
         st.success(f"Scaffold generated: `{setup_name}/` (from template: `{selected_component}`)")
         st.download_button(
@@ -924,10 +1040,14 @@ def _render_create_form_merging() -> None:
  
     st.subheader("Configure your merging setup")
  
+    # Initialize recipe variables to prevent NameError when building selections dict
+    recipe: Optional[Recipe] = None
+    recipe_id: str | None = None
+    recipe_name: str | None = None
+ 
     try:
         components = run_async(_list_components_async())
         models = run_async(_list_models_async())
-        recipes = run_async(_list_recipes_async())
     except Exception as e:
         st.error(f"Failed to load data from Neo4j: {e}")
         components, models, recipes = [], [], []
@@ -941,8 +1061,8 @@ def _render_create_form_merging() -> None:
             help="Becomes the root folder name in the zip download (overrides component template name)",
         )
  
-        component_options = [c.get("name", "") for c in components if c.get("name")]
-        component_map = {c.get("name", ""): c for c in components}
+        component_options = [c.name for c in components if c.name]
+        component_map = {c.name: c for c in components}
  
         selected_component = st.selectbox(
             "Component Name *",
@@ -950,28 +1070,19 @@ def _render_create_form_merging() -> None:
             help="Component template from the database",
         )
  
-        model_options = [m.get("model_name", "unknown") for m in models]
+        model_options = [m.model_name for m in models]
         model_input_mode = st.radio("Model source", ["Select from DB", "Enter manually"], horizontal=True)
  
         if model_input_mode == "Select from DB" and model_options:
             selected_model = st.selectbox("Model *", options=model_options)
-            model_uri = next((m.get("url", "") for m in models if m.get("model_name") == selected_model), "")
+            model_uri = next((m.uri or "" for m in models if m.model_name == selected_model), "")
             model_id = selected_model
         else:
             model_uri = st.text_input("Model URI *", placeholder="/nfs/models/velvet-2b/checkpoint")
             model_id = st.text_input("Model ID *", placeholder="velvet-2b_ba53454_t0")
  
     with col2:
-        recipe_options = {r.get("name"): r for r in recipes}
-        selected_recipe_name = st.selectbox(
-            "Recipe (optional)",
-            options=["None"] + list(recipe_options.keys()),
-        )
-        recipe_id = None
-        recipe_name = None
-        if selected_recipe_name != "None":
-            recipe_id = recipe_options[selected_recipe_name].get("id")
-            recipe_name = selected_recipe_name
+        
  
         setup_description = st.text_area(
             "Description (optional)",
@@ -988,6 +1099,11 @@ def _render_create_form_merging() -> None:
             "Metrics URI (optional)",
             value="/nfs/merge-output/${experiment.name}/${experiment.id}/metrics",
             help="Metrics output directory. Supports template variables: ${experiment.name}, ${experiment.id}",
+        )
+        plot_dir = st.text_input(
+            "Plots URI (optional)",
+            value="/nfs/merge-output/${experiment.name}/${experiment.id}/plots",
+            help="Plots output directory. Supports template variables: ${experiment.name}, ${experiment.id}",
         )
         cache_dir = st.text_input(
             "Dataset Cache Directory (optional)",
@@ -1028,7 +1144,7 @@ def _render_create_form_merging() -> None:
             cpus = st.text_input("CPUs", placeholder="128+", help="""Numero di vCPU per nodo.\nFormati accettati: \n4 — esattamente 4 vCPU \n4+ — almeno 4 vCPU (SkyPilot sceglierà l'istanza più economica con ≥ 4 vCPU)\nEsempio: 128+ significa "almeno 128 vCPU".\n DOCS URL: https://docs.skypilot.co/en/latest/reference/yaml-spec.html#resources-cpus """)
             memory = st.text_input("Memory", placeholder="216+", help="""Quantità di RAM per nodo.\nFormati accettati:\n64 — esattamente 64 GB\n64+ — almeno 64 GB\nCon unità: 1024MB, 64GB, 2TB\nUnità supportate (case-insensitive): KB, MB, GB (default), TB, PB.\nEsempio: 216+ significa "almeno 216 GB di RAM". \n DOCS URL: https://docs.skypilot.co/en/latest/reference/yaml-spec.html#resources-memory""")
  
-    with st.expander("Model Merging (optional)"):
+    with st.expander("Model Merging"):
         merging_enabled = st.checkbox("Enable Model Merging", value=True)
         merge_method = st.selectbox("Merge Method", ["linear", "slerp", "ties", "dare", "task_arithmetic"])
         merge_sources = st.text_area("Sources (one per line)", placeholder="checkpoint-1\ncheckpoint-2")
@@ -1060,7 +1176,7 @@ def _render_create_form_merging() -> None:
             }
  
         selected_component_obj = component_map.get(selected_component)
-        component_uri = selected_component_obj.get("uri", "") if selected_component_obj else None
+        component_uri = selected_component_obj.uri if selected_component_obj else None
  
         scaffold_uuid = str(uuid.uuid4())
  
@@ -1075,6 +1191,7 @@ def _render_create_form_merging() -> None:
             "recipe_name": recipe_name,
             "output_dir": output_dir,
             "metrics_uri": metrics_uri,
+            "plot_dir": plot_dir,
             "cache_dir": cache_dir,
             "learning_rate": learning_rate,
             "batch_size": int(batch_size),
@@ -1094,7 +1211,7 @@ def _render_create_form_merging() -> None:
         if component_uri is None:
             st.warning(f"No URI found for component '{selected_component}'. Generating config-only scaffold.")
  
-        zip_bytes = _build_zip(experiment_type, component_uri, selections)
+        zip_bytes = _build_zip(experiment_type=experiment_type, component_uri= component_uri, selections= selections, recipe=recipe)
  
         st.success(f"Scaffold generated: `{setup_name}/` (from template: `{selected_component}`)")
         st.download_button(
@@ -1140,4 +1257,3 @@ def _render_browse_templates(experiment_type: ExperimentType) -> None:
                         st.code(_safe_read_file(f), language="yaml")
                     else:
                         st.text(_safe_read_file(f))
-

@@ -1,7 +1,8 @@
 """Pydantic models for Checkpoint entity."""
 
 from __future__ import annotations
-from pydantic import  Field
+from pydantic import Field
+from typing import Optional
 from .base import BaseEntity
 
 class Checkpoint(BaseEntity):
@@ -10,8 +11,8 @@ class Checkpoint(BaseEntity):
     name: str = Field("", description="Checkpoint name")
     derived_from: str = Field("", description="Associated Model")
 
-    epoch: int
-    run: int
+    epoch: Optional[int]
+    run: Optional[int]
     uri: str = Field("", description="Path scaffold on worker")
     metrics: str = Field(default_factory=str, description="Training metrics")
 

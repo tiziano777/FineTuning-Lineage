@@ -26,7 +26,7 @@ class FakeArgs:
 
 class FakeTrainerState:
     """Simulates TrainerState required by the callback."""
-    def __init__(self, epoch: float, best_model_checkpoint: str | None, log_history: List[Dict[str, Any]]):
+    def __init__(self, epoch: float, best_model_checkpoint: str | None, log_history: list[Dict[str, Any]]):
         self.epoch = epoch
         self.best_model_checkpoint = best_model_checkpoint
         self.log_history = log_history
@@ -115,7 +115,6 @@ def preflight(config_path: str) -> Dict[str, Any]:
     require_field(config, "model", "training", "max_length", config_file=config_path)
     require_field(config, "model", "training", "max_prompt_length", config_file=config_path)
     require_field(config, "model", "training", "bf16", config_file=config_path)
-    require_field(config, "model", "training", "max_seq_length", config_file=config_path)
     require_field(config, "model", "training", "gradient_checkpointing", config_file=config_path)
 
     ref_model = config.get("model", {}).get("training", {}).get("ref_model")
@@ -124,17 +123,17 @@ def preflight(config_path: str) -> Dict[str, Any]:
     precompute_ref_log_probs = require_field(config, "model", "training", "precompute_ref_log_probs", config_file=config_path)
 
     # Cache existence
-    cache_path = Path(cache_dir)
+    '''cache_path = Path(cache_dir)
     if not cache_path.exists():
         raise FileNotFoundError(f"Cache not found: {cache_path}. Run prepare.py first.")
-
+    '''
     # TRAIN EVAL SPLIT
     eval_size = config.get("model", {}).get("training", {}).get("eval_size", 0)
 
     return {
         "model_id": model_id, "config": config,
         "dataset": None, "output_dir": output_dir,
-        "training_cfg": training_cfg, "cache_path": str(cache_path),
+        "training_cfg": training_cfg, "cache_path": str(Path(cache_dir)),
         "filtered_samples": filtered_samples, "model_uri": model_uri,
         "ref_model": ref_model, "precompute_ref_log_probs": precompute_ref_log_probs,
         "plot_dir": plot_dir
@@ -145,7 +144,7 @@ def preflight(config_path: str) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 @lineage_tracker(capture_checkpoints=True) # False for testing without ckp callback
-def train(config_path: str = "config.yml", dry_run: bool = False, lineage_callback=LineageCheckpointCallback):
+def train(config_path: str = "config.yml", dry_run: bool = False, lineage_callback=None):
     logger.info("Starting DPO training with config: %s", config_path)
     ctx = preflight(config_path)
 
@@ -166,14 +165,14 @@ def train(config_path: str = "config.yml", dry_run: bool = False, lineage_callba
     # -----------------------------------------------------------------------
     callbacks = []
 
-    # Lineage callback
+    # Lineage callback (already instantiated by decorator)
     if lineage_callback is not None:
-        callbacks.append(lineage_callback())
+        callbacks.append(lineage_callback)
 
     # -----------------------------------------------------------------------
     # Trainer
     # -----------------------------------------------------------------------
-    trainer =  TrainerFakeWithCallbackTrigger(callbacks=callbacks if callbacks else None)
+    trainer =  TrainerFakeWithCallbackTrigger(output_dir=output_dir, callbacks=callbacks if callbacks else None)
     trainer.train()
 
 

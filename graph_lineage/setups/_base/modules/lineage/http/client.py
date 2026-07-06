@@ -9,7 +9,7 @@ import json
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import yaml
 
@@ -49,7 +49,7 @@ def _find_project_root(start: Path) -> Path:
         f"Ensure .lineage/server.yml and .lineage/experiment.yml exist."
     )
 
-def _load_experiment_data(project_root: Path, config_path: str | None = None) -> dict[str, Any]:
+def _load_experiment_data(project_root: Path, config_path: Optional[str] = None) -> dict[str, Any]:
     """Load experiment data with priority: config.yml > .lineage/experiment.yml.
 
     If config_path is provided and contains an 'experiment' block, those values
@@ -104,9 +104,9 @@ class LineageClient:
 
     def __init__(
         self, 
-        project_root: Path | None = None, 
-        config_dict: dict | None = None,  # <-- Sostituito/Aggiunto il dizionario
-        config_path: str | None = None    # <-- Tenuto opzionale solo per risolvere i path se serve
+        project_root: Optional[Path] = None, 
+        config_dict: Optional[dict] = None,  # <-- Sostituito/Aggiunto il dizionario
+        config_path: Optional[str] = None    # <-- Tenuto opzionale solo per risolvere i path se serve
     ):
         # 1. Risoluzione della project_root
         if project_root is not None:
@@ -121,8 +121,8 @@ class LineageClient:
         self._config_dict = config_dict or {}
         self._config_path = config_path
         
-        self._server_config: ServerConfig | None = None
-        self._connector: Connector | None = None
+        self._server_config: Optional[ServerConfig] = None
+        self._connector: Optional[Connector] = None
 
     @property
     def project_root(self) -> Path:
@@ -292,8 +292,8 @@ class LineageClient:
         self,
         ctx: ExecutionContext,
         status: str,
-        exit_message: str | None = None,
-        metrics_uri: str | None = None,
+        exit_message: Optional[str] = None,
+        metrics_uri: Optional[str] = None,
     ) -> None:
         """Execute POST phase: report final status to server."""
         try:

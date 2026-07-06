@@ -4,7 +4,7 @@ experiment:
   id: null
   previous_experiment_id: null
   base_experiment_id: null
-  base: true
+  base: null
   name: "{{SETUP_NAME}}"
   description: "{{DESCRIPTION}}"
   uri: null  # Set automatically by tracker to project_root at first execution

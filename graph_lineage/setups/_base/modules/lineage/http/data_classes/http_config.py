@@ -2,7 +2,15 @@
 
 from __future__ import annotations
 
+from enum import Enum
+from typing import Optional
 from pydantic import BaseModel, Field
+
+class ExperimentType(str, Enum):
+    TRAINING = "training"
+    EVALUATION = "evaluation"
+    INFERENCE = "inference"
+    MERGING = "merging"
 
 
 # ─── PRE-EXECUTION ─────────────────────────────────────────────────────────────
@@ -14,25 +22,25 @@ class PreRequest(BaseModel):
     for the server to run rule_engine detection and create the experiment node.
     """
     # Experiment identity
-    experiment_id: str | None = None  # current_exp_id, assigned as root first exp_id by server if not provided
+    experiment_id: Optional[str] = None  # current_exp_id, assigned as root first exp_id by server if not provided
     experiment_name: str
-    experiment_uri: str | None = None
-    base: bool | None 
-    base_experiment_id: str | None = None
-    previous_experiment_id: str | None = None
-    description: str | None = None
-    experiment_type: str 
+    experiment_uri: Optional[str] = None
+    base: Optional[bool] 
+    base_experiment_id: Optional[str] = None
+    previous_experiment_id: Optional[str] = None
+    description: Optional[str] = None
+    experiment_type: ExperimentType
 
     merging: bool = False
     codebase: str # JSON string of {relative_path: content}
 
     # BASE NODE RELATIONSHIPS
-    model_id: str | None = None
-    model_uri: str | None = None
-    component_id: str | None = None
-    recipe_id: str | None = None
+    model_id: Optional[str] = None
+    model_uri: Optional[str] = None
+    component_id: Optional[str] = None
+    recipe_id: Optional[str] = None
 
-    checkpoint_resume_from: str | None = None  # checkpoint_id to resume from, if any
+    checkpoint_resume_from: Optional[str] = None  # checkpoint_id to resume from, if any
 
 
 class PreResponse(BaseModel):
@@ -46,8 +54,8 @@ class PreResponse(BaseModel):
     strategy: str  # NEW, RETRY, BRANCH, RESUME, MERGE
     base: bool
     description: str
-    base_experiment_id: str | None = None
-    previous_experiment_id: str | None = None
+    base_experiment_id: Optional[str] = None
+    previous_experiment_id: Optional[str] = None
 
 # ─── POST-EXECUTION ───────────────────────────────────────────────────────────
 
@@ -59,10 +67,10 @@ class PostRequest(BaseModel):
 
     experiment_id: str
     status: str  # COMPLETED or FAILED
-    exit_message: str | None = None
-    metrics_uri: str | None = None
-    strategy: str | None = None  # NEW, RETRY, BRANCH, RESUME, MERGE or None
-    checkpoint_resume_from: str | None = None  # checkpoint_uri to resume from, if any
+    exit_message: Optional[str] = None
+    metrics_uri: Optional[str] = None
+    strategy: Optional[str] = None  # NEW, RETRY, BRANCH, RESUME, MERGE or None
+    checkpoint_resume_from: Optional[str] = None  # checkpoint_uri to resume from, if any
 
 class PostResponse(BaseModel):
     """Server acknowledgement of POST-execution update."""

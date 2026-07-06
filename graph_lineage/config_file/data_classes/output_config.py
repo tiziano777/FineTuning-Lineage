@@ -10,5 +10,5 @@ class OutputConfig(BaseModel):
 
     output_dir: str | None = None
     metrics_uri: str | None = None
-    plots_uri: str | None = None
+    plot_dir: str | None = None
 

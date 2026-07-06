@@ -73,7 +73,6 @@ def preflight(config_path: str) -> Dict[str, Any]:
     require_field(config, "model", "training", "max_length", config_file=config_path)
     require_field(config, "model", "training", "max_prompt_length", config_file=config_path)
     require_field(config, "model", "training", "bf16", config_file=config_path)
-    require_field(config, "model", "training", "max_seq_length", config_file=config_path)
     require_field(config, "model", "training", "gradient_checkpointing", config_file=config_path)
 
     ref_model = config.get("model", {}).get("training", {}).get("ref_model")
@@ -132,7 +131,6 @@ def train(config_path: str = "config.yml", dry_run: bool = False, lineage_callba
     # -----------------------------------------------------------------------
     # Model + Tokenizer via Unsloth (full weights, no quantization)
     # -----------------------------------------------------------------------
-    max_seq_length = training_cfg["max_seq_length"]
     source = model_uri or model_id
 
     # Model + Tokenizer

@@ -6,6 +6,7 @@ import logging
 from datetime import datetime
 from typing import Optional
 
+from graph_lineage.data_classes.neo4j.nodes.component import Component
 from graph_lineage.streamlit_ui.utils.errors import UIError
 from graph_lineage.streamlit_ui.utils.entity_constraints import EntityConstraints
 from graph_lineage.streamlit_ui.db.neo4j_async import AsyncNeo4jClient
@@ -42,7 +43,7 @@ class ComponentRepository:
         uri: str = "",
         docs_url: str = "",
         description: str = "",
-    ) -> dict:
+    ) -> Component:
         """Create a new component.
 
         Args:
@@ -95,7 +96,7 @@ class ComponentRepository:
             raise UIError("Failed to create component in Neo4j")
 
         logger.info(f"Component created: id={component_id}, name={name}, technique={technique_code}")
-        return result
+        return Component(**result)
 
     async def create_component(
         self,
@@ -106,7 +107,7 @@ class ComponentRepository:
         uri: str = "",
         docs_url: str = "",
         description: str = "",
-    ) -> dict:
+    ) -> Component:
         """Create a new component (generates UUID automatically).
 
         Args:
@@ -119,7 +120,7 @@ class ComponentRepository:
             description: Component description.
 
         Returns:
-            Created component data.
+            Created Component object.
         """
         import uuid
         component_id = str(uuid.uuid4())
@@ -134,28 +135,47 @@ class ComponentRepository:
             description=description,
         )
 
-    async def get_by_id(self, component_id: str) -> Optional[dict]:
+    async def get_by_id(self, component_id: str) -> Optional[Component]:
         """Get component by ID."""
         query = f"""
         MATCH (c:Component {{id: $id}})
         RETURN {_RETURN_COLS}
         """
-        return await self.db.run_single(query, id=component_id)
+        result = await self.db.run_single(query, id=component_id)
+        return Component(**result) if result else None
 
-    async def list_all(self) -> list[dict]:
-        """List all components."""
+    async def list_all(self) -> list[Component]:
+        """List all components with default limit of 100."""
+        return await self.list_with_limit(limit=100, offset=0)
+
+    async def list_with_limit(
+        self,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[Component]:
+        """List components with pagination support.
+        
+        Args:
+            limit: Maximum number of components to return.
+            offset: Number of components to skip (for pagination).
+            
+        Returns:
+            List of Component objects.
+        """
         query = f"""
         MATCH (c:Component)
         RETURN {_RETURN_COLS}
-        LIMIT 100
+        ORDER BY c.created_at DESC
+        SKIP $offset LIMIT $limit
         """
-        return await self.db.run_list(query)
+        results = await self.db.run_list(query, limit=limit, offset=offset)
+        return [Component(**row) for row in results]
 
-    async def list_components(self) -> list[dict]:
+    async def list_components(self) -> list[Component]:
         """Alias for list_all for manager compatibility."""
         return await self.list_all()
 
-    async def get_component(self, component_id: str) -> Optional[dict]:
+    async def get_component(self, component_id: str) -> Optional[Component]:
         """Alias for get_by_id for manager compatibility."""
         return await self.get_by_id(component_id)
 
@@ -166,7 +186,7 @@ class ComponentRepository:
         uri: str = "",
         docs_url: str = "",
         description: str = "",
-    ) -> dict:
+    ) -> Component:
         """Alias for update for manager compatibility."""
         return await self.update(
             component_id=component_id,
@@ -191,7 +211,7 @@ class ComponentRepository:
         uri: str = "",
         docs_url: str = "",
         description: str = "",
-    ) -> dict:
+    ) -> Component:
         """Update component fields.
 
         If name is provided and uri is empty, uri is re-derived from name.
@@ -213,13 +233,13 @@ class ComponentRepository:
         if not existing:
             raise UIError(f"Component {component_id} not found")
 
-        new_name = name if name else existing.get("name", "")
+        new_name = name if name else existing.name
         if uri:
             new_uri = uri
         elif name:
             new_uri = f"{_SETUPS_PREFIX}{new_name}"
         else:
-            new_uri = existing.get("uri", "")
+            new_uri = existing.uri
 
         query = f"""
         MATCH (c:Component {{id: $id}})
@@ -243,7 +263,7 @@ class ComponentRepository:
             raise UIError(f"Component {component_id} not found")
 
         logger.info(f"Component updated: id={component_id}")
-        return result
+        return Component(**result)
 
     async def delete(self, component_id: str) -> None:
         """Delete component with constraint checking."""

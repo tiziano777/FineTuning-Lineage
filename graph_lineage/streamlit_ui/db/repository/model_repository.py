@@ -8,6 +8,7 @@ from datetime import datetime
 from typing import Optional
 from enum import Enum
 
+from graph_lineage.data_classes.neo4j.nodes.model import Model
 from graph_lineage.streamlit_ui.utils.errors import UIError
 from graph_lineage.streamlit_ui.utils.entity_constraints import EntityConstraints
 from graph_lineage.streamlit_ui.db.neo4j_async import AsyncNeo4jClient
@@ -40,7 +41,7 @@ class ModelRepository:
         description: str = "",
         kind: Optional[KindEnum] = None,
         architecture_info_ref: str = "",
-    ) -> dict:
+    ) -> Model:
         """Create a new model.
 
         Args:
@@ -96,7 +97,7 @@ class ModelRepository:
             raise UIError("Failed to create model in Neo4j")
 
         logger.info(f"Model created: id={model_id}, name={model_name}")
-        return result
+        return Model(**result)
 
     async def create_model(
         self,
@@ -108,7 +109,7 @@ class ModelRepository:
         description: str = "",
         kind: Optional[KindEnum] = None,
         architecture_info_ref: str = "",
-    ) -> dict:
+    ) -> Model:
         """Create a new model (generates UUID automatically).
 
         Args:
@@ -138,14 +139,14 @@ class ModelRepository:
             architecture_info_ref=architecture_info_ref,
         )
 
-    async def get_by_id(self, model_id: str) -> Optional[dict]:
+    async def get_by_id(self, model_id: str) -> Optional[Model]:
         """Get model by ID.
 
         Args:
             model_id: Model ID.
 
         Returns:
-            Model data or None if not found.
+            Model object or None if not found.
         """
         query = """
         MATCH (m:Model {id: $id})
@@ -155,41 +156,57 @@ class ModelRepository:
         """
 
         result = await self.db.run_single(query, id=model_id)
-        return result
+        return Model(**result) if result else None
 
-    async def list_all(self) -> list[dict]:
-        """List all models.
+    async def list_all(self) -> list[Model]:
+        """List all models with default limit of 100.
 
         Returns:
-            List of model dictionaries.
+            List of Model objects.
+        """
+        return await self.list_with_limit(limit=100, offset=0)
+
+    async def list_with_limit(
+        self,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[Model]:
+        """List models with pagination support.
+        
+        Args:
+            limit: Maximum number of models to return.
+            offset: Number of models to skip (for pagination).
+            
+        Returns:
+            List of Model objects.
         """
         query = """
         MATCH (m:Model)
         RETURN m.id as id, m.model_name as model_name, m.version as version,
                m.uri as uri, m.url as url, m.doc_url as doc_url,
                m.description as description, m.kind as kind, m.architecture_info_ref as architecture_info_ref, m.created_at as created_at, m.updated_at as updated_at
-        LIMIT 100
+        ORDER BY m.created_at DESC
+        SKIP $offset LIMIT $limit
         """
+        results = await self.db.run_list(query, limit=limit, offset=offset)
+        return [Model(**row) for row in results]
 
-        results = await self.db.run_list(query)
-        return results
-
-    async def list_models(self) -> list[dict]:
+    async def list_models(self) -> list[Model]:
         """Alias for list_all for manager compatibility.
 
         Returns:
-            List of model dictionaries.
+            List of Model objects.
         """
         return await self.list_all()
 
-    async def get_model(self, model_id: str) -> Optional[dict]:
+    async def get_model(self, model_id: str) -> Optional[Model]:
         """Alias for get_by_id for manager compatibility.
 
         Args:
             model_id: Model ID.
 
         Returns:
-            Model data or None if not found.
+            Model object or None if not found.
         """
         return await self.get_by_id(model_id)
 
@@ -203,7 +220,7 @@ class ModelRepository:
         description: str = "",
         kind: Optional[KindEnum] = None,
         architecture_info_ref: str = "",
-    ) -> dict:
+    ) -> Model:
         """Alias for update for manager compatibility."""
         return await self.update(
             model_id=model_id,
@@ -239,12 +256,13 @@ class ModelRepository:
         self,
         model_name: str,
         version: str = "",
+        uri: str = "",
         url: str = "",
         doc_url: str = "",
         description: str = "",
         kind: Optional[KindEnum] = None,
         architecture_info_ref: str = "",
-    ) -> dict:
+    ) -> Model:
         """Upsert model by model_name using MERGE semantics.
 
         Creates the model if no model with model_name exists,
@@ -298,7 +316,7 @@ class ModelRepository:
         if not result:
             raise UIError("Failed to upsert model")
         logger.info(f"Model upserted: name={model_name}")
-        return dict(result)
+        return Model(**result)
 
     async def update(
         self,
@@ -310,7 +328,7 @@ class ModelRepository:
         description: str = "",
         kind: Optional[KindEnum] = None,
         architecture_info_ref: str = "",
-    ) -> dict:
+    ) -> Model:
         """Update model fields.
 
         Args:
@@ -356,7 +374,7 @@ class ModelRepository:
             raise UIError(f"Model {model_id} not found")
 
         logger.info(f"Model updated: id={model_id}")
-        return result
+        return Model(**result)
 
     async def delete(self, model_id: str) -> None:
         """Delete model with constraint checking.

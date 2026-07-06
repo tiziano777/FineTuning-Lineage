@@ -16,6 +16,8 @@ from graph_lineage.streamlit_ui.utils.errors import UIError, DuplicateRecipeErro
 from graph_lineage.streamlit_ui.utils.entity_constraints import EntityConstraints
 from graph_lineage.streamlit_ui.db.neo4j_async import AsyncNeo4jClient
 
+from graph_lineage.data_classes.neo4j.nodes.recipe import Recipe
+
 logger = logging.getLogger(__name__)
 
 
@@ -31,7 +33,7 @@ class RecipeRepository:
         self.db = db_client
         self.constraints = EntityConstraints(db_client)
 
-    async def get_by_name(self, name: str) -> Optional[dict]:
+    async def get_by_name(self, name: str) -> Optional[Recipe]:
         """Retrieve recipe by name.
 
         Args:
@@ -53,25 +55,23 @@ class RecipeRepository:
             """
             result = await self.db.query(query, {"name": name})
             if result:
-                row = result[0]
-                entries_val = row.get('entries')
-                if isinstance(entries_val, str):
-                    try:
-                        row['entries'] = json.loads(entries_val)
-                    except Exception:
-                        logger.exception("Failed to parse entries JSON for recipe %s", name)
-                entry_count = len(row.get('entries', {})) if row.get('entries') else 0
-                logger.debug(f"Recipe found: {name} (entry_count={entry_count})")
-                if 'id' not in row and row.get('name'):
-                    row['id'] = row.get('name')
-                return row
+                try:
+                    recipe = Recipe(**result[0])
+                    entry_count = len(recipe.entries) if recipe.entries else 0
+                    logger.debug(f"Recipe found: {name} (entry_count={entry_count})")
+                    if not recipe.id and recipe.name:
+                        recipe.id = recipe.name
+                    return recipe
+                except ValidationError as e:
+                    logger.error(f"Invalid recipe data for name '{name}': {e}")
+                    raise UIError(f"Invalid recipe data: {str(e)}")
             logger.debug(f"Recipe not found: {name}")
             return None
         except Exception as e:
             logger.error(f"Failed to get recipe by name: {e}")
             raise UIError(f"Failed to retrieve recipe: {str(e)}")
 
-    async def get_by_id(self, id: str) -> Optional[dict]:
+    async def get_by_id(self, id: str) -> Optional[Recipe]:
         """Retrieve recipe by ID."""
         logger.debug(f"Querying recipe by ID: {id}")
         try:
@@ -83,14 +83,11 @@ class RecipeRepository:
             """
             result = await self.db.query(query, {"id": id})
             if result:
-                row = result[0]
-                entries_val = row.get('entries')
-                if isinstance(entries_val, str):
-                    try:
-                        row['entries'] = json.loads(entries_val)
-                    except Exception:
-                        logger.exception("Failed to parse entries JSON for recipe_id %s", id)
-                return row
+                try:
+                    return Recipe(**result[0])
+                except ValidationError as e:
+                    logger.error(f"Invalid recipe data for id '{id}': {e}")
+                    raise UIError(f"Invalid recipe data: {str(e)}")
             return None
         except Exception as e:
             logger.error(f"Failed to get recipe by recipe_id: {e}")
@@ -100,7 +97,7 @@ class RecipeRepository:
         self,
         yaml_content: str,
         description: str = "",
-    ) -> dict:
+    ) -> Recipe:
         """Create recipe from YAML content with full metadata extraction.
 
         Parses YAML, validates entries, and creates recipe with all metadata
@@ -184,7 +181,7 @@ class RecipeRepository:
                 derived_from=yaml_derived_from,
             )
 
-            logger.info("Recipe created from YAML: recipe_id=%s name=%s entry_count=%d", recipe_id, result.get("name"), len(entries_dict))
+            logger.info("Recipe created from YAML: recipe_id=%s name=%s entry_count=%d", recipe_id, result.name, len(entries_dict))
             return result
 
         except (UIError, DuplicateRecipeError, ValidationError) as e:
@@ -201,7 +198,7 @@ class RecipeRepository:
         scope: str = "",
         tasks: list[str] | None = None,
         tags: list[str] | None = None,
-    ) -> dict:
+    ) -> Recipe:
         """Upsert recipe by URI using MERGE semantics.
 
         Creates the recipe if no recipe with this URI exists,
@@ -245,8 +242,13 @@ class RecipeRepository:
         })
         if not result:
             raise UIError("Failed to upsert recipe")
-        logger.info(f"Recipe upserted: uri={uri}, name={name}")
-        return dict(result[0])
+        try:
+            recipe = Recipe(**result[0])
+            logger.info(f"Recipe upserted: uri={uri}, name={name}")
+            return recipe
+        except ValidationError as e:
+            logger.error(f"Invalid recipe data after upsert: {e}")
+            raise UIError(f"Invalid recipe data: {str(e)}")
 
     async def create(
         self,
@@ -258,7 +260,8 @@ class RecipeRepository:
         tasks: list[str] | None = None,
         tags: list[str] | None = None,
         derived_from: str | None = None,
-    ) -> dict:
+    ) -> Recipe:
+        # Implementation of the create method goes here
         """Create a new recipe.
 
         Args:
@@ -288,7 +291,7 @@ class RecipeRepository:
         # If name provided, ensure name is unique
         if name:
             existing_by_name = await self.get_by_name(name)
-            if existing_by_name and existing_by_name.get('id') != id:
+            if existing_by_name and existing_by_name.id != id:
                 logger.warning("Recipe name already exists: %s", name)
                 suggestions = [f"{name}_v1", f"{name}_v2", f"{name}_backup"]
                 raise DuplicateRecipeError(name, recovery_suggestions=suggestions)
@@ -331,13 +334,8 @@ class RecipeRepository:
                 "entries": entries_payload,
             })
             if result:
-                row = result[0]
-                if isinstance(row.get('entries'), str):
-                    try:
-                        row['entries'] = json.loads(row['entries'])
-                    except Exception:
-                        logger.exception("Failed to parse returned entries JSON for recipe %s", name)
-                logger.info(f"Recipe inserted successfully: name={row['name']}")
+                row = Recipe(**result[0])
+                logger.info(f"Recipe inserted successfully: name={row.name}")
                 return row
             raise UIError("Failed to create recipe")
         except Exception as e:
@@ -354,7 +352,7 @@ class RecipeRepository:
         scope: Optional[str] = None,
         tasks: Optional[list[str]] = None,
         tags: Optional[list[str]] = None,
-    ) -> dict:
+    ) -> Recipe:
         """Update recipe metadata.
 
         Args:
@@ -374,11 +372,12 @@ class RecipeRepository:
         existing = await self.get_by_id(recipe_id)
         if not existing:
             raise UIError(f"Recipe not found")
+        existing = Recipe(**existing)
 
         # Check new name uniqueness if changing
-        if new_name and new_name != existing.get('name'):
+        if new_name and new_name != existing.name:
             conflict = await self.get_by_name(new_name)
-            if conflict and conflict.get('id') != recipe_id:
+            if conflict and conflict.id != recipe_id:
                 raise UIError(f"Recipe '{new_name}' already exists")
 
         try:
@@ -408,14 +407,13 @@ class RecipeRepository:
             params = {"id": recipe_id, **updates}
             result = await self.db.query(query, params)
             if result:
-                row = result[0]
-                if isinstance(row.get('entries'), str):
-                    try:
-                        row['entries'] = json.loads(row['entries'])
-                    except Exception:
-                        logger.exception("Failed to parse entries JSON on update")
-                logger.info(f"Recipe updated: {row.get('id')}")
-                return row
+                try:
+                    recipe = Recipe(**result[0])
+                    logger.info(f"Recipe updated: {recipe.id}")
+                    return recipe
+                except ValidationError as e:
+                    logger.error(f"Invalid recipe data after update: {e}")
+                    raise UIError(f"Invalid recipe data: {str(e)}")
             raise UIError("Failed to update recipe")
         except Exception as e:
             if isinstance(e, UIError):
@@ -435,7 +433,7 @@ class RecipeRepository:
         existing = await self.get_by_id(recipe_id)
         if not existing:
             return True  # Doesn't exist, considered deletable
-        recipe_name = existing.get("name")
+        recipe_name = existing.name
         if recipe_name:
             return await self.constraints.is_recipe_deletable(recipe_name)
         return True
@@ -455,7 +453,7 @@ class RecipeRepository:
 
         # Check if recipe can be deleted (no related experiments)
         if not await self.is_deletable(recipe_id):
-            recipe_name = existing.get("name", recipe_id)
+            recipe_name = existing.name
             raise UIError(
                 f"Cannot delete recipe '{recipe_name}': it's used by one or more experiments. "
                 "Remove experiments first before deleting the recipe."
@@ -470,7 +468,7 @@ class RecipeRepository:
             logger.error(f"Recipe deletion failed: {recipe_id}", exc_info=True)
             raise UIError(f"Failed to delete recipe: {str(e)}")
 
-    async def list_all(self) -> list[dict]:
+    async def list_all(self) -> list[Recipe]:
         """List all recipes.
 
         Returns:
@@ -489,20 +487,20 @@ class RecipeRepository:
             ORDER BY r.created_at DESC
             """
             result = await self.db.query(query)
-            rows = result or []
-            for row in rows:
-                if isinstance(row.get('entries'), str):
-                    try:
-                        row['entries'] = json.loads(row['entries'])
-                    except Exception:
-                        logger.exception("Failed to parse entries JSON in list_all")
-            logger.debug(f"Found {len(rows)} recipes")
-            return rows
+            recipes = []
+            for row in result or []:
+                try:
+                    recipes.append(Recipe(**row))
+                except ValidationError as e:
+                    raise UIError(f"Skipping invalid recipe: {e}")
+                        
+            logger.debug(f"Found {len(recipes)} recipes")
+            return recipes
         except Exception as e:
             logger.error(f"Failed to list recipes: {e}")
             raise UIError(f"Failed to list recipes: {str(e)}")
 
-    async def list_with_limit(self, limit: int = 20) -> list[dict]:
+    async def list_with_limit(self, limit: int = 20) -> list[Recipe]:
         """List recipes with limit.
 
         Args:
@@ -525,20 +523,20 @@ class RecipeRepository:
             LIMIT $limit
             """
             result = await self.db.query(query, {"limit": limit})
-            rows = result or []
-            for row in rows:
-                if isinstance(row.get('entries'), str):
-                    try:
-                        row['entries'] = json.loads(row['entries'])
-                    except Exception:
-                        logger.exception("Failed to parse entries JSON in list_with_limit")
-            logger.debug(f"Found {len(rows) if rows else 0} recipes")
-            return rows
+            recipes = []
+            for row in result or []:
+                try:
+                    recipes.append(Recipe(**row))  
+                except ValidationError as e:
+                    raise UIError(f"Skipping invalid recipe: {e}")
+                    
+            logger.debug(f"Found {len(recipes)} recipes")
+            return recipes
         except Exception as e:
             logger.error(f"Failed to list recipes: {e}")
             raise UIError(f"Failed to list recipes: {str(e)}")
 
-    async def search(self, query_str: str) -> list[dict]:
+    async def search(self, query_str: str) -> list[Recipe]:
         """Search recipes by name.
 
         Args:
@@ -561,15 +559,15 @@ class RecipeRepository:
             ORDER BY r.created_at DESC
             """
             result = await self.db.query(cypher_query, {"query": query_str})
-            rows = result or []
-            for row in rows:
-                if isinstance(row.get('entries'), str):
-                    try:
-                        row['entries'] = json.loads(row['entries'])
-                    except Exception:
-                        logger.exception("Failed to parse entries JSON in search")
-            logger.debug(f"Found {len(rows) if rows else 0} recipes matching '{query_str}'")
-            return rows
+            recipes = []
+            for row in result or []:
+                try:
+                    recipes.append(Recipe(**row))  
+                except ValidationError as e:
+                    raise UIError(f"Skipping invalid recipe: {e}")
+                
+            logger.debug(f"Found {len(recipes)} recipes matching '{query_str}'")
+            return recipes
         except Exception as e:
             logger.error(f"Failed to search recipes: {e}")
             raise UIError(f"Failed to search recipes: {str(e)}")

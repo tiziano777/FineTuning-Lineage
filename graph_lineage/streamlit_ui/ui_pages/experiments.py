@@ -12,6 +12,7 @@ from graph_lineage.streamlit_ui.utils.async_helpers import run_async
 from graph_lineage.streamlit_ui.utils.errors import UIError
 from graph_lineage.streamlit_ui.utils import get_neo4j_client
 from graph_lineage.history.repository import ExperimentRepository as HistoryRepository
+from graph_lineage.data_classes.neo4j.nodes.experiment import Experiment
 
 logger = logging.getLogger(__name__)
 
@@ -48,25 +49,70 @@ _VALIDATION_SCOPE_OPTIONS = [
     "human_eval",
 ]
 
-# ── Async helpers ─────────────────────────────────────────────────────────────
+# ── UI Conversion Helper ──────────────────────────────────────────────────────
 
-async def _list_rich(status_filter=None, search=None) -> list[dict]:
+def _experiment_to_dict(exp: Experiment) -> dict:
+    """Convert Experiment object to dict for UI rendering.
+    
+    Separates concerns: Experiment is DB model, dict is UI rendering format.
+    """
+    return {
+        "id": exp.id,
+        "status": exp.status.value if hasattr(exp.status, 'value') else exp.status,
+        "description": exp.description,
+        "usable": exp.usable,
+        "created_at": exp.created_at,
+        "notes": getattr(exp, "notes", None),
+        "model_name": getattr(exp, "model_name", None),
+        "recipe_name": getattr(exp, "recipe_name", None),
+        "technique_code": getattr(exp, "technique_code", None),
+        "framework_code": getattr(exp, "framework_code", None),
+        "ckp_count": getattr(exp, "ckp_count", 0),
+        "config_hash": getattr(exp, "config_hash", None),
+        # Agentic metadata
+        "scope": getattr(exp, "scope", None),
+        "hypothesis": getattr(exp, "hypothesis", None),
+        "motivation": getattr(exp, "motivation", None),
+        "conclusion": getattr(exp, "conclusion", None),
+        "conclusion_type": getattr(exp, "conclusion_type", None),
+        "evidences": getattr(exp, "evidences", None),
+        "open_questions": getattr(exp, "open_questions", None),
+        "is_base": getattr(exp, "is_base_exp", None),  # Renamed in Experiment
+        "exploration_priority": getattr(exp, "exploration_priority", None),
+        "dead_end": getattr(exp, "dead_end", None),
+        "tags": getattr(exp, "tags", None),
+        "confidence": getattr(exp, "confidence", None),
+        "retry_policy": getattr(exp, "retry_policy", None),
+        "validation_scope": getattr(exp, "validation_scope", None),
+        "compute_cost": getattr(exp, "compute_cost", None),
+        "duration_seconds": getattr(exp, "duration_seconds", None),
+        "estimated_gain": getattr(exp, "estimated_gain", None),
+    }
+
+# ── Async DB Access Helpers ───────────────────────────────────────────────────
+
+async def _list_rich(status_filter=None, search=None) -> list[Experiment]:
+    """Fetch experiments from DB. Pure DB access, no UI logic."""
     repo = ExperimentRepository(get_neo4j_client())
     return await repo.list_rich(status_filter=status_filter, search=search)
 
-async def _update_metadata(id: str, description: str | None, notes: str | None) -> dict:
+async def _update_metadata(id: str, description: str | None, notes: str | None) -> Experiment:
+    """Update experiment metadata in DB. Pure DB access, no UI logic."""
     repo = ExperimentRepository(get_neo4j_client())
     return await repo.update_metadata(id=id, description=description, notes=notes)
 
 async def _get_agentic(id: str) -> dict | None:
+    """Fetch agentic metadata from DB. Pure DB access, returns dict for metadata."""
     repo = ExperimentRepository(get_neo4j_client())
     return await repo.get_agentic_metadata(id)
 
 async def _update_agentic(id: str, **kwargs) -> dict:
+    """Update agentic metadata in DB. Pure DB access."""
     repo = ExperimentRepository(get_neo4j_client())
     return await repo.update_agentic_metadata(id, **kwargs)
 
 async def _set_visibility(id: str, usable: bool) -> list[str]:
+    """Update experiment visibility in DB."""
     repo = HistoryRepository(get_neo4j_client())
     return await repo.set_visibility(id, usable)
 
@@ -126,7 +172,7 @@ def _render_open_questions_help() -> None:
         '```json\n["Does this hold with 13B?", "Is improvement dataset-specific?"]\n```'
     )
 
-# ── Sezioni del form agentico ─────────────────────────────────────────────────
+# ── UI:  Sezioni del form agentico ─────────────────────────────────────────────────
 
 def _section_identity(current: dict) -> dict:
     """Gruppo 1 — Identità e contesto."""
@@ -290,19 +336,26 @@ def _section_costs(current: dict) -> dict:
         "estimated_gain": estimated_gain,
     }
 
-# ── Tab agentic metadata ──────────────────────────────────────────────────────
+# ── UI: Tab agentic metadata ──────────────────────────────────────────────────────
 
-def _render_tab_agentic(experiments: list[dict]) -> None:
+def _render_tab_agentic(experiments_objs: list[Experiment]) -> None:
+    """Render agentic metadata tab.
+    
+    Args:
+        experiments_objs: List of Experiment objects from DB.
+    """
     st.subheader("Agentic Metadata")
     st.caption(
         "Compilare questi campi prima e dopo ogni run per abilitare le query "
         "di esplorazione, navigazione e cost-benefit sul grafo."
     )
 
-    if not experiments:
+    if not experiments_objs:
         st.info("Nessun esperimento disponibile.")
         return
 
+    # Convert to dicts for UI rendering
+    experiments = [_experiment_to_dict(e) for e in experiments_objs]
     exp_ids = [e["id"] for e in experiments]
     selected_exp_id = st.selectbox("Seleziona esperimento", exp_ids, key="ag_exp_select")
     if not selected_exp_id:
@@ -366,7 +419,7 @@ def _render_tab_agentic(experiments: list[dict]) -> None:
     with st.expander("👁 Preview nodo Neo4j (valori correnti in DB)", expanded=False):
         st.json(current)
 
-# ── Entry point ───────────────────────────────────────────────────────────────
+# ── UI:  Entry point ───────────────────────────────────────────────────────────────
 
 def run() -> None:
     """Run experiment management page."""
@@ -389,7 +442,9 @@ def run() -> None:
         try:
             filter_val = None if status_filter == "All" else status_filter
             search_val = search.strip() if search and search.strip() else None
-            experiments = run_async(_list_rich(status_filter=filter_val, search=search_val))
+            experiments_objs = run_async(_list_rich(status_filter=filter_val, search=search_val))
+            # Convert to dicts for UI rendering
+            experiments = [_experiment_to_dict(e) for e in experiments_objs]
 
             if experiments:
                 for exp in experiments:
@@ -442,7 +497,8 @@ def run() -> None:
     with tab_edit:
         st.subheader("Edit Metadata")
         try:
-            experiments = run_async(_list_rich())
+            experiments_objs = run_async(_list_rich())
+            experiments = [_experiment_to_dict(e) for e in experiments_objs]
 
             if not experiments:
                 st.info("No experiments available to edit.")
@@ -464,8 +520,9 @@ def run() -> None:
                             )
                             if st.form_submit_button("Save Metadata"):
                                 try:
-                                    run_async(_update_metadata(selected_exp_id, description, notes))
+                                    exp_updated = run_async(_update_metadata(selected_exp_id, description, notes))
                                     st.success("Metadata updated successfully!")
+                                    logger.info(f"Updated experiment {selected_exp_id}: {exp_updated.id}")
                                 except UIError as e:
                                     st.error(f"Error: {e.user_message}")
         except UIError as e:
@@ -474,8 +531,8 @@ def run() -> None:
     # ── Agentic Metadata ──────────────────────────────────────────────────────
     with tab_agentic:
         try:
-            experiments = run_async(_list_rich())
-            _render_tab_agentic(experiments)
+            experiments_objs = run_async(_list_rich())
+            _render_tab_agentic(experiments_objs)
         except UIError as e:
             st.error(f"Error: {e.user_message}")
 
@@ -483,7 +540,8 @@ def run() -> None:
     with tab_visibility:
         st.subheader("Experiment Visibility")
         try:
-            experiments = run_async(_list_rich())
+            experiments_objs = run_async(_list_rich())
+            experiments = [_experiment_to_dict(e) for e in experiments_objs]
 
             if not experiments:
                 st.info("No experiments available.")

@@ -46,3 +46,27 @@ CALL apoc.trigger.install('neo4j', 'auto_increment_chain_id',
   {phase: 'before'})
 YIELD name
 RETURN "Trigger auto_increment_chain_id installed" AS message;
+
+// ─────────────────────────────────────────────────────────────────────────
+// TRIGGER 4: Calculate 'deep' value - number of hops to :Base Experiment
+// ─────────────────────────────────────────────────────────────────────────
+
+CALL apoc.trigger.install('neo4j', 'calculate_deep_trigger',
+  'UNWIND $createdNodes AS new_node
+   WITH new_node
+   WHERE "Experiment" IN labels(new_node)
+   
+   // Calcoliamo il deep_value usando un blocco CASE lineare senza interrompere il flusso con i WHERE
+   WITH new_node,
+        CASE 
+          WHEN "Base" IN labels(new_node) THEN 0
+          ELSE
+            // Questo shortestPath funzionerà solo se le relazioni vengono create nella stessa transazione
+            // del nodo. Se le relazioni vengono create DOPO, questo trigger andrebbe spostato in phase: "afterAsync"
+            [(new_node)-[:RESUMED_FROM|DERIVED_FROM|RETRY_OF*]->(base:Experiment:Base) | length(shortestPath((new_node)-[:RESUMED_FROM|DERIVED_FROM|RETRY_OF*]->(base)))][0]
+        END AS calculated_deep
+   
+   // Assegniamo il valore finale (usando -1 come fallback se non trova un cammino e non è Base)
+   SET new_node.deep = coalesce(calculated_deep, -1)',
+  {phase: 'before'}) YIELD name
+RETURN "Trigger calculate_deep_trigger installed" AS message;

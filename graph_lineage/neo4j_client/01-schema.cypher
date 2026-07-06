@@ -15,13 +15,11 @@ CREATE CONSTRAINT composite_component IF NOT EXISTS FOR (co:Component) REQUIRE (
 // ─────────────────────────────────────────────────────────────────────────
 
 
-CREATE INDEX experiment_dead_end IF NOT EXISTS
-FOR (e:Experiment) ON (e.dead_end);
+//CREATE INDEX experiment_dead_end IF NOT EXISTS
+//FOR (e:Experiment) ON (e.dead_end);
 
-CREATE INDEX experiment_conclusion_type IF NOT EXISTS
-FOR (e:Experiment) ON (e.conclusion_type);
+//CREATE INDEX experiment_conclusion_type IF NOT EXISTS
+//FOR (e:Experiment) ON (e.conclusion_type);
 
-CREATE INDEX experiment_is_base IF NOT EXISTS
-FOR (e:Experiment) ON (e.is_base);
 
 

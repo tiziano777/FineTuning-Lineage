@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import logging
+import uuid
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Any
 
+from graph_lineage.data_classes.neo4j.nodes.experiment import Experiment
 from graph_lineage.streamlit_ui.utils.errors import UIError
 from graph_lineage.streamlit_ui.db.neo4j_async import AsyncNeo4jClient
 
@@ -65,7 +68,7 @@ class ExperimentRepository:
         model_id: str,
         status: str = "PENDING",
         description: str = "",
-    ) -> dict:
+    ) -> Experiment:
         """Create a new experiment.
 
         Args:
@@ -109,14 +112,14 @@ class ExperimentRepository:
             raise UIError("Failed to create experiment in Neo4j")
 
         logger.info(f"Experiment created: id={id}, model_id={model_id}")
-        return result
+        return Experiment(**result)
 
     async def create_experiment(
         self,
         model_id: str,
         status: str = "PENDING",
         description: str = "",
-    ) -> dict:
+    ) -> Experiment:
         """Create a new experiment (generates UUID automatically).
 
         Args:
@@ -136,60 +139,79 @@ class ExperimentRepository:
             description=description,
         )
 
-    async def get_by_id(self, id: str) -> Optional[dict]:
+    async def get_by_id(self, id: str) -> Optional[Experiment]:
         """Get experiment by ID.
 
         Args:
             id: Experiment ID.
 
         Returns:
-            Experiment data or None if not found.
+            Experiment object or None if not found.
         """
         query = """
         MATCH (e:Experiment {id: $id})
-        RETURN e.id as id, e.id as id, e.model_id as model_id,
+        RETURN e.id as id, e.model_id as model_id,
                e.status as status, e.description as description,
                e.created_at as created_at, e.updated_at as updated_at
         """
 
         result = await self.db.run_single(query, id=id)
-        return result
+        return Experiment(**result) if result else None
 
-    async def get_experiment(self, id: str) -> Optional[dict]:
+    async def get_experiment(self, id: str) -> Optional[Experiment]:
         """Alias for get_by_id for manager compatibility."""
         return await self.get_by_id(id)
 
-    async def list_all(self, status: Optional[str] = None) -> list[dict]:
-        """List experiments optionally filtered by status.
+    async def list_all(self, status: Optional[str] = None) -> list[Experiment]:
+        """List all experiments optionally filtered by status.
 
         Args:
             status: Optional status filter.
 
         Returns:
-            List of experiment dictionaries.
+            List of Experiment objects.
         """
+        return await self.list_with_limit(
+            limit=100,
+            offset=0,
+            status=status
+        )
+
+    async def list_with_limit(
+        self,
+        limit: int = 100,
+        offset: int = 0,
+        status: Optional[str] = None,
+    ) -> list[Experiment]:
+        """List experiments with pagination support.
+        
+        Args:
+            limit: Maximum number of experiments to return.
+            offset: Number of experiments to skip (for pagination).
+            status: Optional status filter.
+            
+        Returns:
+            List of Experiment objects.
+        """
+        where_clause = ""
+        params = {"limit": limit, "offset": offset}
         if status:
-            query = """
-            MATCH (e:Experiment {status: $status})
-            RETURN e.id as id, e.id as id, e.model_id as model_id,
-                   e.status as status, e.description as description,
-                   e.created_at as created_at, e.updated_at as updated_at
-            LIMIT 100
-            """
-            results = await self.db.run_list(query, status=status)
-        else:
-            query = """
-            MATCH (e:Experiment)
-            RETURN e.id as id, e.id as id, e.model_id as model_id,
-                   e.status as status, e.description as description,
-                   e.created_at as created_at, e.updated_at as updated_at
-            LIMIT 100
-            """
-            results = await self.db.run_list(query)
+            where_clause = "WHERE e.status = $status"
+            params["status"] = status
+        
+        query = f"""
+        MATCH (e:Experiment)
+        {where_clause}
+        RETURN e.id as id, e.model_id as model_id,
+               e.status as status, e.description as description,
+               e.created_at as created_at, e.updated_at as updated_at
+        ORDER BY e.created_at DESC
+        SKIP $offset LIMIT $limit
+        """
+        results = await self.db.run_list(query, **params)
+        return [Experiment(**row) for row in results]
 
-        return results
-
-    async def list_experiments(self, status: Optional[str] = None) -> list[dict]:
+    async def list_experiments(self, status: Optional[str] = None) -> list[Experiment]:
         """Alias for list_all for manager compatibility."""
         return await self.list_all(status=status)
 
@@ -200,7 +222,7 @@ class ExperimentRepository:
         description: Optional[str] = None,
         exit_status: Optional[str] = None,
         exit_msg: Optional[str] = None,
-    ) -> dict:
+    ) -> Experiment:
         """Update experiment fields.
 
         Args:
@@ -269,7 +291,7 @@ class ExperimentRepository:
             raise UIError(f"Experiment {id} not found")
 
         logger.info(f"Experiment updated: id={id}")
-        return result
+        return Experiment(**result)
 
     async def update_experiment(
         self,
@@ -278,7 +300,7 @@ class ExperimentRepository:
         description: Optional[str] = None,
         exit_status: Optional[str] = None,
         exit_msg: Optional[str] = None,
-    ) -> dict:
+    ) -> Experiment:
         """Alias for update for manager compatibility."""
         return await self.update(
             id=id,
@@ -388,8 +410,12 @@ class ExperimentRepository:
         """Alias for count_dependencies for manager compatibility."""
         return await self.count_dependencies(id)
 
-    async def list_rich(self, status_filter: str = None, search: str = None) -> list[dict]:
-        """List experiments with USES_MODEL, USES_RECIPE, USES_TECHNIQUE relationships and checkpoint count."""
+    async def list_rich(self, status_filter: str = None, search: str = None) -> list[Experiment]:
+        """List experiments with USES_MODEL, USES_RECIPE, USES_TECHNIQUE relationships and checkpoint count.
+        
+        Returns:
+            List of Experiment objects with UI metadata nested in custom_fields.
+        """
         query = """
         MATCH (e:Experiment)
         OPTIONAL MATCH (e)-[:USES_MODEL]->(m:Model)
@@ -397,18 +423,88 @@ class ExperimentRepository:
         OPTIONAL MATCH (e)-[:USES_TECHNIQUE]->(c:Component)
         OPTIONAL MATCH (ckp:Checkpoint)-[:PRODUCED_BY]->(e)
         WITH e, m, r, c, COUNT(ckp) as ckp_count
-        RETURN e.id as id, e.status as status, e.description as description,
-               e.usable as usable, e.config_hash as config_hash, e.created_at as created_at,
-               e.notes as notes, m.model_name as model_name, r.name as recipe_name,
-               c.technique_code as technique_code, c.framework_code as framework_code,
-               ckp_count
+        RETURN 
+            e.id, e.status, e.description, e.uri, e.base, e.name, e.chain_id,
+            e.exit_status, e.exit_msg, e.strategy, e.experiment_type,
+            e.model_id, e.model_uri, e.recipe_id, e.component_id,
+            e.codebase, e.changed_files, e.usable, e.manual_save, e.metrics_uri,
+            e.created_at, e.updated_at,
+            m.model_name as model_name, r.name as recipe_name,
+            c.technique_code as technique_code, c.framework_code as framework_code,
+            ckp_count, e.config_hash,
+            e.scope, e.hypothesis, e.motivation, e.conclusion, e.conclusion_type,
+            e.evidences, e.open_questions, e.is_base, e.exploration_priority,
+            e.dead_end, e.tags, e.confidence, e.retry_policy, e.validation_scope,
+            e.compute_cost, e.duration_seconds, e.estimated_gain,
+            e.notes
         ORDER BY e.created_at DESC
         LIMIT 100
         """
-        return await self.db.run_list(query)
+        results = await self.db.run_list(query)
+        experiments = []
+        for row in results:
+            exp = Experiment(
+                id=row.get("id"),
+                status=row.get("status"),
+                description=row.get("description"),
+                uri=row.get("uri", ""),
+                base=row.get("base", True),
+                name=row.get("name", ""),
+                chain_id=row.get("chain_id", 0),
+                exit_status=row.get("exit_status"),
+                exit_msg=row.get("exit_msg"),
+                strategy=row.get("strategy", ""),
+                experiment_type=row.get("experiment_type", "training"),
+                model_id=row.get("model_id"),
+                model_uri=row.get("model_uri"),
+                recipe_id=row.get("recipe_id"),
+                component_id=row.get("component_id"),
+                codebase=row.get("codebase", ""),
+                changed_files=row.get("changed_files") or [],
+                usable=row.get("usable", True),
+                manual_save=row.get("manual_save", False),
+                metrics_uri=row.get("metrics_uri"),
+                created_at=row.get("created_at"),
+                updated_at=row.get("updated_at"),
+            )
+            # Store UI-specific metadata in custom_fields
+            if exp.__dict__ is not None:  # Allow dynamic assignment
+                exp.model_name = row.get("model_name")
+                exp.recipe_name = row.get("recipe_name")
+                exp.technique_code = row.get("technique_code")
+                exp.framework_code = row.get("framework_code")
+                exp.ckp_count = row.get("ckp_count", 0)
+                exp.config_hash = row.get("config_hash")
+                exp.notes = row.get("notes")
+                # Agentic metadata
+                exp.scope = row.get("scope")
+                exp.hypothesis = row.get("hypothesis")
+                exp.motivation = row.get("motivation")
+                exp.conclusion = row.get("conclusion")
+                exp.conclusion_type = row.get("conclusion_type")
+                exp.evidences = row.get("evidences")
+                exp.open_questions = row.get("open_questions")
+                exp.is_base_exp = row.get("is_base")  # Rename to avoid collision with base
+                exp.exploration_priority = row.get("exploration_priority")
+                exp.dead_end = row.get("dead_end")
+                exp.tags = row.get("tags")
+                exp.confidence = row.get("confidence")
+                exp.retry_policy = row.get("retry_policy")
+                exp.validation_scope = row.get("validation_scope")
+                exp.compute_cost = row.get("compute_cost")
+                exp.duration_seconds = row.get("duration_seconds")
+                exp.estimated_gain = row.get("estimated_gain")
+            
+            experiments.append(exp)
+        
+        return experiments
 
-    async def update_metadata(self, id: str, description: str = None, notes: str = None) -> dict:
-        """Update only description and notes fields (metadata edit)."""
+    async def update_metadata(self, id: str, description: str = None, notes: str = None) -> Experiment:
+        """Update only description and notes fields (metadata edit).
+        
+        Returns:
+            Updated Experiment object.
+        """
         sets = []
         params = {"id": id, "updated_at": datetime.utcnow().isoformat()}
         if description is not None:
@@ -419,11 +515,22 @@ class ExperimentRepository:
             params["notes"] = notes
         if not sets:
             raise UIError("No fields to update")
-        query = f"MATCH (e:Experiment {{id: $id}}) SET {', '.join(sets)}, e.updated_at = $updated_at RETURN e.id as id"
+        
+        query = f"""
+        MATCH (e:Experiment {{id: $id}})
+        SET {', '.join(sets)}, e.updated_at = $updated_at
+        RETURN 
+            e.id, e.status, e.description, e.uri, e.base, e.name, e.chain_id,
+            e.exit_status, e.exit_msg, e.strategy, e.experiment_type,
+            e.model_id, e.model_uri, e.recipe_id, e.component_id,
+            e.codebase, e.changed_files, e.usable, e.manual_save, e.metrics_uri,
+            e.created_at, e.updated_at, e.notes
+        """
         result = await self.db.run_single(query, **params)
         if not result:
             raise UIError("Experiment not found")
-        return dict(result)
+        
+        return Experiment(**{k: v for k, v in result.items() if k in Experiment.model_fields})
 
     async def get_agentic_metadata(self, id: str) -> Optional[dict]:
         """Fetch only the agentic metadata fields for a given experiment.

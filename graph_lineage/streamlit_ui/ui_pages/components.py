@@ -11,12 +11,16 @@ from graph_lineage.streamlit_ui.db.repository.component_repository import Compon
 from graph_lineage.streamlit_ui.utils.async_helpers import run_async
 from graph_lineage.streamlit_ui.utils.errors import UIError
 from graph_lineage.streamlit_ui.utils import get_neo4j_client
+from graph_lineage.data_classes.neo4j.nodes.component import Component
 
 logger = logging.getLogger(__name__)
 
 _SETUPS_PREFIX = "./graph_lineage/setups/"
 
-# Async helper functions
+# ────────────────────────────────────────────────────────────────────────────
+# DB Layer (async helpers) — Separated from UI logic
+# ────────────────────────────────────────────────────────────────────────────
+
 async def create_component_async(
     name: str,
     opt_code: str,
@@ -25,8 +29,8 @@ async def create_component_async(
     uri: str,
     docs_url: str,
     description: str,
-) -> dict:
-    """Create component asynchronously."""
+) -> Component:
+    """Create component asynchronously. Returns Component dataclass."""
     db_client = get_neo4j_client()
     repo = ComponentRepository(db_client)
     return await repo.create_component(
@@ -39,14 +43,14 @@ async def create_component_async(
         description=description,
     )
 
-async def list_components_async() -> list[dict]:
-    """List components asynchronously."""
+async def list_components_async() -> list[Component]:
+    """List components asynchronously. Returns list of Component dataclasses."""
     db_client = get_neo4j_client()
     repo = ComponentRepository(db_client)
     return await repo.list_components()
 
-async def get_component_async(comp_id: str) -> dict:
-    """Get component asynchronously."""
+async def get_component_async(comp_id: str) -> Component | None:
+    """Get component asynchronously. Returns Component dataclass or None."""
     db_client = get_neo4j_client()
     repo = ComponentRepository(db_client)
     return await repo.get_component(comp_id)
@@ -57,11 +61,11 @@ async def update_component_async(
     uri: str,
     docs_url: str,
     description: str,
-) -> None:
-    """Update component asynchronously."""
+) -> Component:
+    """Update component asynchronously. Returns updated Component dataclass."""
     db_client = get_neo4j_client()
     repo = ComponentRepository(db_client)
-    await repo.update_component(comp_id, name=name, uri=uri, docs_url=docs_url, description=description)
+    return await repo.update_component(comp_id, name=name, uri=uri, docs_url=docs_url, description=description)
 
 async def check_component_deps_async(comp_id: str) -> int:
     """Check component dependencies asynchronously."""
@@ -167,7 +171,7 @@ def _render_create_wizard() -> None:
                                 description=description.strip(),
                             )
                         )
-                        st.success(f"✓ Component '{result['name']}' created (uri: {result['uri']})")
+                        st.success(f"✓ Component '{result.name}' created (uri: {result.uri})")
                         st.toast("Component created!", icon="✅")
                         # Reset wizard
                         st.session_state.wizard_step = 1
@@ -202,15 +206,15 @@ def run() -> None:
                     with st.container(border=True):
                         col1, col2, col3 = st.columns([2, 2, 2])
                         with col1:
-                            st.write(f"**{comp.get('name', 'N/A')}**")
-                            st.caption(f"uri: `{comp.get('uri', '')}`")
+                            st.write(f"**{comp.name}**")
+                            st.caption(f"uri: `{comp.uri}`")
                         with col2:
-                            st.caption(f"Technique: {comp.get('technique_code', 'N/A')}")
-                            st.caption(f"Framework: {comp.get('framework_code', 'N/A')}")
+                            st.caption(f"Technique: {comp.technique_code}")
+                            st.caption(f"Framework: {comp.framework_code}")
                         with col3:
-                            st.caption(f"Opt: {comp.get('opt_code', 'N/A')}")
-                            if comp.get('docs_url'):
-                                st.caption(f"Docs: {comp['docs_url']}")
+                            st.caption(f"Opt: {comp.opt_code}")
+                            if comp.docs_url:
+                                st.caption(f"Docs: {comp.docs_url}")
             else:
                 st.info("No components found. Create a component using the Create tab, or they will be auto-created by the tracker hook.")
         except UIError as e:
@@ -220,7 +224,7 @@ def run() -> None:
         st.subheader("Update Component")
         try:
             components = run_async(list_components_async())
-            comp_map = {f"{c.get('name', c['id'])} ({c['technique_code']})": c["id"] for c in components}
+            comp_map = {f"{c.name} ({c.technique_code})": c.id for c in components}
 
             selected_comp = st.selectbox("Select Component", list(comp_map.keys()))
 
@@ -231,16 +235,16 @@ def run() -> None:
                 with st.form("edit_component_form"):
                     name_edit = st.text_input(
                         "Component Name",
-                        value=comp.get("name", ""),
+                        value=comp.name or "",
                         help="Changing name will update the setup URI automatically unless you override it below.",
                     )
                     uri_edit = st.text_input(
                         "Setup URI",
-                        value=comp.get("uri", ""),
+                        value=comp.uri or "",
                         help="Leave blank to auto-derive from name.",
                     )
-                    docs_url_edit = st.text_input("Docs URL", value=comp.get("docs_url", ""))
-                    description_edit = st.text_area("Description", value=comp.get("description", ""))
+                    docs_url_edit = st.text_input("Docs URL", value=comp.docs_url or "")
+                    description_edit = st.text_area("Description", value=comp.description or "")
                     submitted = st.form_submit_button("Update Component")
 
                     if submitted:
@@ -264,7 +268,7 @@ def run() -> None:
         st.subheader("Delete Component")
         try:
             components = run_async(list_components_async())
-            comp_map = {f"{c.get('name', c['id'])} ({c['technique_code']})": c["id"] for c in components}
+            comp_map = {f"{c.name} ({c.technique_code})": c.id for c in components}
 
             selected_comp = st.selectbox("Select Component to Delete", list(comp_map.keys()), key="delete")
 
