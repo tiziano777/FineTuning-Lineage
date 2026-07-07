@@ -7,6 +7,9 @@ import yaml
 from .recipe_config import RecipeConfig, RecipeEntry
 
 
+from pathlib import Path
+import yaml
+
 class RecipeLoader:
     """Parse a recipe YAML file or mapping into a validated RecipeConfig.
 
@@ -28,19 +31,25 @@ class RecipeLoader:
         if isinstance(data, dict) and "recipe" in data and isinstance(data["recipe"], dict):
             data = data["recipe"]
 
-        entries_mapping = data.get("entries", {}) or {}
-        entries: dict[str, RecipeEntry] = {
-            uri: RecipeEntry(**entry_data)
-            for uri, entry_data in entries_mapping.items()
-        }
+        # CORREZIONE: Ora 'entries' è una lista. Se è vuota o assente, usiamo una lista vuota [].
+        raw_entries = data.get("entries", []) or []
+        
+        # Costruiamo la lista di oggetti RecipeEntry
+        entries: list[RecipeEntry] = []
+        for entry_data in raw_entries:
+            if isinstance(entry_data, dict):
+                entries.append(RecipeEntry(**entry_data))
 
+        # Istanziamo RecipeConfig passando la lista. 
+        # Pydantic farà il resto del lavoro di validazione sui campi opzionali.
         return RecipeConfig(
             recipe_id=data.get("id"),
             recipe_name=data.get("name"),
             description=data.get("description"),
             scope=data.get("scope"),
-            tasks=data.get("tasks") or [],
-            tags=data.get("tags") or [],
+            # Usiamo None se assenti per non forzare liste vuote se l'utente non le dichiara nel DB
+            tasks=data.get("tasks"), 
+            tags=data.get("tags"),
             derived_from=data.get("derived_from"),
             entries=entries,
         )

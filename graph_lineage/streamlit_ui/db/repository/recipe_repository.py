@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import json
 import logging
-import uuid
-from datetime import datetime
 from typing import Optional
 
 import yaml
@@ -16,558 +14,358 @@ from graph_lineage.streamlit_ui.utils.errors import UIError, DuplicateRecipeErro
 from graph_lineage.streamlit_ui.utils.entity_constraints import EntityConstraints
 from graph_lineage.streamlit_ui.db.neo4j_async import AsyncNeo4jClient
 
-from graph_lineage.data_classes.neo4j.nodes.recipe import Recipe
-
 logger = logging.getLogger(__name__)
 
 
 class RecipeRepository:
-    """Data access layer for Recipe entity."""
+    """Data access layer per l'entità Recipe.
+
+    Principi:
+    - Ogni operazione di scrittura (create/update/upsert) riceve in input
+      un'istanza `Recipe` già validata. Grazie a `model_config = ConfigDict(extra="allow")`
+      qualunque campo custom attaccato all'oggetto viene persistito e riletto
+      automaticamente, senza bisogno di isolarlo a mano.
+    - Ogni query di lettura ritorna il nodo intero (`r{.*}`) invece di un elenco
+      di campi hardcoded: i campi custom non vengono mai persi in lettura.
+    """
 
     def __init__(self, db_client: AsyncNeo4jClient):
-        """Initialize repository with Neo4j client.
-
-        Args:
-            db_client: AsyncNeo4jClient for database queries.
-        """
         self.db = db_client
         self.constraints = EntityConstraints(db_client)
 
-    async def get_by_name(self, name: str) -> Optional[Recipe]:
-        """Retrieve recipe by name.
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
 
-        Args:
-            name: Recipe name to lookup.
+    @staticmethod
+    def _row_to_recipe(row) -> Recipe:
+        """Converte una riga Neo4j (colonna singola 'recipe', mappa completa) in Recipe."""
+        data = dict(row["recipe"])
+        return Recipe(**data)
 
-        Returns:
-            Recipe data if found, None otherwise.
-
-        Raises:
-            UIError: On database query failure.
+    @staticmethod
+    def _recipe_to_props(recipe: Recipe, *, exclude: set[str] | None = None) -> dict:
+        """Appiattisce un Recipe (campi core + eventuali campi custom) in un dict
+        di proprietà salvabili su Neo4j. `entries` viene serializzato come stringa
+        JSON perché Neo4j non supporta liste di mappe come proprietà native.
         """
+        exclude_fields = (exclude or set()) | {"entries"}
+        props = recipe.model_dump(mode="json", exclude_none=True, exclude=exclude_fields)
+        props["entries"] = json.dumps(
+            [entry.model_dump(mode="json", exclude_none=True) for entry in recipe.entries]
+        )
+        return props
+
+    @staticmethod
+    def _recipe_from_yaml(
+        yaml_content: str,
+        description: str = "",
+        filename: Optional[str] = None,
+    ) -> Recipe:
+        """Parsa un contenuto YAML in un'istanza Recipe validata.
+
+        Qualsiasi campo non definito esplicitamente su Recipe/RecipeEntry resta
+        come campo custom (extra='allow'), senza bisogno di gestione manuale.
+        """
+        try:
+            data = yaml.safe_load(yaml_content)
+            if not isinstance(data, dict):
+                raise UIError("YAML must contain a dictionary")
+
+            if "recipe" in data and isinstance(data["recipe"], dict):
+                data = data["recipe"]
+
+            if "entries" not in data or not isinstance(data.get("entries"), list):
+                raise UIError("YAML must contain top-level 'entries' list of distribution metadata")
+
+            if description and description.strip():
+                data["description"] = description
+
+            recipe = Recipe(**data)
+        except UIError:
+            raise
+        except ValidationError as e:
+            raise UIError(f"Invalid recipe data: {str(e)}")
+        except Exception as e:
+            raise UIError(f"Failed to parse YAML: {str(e)}")
+
+        if recipe.name is None:
+            if not filename:
+                raise UIError(
+                    "Recipe name required: provide 'name' field in YAML or upload file with valid filename"
+                )
+            recipe.ensure_name(filename)
+
+        return recipe
+
+    async def _list(self, query: str, params: dict | None = None) -> list[Recipe]:
+        try:
+            result = await self.db.query(query, params or {})
+            recipes = []
+            for row in result or []:
+                try:
+                    recipes.append(self._row_to_recipe(row))
+                except ValidationError as e:
+                    logger.warning(f"Skipping invalid recipe row due to: {e}")
+            logger.debug(f"Found {len(recipes)} recipes")
+            return recipes
+        except Exception as e:
+            logger.error(f"Failed to list recipes: {e}")
+            raise UIError(f"Failed to list recipes: {str(e)}")
+
+    # ------------------------------------------------------------------
+    # Read
+    # ------------------------------------------------------------------
+
+    async def get_by_id(self, recipe_id: str) -> Optional[Recipe]:
+        """Recupera una recipe per id, inclusi eventuali campi custom."""
+        logger.debug(f"Querying recipe by id: {recipe_id}")
+        try:
+            query = "MATCH (r:Recipe {id: $id}) RETURN r{.*} as recipe"
+            result = await self.db.query(query, {"id": recipe_id})
+            if not result:
+                return None
+            try:
+                return self._row_to_recipe(result[0])
+            except ValidationError as e:
+                logger.error(f"Invalid recipe data for id '{recipe_id}': {e}")
+                raise UIError(f"Invalid recipe data: {str(e)}")
+        except UIError:
+            raise
+        except Exception as e:
+            logger.error(f"Failed to get recipe by id: {e}")
+            raise UIError(f"Failed to retrieve recipe: {str(e)}")
+
+    async def get_by_name(self, name: str) -> Optional[Recipe]:
+        """Recupera una recipe per nome, inclusi eventuali campi custom."""
         logger.debug(f"Querying recipe by name: {name}")
         try:
-            query = """
-            MATCH (r:Recipe {name: $name})
-            RETURN r.id as id, r.name as name, r.description as description,
-                   r.scope as scope, r.tasks as tasks, r.tags as tags, r.derived_from as derived_from,
-                   r.entries as entries, r.created_at as created_at, r.updated_at as updated_at
-            """
+            query = "MATCH (r:Recipe {name: $name}) RETURN r{.*} as recipe"
             result = await self.db.query(query, {"name": name})
-            if result:
-                try:
-                    recipe = Recipe(**result[0])
-                    entry_count = len(recipe.entries) if recipe.entries else 0
-                    logger.debug(f"Recipe found: {name} (entry_count={entry_count})")
-                    if not recipe.id and recipe.name:
-                        recipe.id = recipe.name
-                    return recipe
-                except ValidationError as e:
-                    logger.error(f"Invalid recipe data for name '{name}': {e}")
-                    raise UIError(f"Invalid recipe data: {str(e)}")
-            logger.debug(f"Recipe not found: {name}")
-            return None
+            if not result:
+                return None
+            try:
+                recipe = self._row_to_recipe(result[0])
+                logger.debug(f"Recipe found: {name} (entry_count={len(recipe.entries)})")
+                return recipe
+            except ValidationError as e:
+                logger.error(f"Invalid recipe data for name '{name}': {e}")
+                raise UIError(f"Invalid recipe data: {str(e)}")
+        except UIError:
+            raise
         except Exception as e:
             logger.error(f"Failed to get recipe by name: {e}")
             raise UIError(f"Failed to retrieve recipe: {str(e)}")
 
-    async def get_by_id(self, id: str) -> Optional[Recipe]:
-        """Retrieve recipe by ID."""
-        logger.debug(f"Querying recipe by ID: {id}")
-        try:
-            query = """
-            MATCH (r:Recipe {id: $id})
-            RETURN r.id as id, r.name as name, r.description as description,
-                   r.scope as scope, r.tasks as tasks, r.tags as tags, r.derived_from as derived_from,
-                   r.entries as entries, r.created_at as created_at, r.updated_at as updated_at
+    async def list_all(self) -> list[Recipe]:
+        return await self._list(
+            "MATCH (r:Recipe) RETURN r{.*} as recipe ORDER BY r.created_at DESC"
+        )
+
+    async def list_with_limit(self, limit: int = 20) -> list[Recipe]:
+        return await self._list(
+            "MATCH (r:Recipe) RETURN r{.*} as recipe ORDER BY r.created_at DESC LIMIT $limit",
+            {"limit": limit},
+        )
+
+    async def search(self, query_str: str) -> list[Recipe]:
+        return await self._list(
             """
-            result = await self.db.query(query, {"id": id})
-            if result:
-                try:
-                    return Recipe(**result[0])
-                except ValidationError as e:
-                    logger.error(f"Invalid recipe data for id '{id}': {e}")
-                    raise UIError(f"Invalid recipe data: {str(e)}")
-            return None
-        except Exception as e:
-            logger.error(f"Failed to get recipe by recipe_id: {e}")
-            raise UIError(f"Failed to retrieve recipe: {str(e)}")
+            MATCH (r:Recipe)
+            WHERE toLower(r.name) CONTAINS toLower($query)
+            RETURN r{.*} as recipe
+            ORDER BY r.created_at DESC
+            """,
+            {"query": query_str},
+        )
+
+    # ------------------------------------------------------------------
+    # Write — sempre a partire da un'istanza Recipe
+    # ------------------------------------------------------------------
 
     async def create_from_yaml(
         self,
         yaml_content: str,
         description: str = "",
+        filename: Optional[str] = None,
     ) -> Recipe:
-        """Create recipe from YAML content with full metadata extraction.
+        """Parsa uno YAML in Recipe e la crea. Solleva DuplicateRecipeError in conflitto."""
+        recipe = self._recipe_from_yaml(yaml_content, description=description, filename=filename)
+        logger.info(
+            "Creating recipe from YAML: recipe_id=%s name=%s entry_count=%d",
+            recipe.id, recipe.name, len(recipe.entries),
+        )
+        return await self.create(recipe)
 
-        Parses YAML, validates entries, and creates recipe with all metadata
-        (scope, tasks, tags, derived_from).
-
-        Args:
-            yaml_content: YAML content string containing entries and metadata.
-            description: Optional description (overrides YAML description if provided).
-
-        Returns:
-            Created recipe data.
-
-        Raises:
-            UIError: If YAML parsing or creation fails.
-            DuplicateRecipeError: If recipe name or ID already exists.
-        """
-        try:
-            logger.debug("Recipe upload: yaml_size=%d bytes", len(yaml_content))
-            data = yaml.safe_load(yaml_content)
-            if not isinstance(data, dict):
-                raise UIError("YAML must contain a dictionary")
-
-            # Extract entries (required)
-            entries_data = data.get("entries")
-            if entries_data is None or not isinstance(entries_data, dict):
-                raise UIError("YAML must contain top-level 'entries' mapping of dataset URIs to metadata")
-
-            # Extract metadata (all optional at YAML load time)
-            yaml_name = data.get("name")
-            yaml_description = data.get("description") if "description" in data else None
-            yaml_id = data.get("id")
-            yaml_scope = data.get("scope")
-            yaml_tasks = data.get("task") or data.get("tasks", [])  # Support both singular/plural
-            yaml_tags = data.get("tags", [])
-            yaml_derived_from = data.get("derived_from")
-
-            logger.debug(f"[DEBUG] Parsed YAML: name={yaml_name} id={yaml_id} entries={len(entries_data)}")
-
-            # Create Recipe to validate entries structure
-            # Only pass id if provided in YAML; otherwise let default_factory generate it
-            recipe_kwargs = {
-                "name": yaml_name,
-                "entries": entries_data,
-                "description": yaml_description,
-                "scope": yaml_scope,
-                "tasks": yaml_tasks,
-                "tags": yaml_tags,
-                "derived_from": yaml_derived_from
-            }
-            if yaml_id is not None:
-                recipe_kwargs["id"] = yaml_id
-
-            config = Recipe(**recipe_kwargs)
-            logger.info(f"Recipe YAML parsed: name={config.name} entries={len(config.entries)}")
-
-            # Convert entries to plain dicts
-            entries_dict = {
-                path: entry.model_dump(mode="json", exclude_none=True)
-                for path, entry in config.entries.items()
-            }
-
-            # Determine recipe_id: use provided or generate new UUID
-            if yaml_id:
-                recipe_id = str(yaml_id)
-            else:
-                recipe_id = str(uuid.uuid4())
-
-            final_description = description if description and description.strip() else yaml_description
-
-            logger.info("Creating recipe from YAML: recipe_id=%s name=%s entry_count=%d", recipe_id, config.name, len(entries_dict))
-
-            # Delegate to create() for database insertion
-            result = await self.create(
-                id=recipe_id,
-                name=config.name,
-                entries=entries_dict,
-                description=final_description,
-                scope=yaml_scope or "",
-                tasks=yaml_tasks or [],
-                tags=yaml_tags or [],
-                derived_from=yaml_derived_from,
-            )
-
-            logger.info("Recipe created from YAML: recipe_id=%s name=%s entry_count=%d", recipe_id, result.name, len(entries_dict))
-            return result
-
-        except (UIError, DuplicateRecipeError, ValidationError) as e:
-            raise
-        except Exception as e:
-            logger.error(f"Recipe YAML creation failed: {str(e)}", exc_info=True)
-            raise UIError(f"Failed to create recipe: {str(e)}")
-
-    async def upsert_by_uri(
+    async def save_from_yaml(
         self,
-        uri: str,
-        name: str,
+        yaml_content: str,
         description: str = "",
-        scope: str = "",
-        tasks: list[str] | None = None,
-        tags: list[str] | None = None,
+        filename: Optional[str] = None,
+        overwrite: bool = False,
     ) -> Recipe:
-        """Upsert recipe by URI using MERGE semantics.
+        """Parsa uno YAML e lo persiste.
 
-        Creates the recipe if no recipe with this URI exists,
-        otherwise updates all fields on the existing recipe.
-
-        Args:
-            uri: Unique recipe URI (merge key).
-            name: Recipe name.
-            description: Recipe description.
-            scope: Recipe scope.
-            tasks: List of tasks.
-            tags: List of tags.
-
-        Returns:
-            Upserted recipe data.
+        Se `overwrite=True`, una recipe esistente con lo stesso id viene
+        sostituita sul posto via upsert (preservando il suo `created_at`
+        originale); altrimenti si comporta come `create_from_yaml`.
         """
-        now = datetime.utcnow().isoformat()
-        recipe_id = str(uuid.uuid4())
-        query = """
-        MERGE (r:Recipe {uri: $uri})
-        ON CREATE SET r.id = $id, r.name = $name, r.description = $description,
-                      r.scope = $scope, r.tasks = $tasks, r.tags = $tags,
-                      r.created_at = $created_at, r.updated_at = $updated_at
-        ON MATCH SET r.name = $name, r.description = $description,
-                     r.scope = $scope, r.tasks = $tasks, r.tags = $tags,
-                     r.updated_at = $updated_at
-        RETURN r.id as id, r.name as name, r.uri as uri, r.description as description,
-               r.scope as scope, r.tasks as tasks, r.tags as tags,
-               r.created_at as created_at, r.updated_at as updated_at
-        """
-        result = await self.db.query(query, {
-            "id": recipe_id,
-            "uri": uri,
-            "name": name,
-            "description": description,
-            "scope": scope,
-            "tasks": tasks or [],
-            "tags": tags or [],
-            "created_at": now,
-            "updated_at": now,
-        })
-        if not result:
-            raise UIError("Failed to upsert recipe")
-        try:
-            recipe = Recipe(**result[0])
-            logger.info(f"Recipe upserted: uri={uri}, name={name}")
-            return recipe
-        except ValidationError as e:
-            logger.error(f"Invalid recipe data after upsert: {e}")
-            raise UIError(f"Invalid recipe data: {str(e)}")
+        recipe = self._recipe_from_yaml(yaml_content, description=description, filename=filename)
+        if overwrite:
+            return await self.upsert(recipe)
+        return await self.create(recipe)
 
-    async def create(
-        self,
-        id: str,
-        name: str,
-        entries: dict,
-        description: str = "",
-        scope: str = "",
-        tasks: list[str] | None = None,
-        tags: list[str] | None = None,
-        derived_from: str | None = None,
-    ) -> Recipe:
-        # Implementation of the create method goes here
-        """Create a new recipe.
+    async def create(self, recipe: Recipe) -> Recipe:
+        """Crea un nuovo nodo Recipe. Tutti i campi (core + custom) vengono persistiti."""
+        logger.debug("Checking recipe uniqueness: id=%s name=%s", recipe.id, recipe.name)
+        if await self.get_by_id(recipe.id):
+            logger.warning("Recipe id already exists: %s", recipe.id)
+            raise DuplicateRecipeError(recipe.id, recovery_suggestions=[f"{recipe.id}_dup"])
 
-        Args:
-            id: Unique recipe ID.
-            name: Unique recipe name.
-            entries: Dictionary mapping paths to RecipeEntry data.
-            description: Optional recipe description.
-            scope: Optional scope (e.g., 'sft', 'preference', 'rl').
-            tasks: Optional list of tasks.
-            tags: Optional list of tags.
-            derived_from: Optional UUID of parent recipe this was derived from.
-
-        Returns:
-            Created recipe data.
-
-        Raises:
-            DuplicateRecipeError: If name already exists.
-            UIError: If database query fails.
-        """
-        # Check uniqueness by recipe_id first
-        logger.debug("Checking recipe uniqueness: id=%s name=%s", id, name)
-        existing_by_id = await self.get_by_id(id)
-        if existing_by_id:
-            logger.warning("Recipe id already exists: %s", id)
-            raise DuplicateRecipeError(id, recovery_suggestions=[f"{id}_dup"])
-
-        # If name provided, ensure name is unique
-        if name:
-            existing_by_name = await self.get_by_name(name)
-            if existing_by_name and existing_by_name.id != id:
-                logger.warning("Recipe name already exists: %s", name)
-                suggestions = [f"{name}_v1", f"{name}_v2", f"{name}_backup"]
-                raise DuplicateRecipeError(name, recovery_suggestions=suggestions)
+        if recipe.name:
+            existing_by_name = await self.get_by_name(recipe.name)
+            if existing_by_name and existing_by_name.id != recipe.id:
+                logger.warning("Recipe name already exists: %s", recipe.name)
+                raise DuplicateRecipeError(recipe.name, recovery_suggestions=[f"{recipe.name}_v1"])
 
         try:
-            entry_count = len(entries)
-            logger.info(f"Inserting recipe: name={name}, entry_count={entry_count}")
+            logger.info("Inserting recipe: name=%s, entry_count=%d", recipe.name, len(recipe.entries))
+            props = self._recipe_to_props(recipe)
+
             query = """
-            CREATE (r:Recipe {
-                id: $id,
-                name: $name,
-                description: $description,
-                scope: $scope,
-                tasks: $tasks,
-                tags: $tags,
-                derived_from: $derived_from,
-                entries: $entries,
-                created_at: datetime(),
-                updated_at: datetime()
-            })
-            RETURN r.id as id, r.name as name, r.description as description,
-                   r.scope as scope, r.tasks as tasks, r.tags as tags, r.derived_from as derived_from,
-                   r.entries as entries, r.updated_at as updated_at
+            CREATE (r:Recipe)
+            SET r = $props
+            SET r.created_at = datetime()
+            SET r.updated_at = datetime()
+            RETURN r{.*} as recipe
             """
-            # Serialize entries to JSON string
-            try:
-                entries_payload = json.dumps(entries)
-            except Exception:
-                logger.exception("Failed to serialize entries for recipe %s", name)
-                raise UIError("Failed to serialize recipe entries for storage")
+            result = await self.db.query(query, {"props": props})
+            if not result:
+                raise UIError("Failed to create recipe")
 
-            result = await self.db.query(query, {
-                "id": id,
-                "name": name,
-                "description": description,
-                "scope": scope,
-                "tasks": tasks or [],
-                "tags": tags or [],
-                "derived_from": derived_from,
-                "entries": entries_payload,
-            })
-            if result:
-                row = Recipe(**result[0])
-                logger.info(f"Recipe inserted successfully: name={row.name}")
-                return row
-            raise UIError("Failed to create recipe")
+            created = self._row_to_recipe(result[0])
+            logger.info(f"Recipe inserted successfully: name={created.name}")
+            return created
         except Exception as e:
             if isinstance(e, (UIError, DuplicateRecipeError)):
                 raise
-            logger.error(f"Recipe insertion failed: {name}", exc_info=True)
+            logger.error(f"Recipe insertion failed: {recipe.name}", exc_info=True)
             raise UIError(f"Failed to create recipe: {str(e)}")
 
-    async def update(
-        self,
-        recipe_id: str,
-        new_name: Optional[str] = None,
-        description: Optional[str] = None,
-        scope: Optional[str] = None,
-        tasks: Optional[list[str]] = None,
-        tags: Optional[list[str]] = None,
-    ) -> Recipe:
-        """Update recipe metadata.
+    async def update(self, recipe: Recipe) -> Recipe:
+        """Aggiorna una recipe esistente, individuata da `recipe.id`.
 
-        Args:
-            recipe_id: Recipe ID to update.
-            new_name: New name (must be unique if provided).
-            description: New description.
-            scope: New scope.
-            tasks: New tasks list.
-            tags: New tags list.
-
-        Returns:
-            Updated recipe data.
-
-        Raises:
-            UIError: If recipe not found or conflict occurs.
+        Ogni campo impostato su `recipe` (core + custom) sovrascrive il valore
+        salvato, tranne `created_at` (sempre preservato) e `updated_at`
+        (sempre rigenerato).
         """
-        existing = await self.get_by_id(recipe_id)
-        if not existing:
-            raise UIError(f"Recipe not found")
-        existing = Recipe(**existing)
+        if not recipe.id:
+            raise UIError("Recipe id is required to update a recipe")
 
-        # Check new name uniqueness if changing
-        if new_name and new_name != existing.name:
-            conflict = await self.get_by_name(new_name)
-            if conflict and conflict.id != recipe_id:
-                raise UIError(f"Recipe '{new_name}' already exists")
+        existing = await self.get_by_id(recipe.id)
+        if not existing:
+            raise UIError("Recipe not found")
+
+        if recipe.name and recipe.name != existing.name:
+            conflict = await self.get_by_name(recipe.name)
+            if conflict and conflict.id != recipe.id:
+                raise UIError(f"Recipe '{recipe.name}' already exists")
 
         try:
-            updates: dict = {}
-            if new_name:
-                updates["name"] = new_name
-            if description is not None:
-                updates["description"] = description
-            if scope is not None:
-                updates["scope"] = scope
-            if tasks is not None:
-                updates["tasks"] = tasks
-            if tags is not None:
-                updates["tags"] = tags
+            logger.info("Updating recipe: recipe_id=%s", recipe.id)
+            props = self._recipe_to_props(recipe, exclude={"created_at", "id"})
 
-            if not updates:
-                return existing
-
-            logger.info(f"Updating recipe: recipe_id={recipe_id}, fields={list(updates.keys())}")
-            set_clause = ", ".join([f"r.{k} = ${k}" for k in updates.keys()])
-            query = f"""
-            MATCH (r:Recipe {{id: $id}})
-            SET {set_clause}
-            RETURN r.id as id, r.name as name, r.description as description,
-                   r.scope as scope, r.tasks as tasks, r.tags as tags, r.derived_from as derived_from, r.entries as entries
+            query = """
+            MATCH (r:Recipe {id: $id})
+            SET r += $props
+            SET r.updated_at = datetime()
+            RETURN r{.*} as recipe
             """
-            params = {"id": recipe_id, **updates}
-            result = await self.db.query(query, params)
-            if result:
-                try:
-                    recipe = Recipe(**result[0])
-                    logger.info(f"Recipe updated: {recipe.id}")
-                    return recipe
-                except ValidationError as e:
-                    logger.error(f"Invalid recipe data after update: {e}")
-                    raise UIError(f"Invalid recipe data: {str(e)}")
-            raise UIError("Failed to update recipe")
+            result = await self.db.query(query, {"id": recipe.id, "props": props})
+            if not result:
+                raise UIError("Failed to update recipe")
+
+            updated = self._row_to_recipe(result[0])
+            logger.info(f"Recipe updated: {updated.id}")
+            return updated
         except Exception as e:
             if isinstance(e, UIError):
                 raise
-            logger.error(f"Recipe update failed: {recipe_id}", exc_info=True)
+            logger.error(f"Recipe update failed: {recipe.id}", exc_info=True)
             raise UIError(f"Failed to update recipe: {str(e)}")
 
-    async def is_deletable(self, recipe_id: str) -> bool:
-        """Check if recipe can be deleted (no related experiments).
+    async def upsert(self, recipe: Recipe) -> Recipe:
+        """Crea o aggiorna una recipe, individuata da `recipe.id`.
 
-        Args:
-            recipe_id: Recipe ID to check.
-
-        Returns:
-            True if recipe has no related experiments, False otherwise.
+        Alla creazione: tutti i campi vengono impostati, `created_at`/`updated_at`
+        inizializzati. Al match: tutti i campi vengono sovrascritti (custom
+        inclusi), `created_at` è preservato, `updated_at` rigenerato.
         """
+        if not recipe.id:
+            raise UIError("Recipe id is required to upsert a recipe")
+
+        if recipe.name:
+            existing_by_name = await self.get_by_name(recipe.name)
+            if existing_by_name and existing_by_name.id != recipe.id:
+                raise UIError(f"Recipe '{recipe.name}' already exists with a different id")
+
+        try:
+            logger.info("Upserting recipe: recipe_id=%s name=%s", recipe.id, recipe.name)
+            create_props = self._recipe_to_props(recipe)
+            match_props = self._recipe_to_props(recipe, exclude={"created_at", "id"})
+
+            query = """
+            MERGE (r:Recipe {id: $id})
+            ON CREATE SET r = $create_props, r.created_at = datetime(), r.updated_at = datetime()
+            ON MATCH SET r += $match_props, r.updated_at = datetime()
+            RETURN r{.*} as recipe
+            """
+            result = await self.db.query(query, {
+                "id": recipe.id,
+                "create_props": create_props,
+                "match_props": match_props,
+            })
+            if not result:
+                raise UIError("Failed to upsert recipe")
+
+            saved = self._row_to_recipe(result[0])
+            logger.info(f"Recipe upserted: id={saved.id} name={saved.name}")
+            return saved
+        except Exception as e:
+            if isinstance(e, UIError):
+                raise
+            logger.error(f"Recipe upsert failed: {recipe.id}", exc_info=True)
+            raise UIError(f"Failed to upsert recipe: {str(e)}")
+
+    # ------------------------------------------------------------------
+    # Delete
+    # ------------------------------------------------------------------
+
+    async def is_deletable(self, recipe_id: str) -> bool:
+        """Verifica se una recipe può essere eliminata."""
         existing = await self.get_by_id(recipe_id)
         if not existing:
-            return True  # Doesn't exist, considered deletable
-        recipe_name = existing.name
-        if recipe_name:
-            return await self.constraints.is_recipe_deletable(recipe_name)
+            return True
+        if existing.name:
+            return await self.constraints.is_recipe_deletable(existing.name)
         return True
 
     async def delete(self, recipe_id: str) -> None:
-        """Delete recipe by recipe_id.
-
-        Args:
-            recipe_id: Recipe ID to delete.
-
-        Raises:
-            UIError: If recipe not found, has related experiments, or query fails.
-        """
+        """Elimina una recipe per id."""
         existing = await self.get_by_id(recipe_id)
         if not existing:
             raise UIError(f"Recipe '{recipe_id}' not found")
 
-        # Check if recipe can be deleted (no related experiments)
         if not await self.is_deletable(recipe_id):
-            recipe_name = existing.name
             raise UIError(
-                f"Cannot delete recipe '{recipe_name}': it's used by one or more experiments. "
+                f"Cannot delete recipe '{existing.name}': it's used by one or more experiments. "
                 "Remove experiments first before deleting the recipe."
             )
 
         try:
             logger.info("Deleting recipe: recipe_id=%s", recipe_id)
-            query = "MATCH (r:Recipe {id: $id}) DELETE r"
-            await self.db.query(query, {"id": recipe_id})
+            await self.db.query("MATCH (r:Recipe {id: $id}) DELETE r", {"id": recipe_id})
             logger.info("Recipe deleted: recipe_id=%s", recipe_id)
         except Exception as e:
             logger.error(f"Recipe deletion failed: {recipe_id}", exc_info=True)
             raise UIError(f"Failed to delete recipe: {str(e)}")
-
-    async def list_all(self) -> list[Recipe]:
-        """List all recipes.
-
-        Returns:
-            List of recipe data.
-
-        Raises:
-            UIError: On database query failure.
-        """
-        try:
-            logger.debug("Listing all recipes")
-            query = """
-            MATCH (r:Recipe)
-            RETURN r.id as id, r.name as name, r.description as description, r.scope as scope,
-                   r.tasks as tasks, r.tags as tags, r.derived_from as derived_from,
-                   r.created_at as created_at, r.updated_at as updated_at, r.entries as entries
-            ORDER BY r.created_at DESC
-            """
-            result = await self.db.query(query)
-            recipes = []
-            for row in result or []:
-                try:
-                    recipes.append(Recipe(**row))
-                except ValidationError as e:
-                    raise UIError(f"Skipping invalid recipe: {e}")
-                        
-            logger.debug(f"Found {len(recipes)} recipes")
-            return recipes
-        except Exception as e:
-            logger.error(f"Failed to list recipes: {e}")
-            raise UIError(f"Failed to list recipes: {str(e)}")
-
-    async def list_with_limit(self, limit: int = 20) -> list[Recipe]:
-        """List recipes with limit.
-
-        Args:
-            limit: Maximum recipes to return.
-
-        Returns:
-            List of recipe data.
-
-        Raises:
-            UIError: On database query failure.
-        """
-        try:
-            logger.debug(f"Listing recipes (limit={limit})")
-            query = """
-            MATCH (r:Recipe)
-            RETURN r.id as id, r.name as name, r.description as description, r.scope as scope,
-                   r.tasks as tasks, r.tags as tags, r.derived_from as derived_from,
-                   r.created_at as created_at, r.updated_at as updated_at, r.entries as entries
-            ORDER BY r.created_at DESC
-            LIMIT $limit
-            """
-            result = await self.db.query(query, {"limit": limit})
-            recipes = []
-            for row in result or []:
-                try:
-                    recipes.append(Recipe(**row))  
-                except ValidationError as e:
-                    raise UIError(f"Skipping invalid recipe: {e}")
-                    
-            logger.debug(f"Found {len(recipes)} recipes")
-            return recipes
-        except Exception as e:
-            logger.error(f"Failed to list recipes: {e}")
-            raise UIError(f"Failed to list recipes: {str(e)}")
-
-    async def search(self, query_str: str) -> list[Recipe]:
-        """Search recipes by name.
-
-        Args:
-            query_str: Search query string.
-
-        Returns:
-            List of matching recipes.
-
-        Raises:
-            UIError: On database query failure.
-        """
-        try:
-            logger.debug(f"Searching recipes: query={query_str}")
-            cypher_query = """
-            MATCH (r:Recipe)
-            WHERE toLower(r.name) CONTAINS toLower($query)
-            RETURN r.id as id, r.name as name, r.description as description, r.scope as scope,
-                   r.tasks as tasks, r.tags as tags, r.derived_from as derived_from,
-                   r.created_at as created_at, r.updated_at as updated_at, r.entries as entries
-            ORDER BY r.created_at DESC
-            """
-            result = await self.db.query(cypher_query, {"query": query_str})
-            recipes = []
-            for row in result or []:
-                try:
-                    recipes.append(Recipe(**row))  
-                except ValidationError as e:
-                    raise UIError(f"Skipping invalid recipe: {e}")
-                
-            logger.debug(f"Found {len(recipes)} recipes matching '{query_str}'")
-            return recipes
-        except Exception as e:
-            logger.error(f"Failed to search recipes: {e}")
-            raise UIError(f"Failed to search recipes: {str(e)}")

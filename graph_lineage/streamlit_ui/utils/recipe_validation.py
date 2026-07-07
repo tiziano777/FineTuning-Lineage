@@ -12,6 +12,7 @@ from graph_lineage.data_classes.neo4j.nodes.recipe import Recipe
 
 logger = logging.getLogger(__name__)
 
+
 def validate_recipe_yaml(yaml_str: str) -> tuple[bool, Optional[Recipe], list[str]]:
     """Validate YAML recipe format (Recipe CRUD only, no envelope).
 
@@ -29,17 +30,21 @@ def validate_recipe_yaml(yaml_str: str) -> tuple[bool, Optional[Recipe], list[st
         if not isinstance(data, dict):
             raise ValueError(f"Expected YAML dict, got {type(data).__name__}")
 
-        # Check for entries (Recipe marker)
+        # Se la ricetta è inserita sotto una chiave 'recipe' di un file config globale, srotolala
+        if "recipe" in data and isinstance(data["recipe"], dict):
+            data = data["recipe"]
+
+        # CORREZIONE 1: Ora 'entries' deve essere una LISTA
         entries_data = data.get("entries")
-        if entries_data is None or not isinstance(entries_data, dict):
-            raise ValueError("YAML must contain top-level 'entries' mapping of dataset URIs to metadata")
+        if entries_data is None or not isinstance(entries_data, list):
+            raise ValueError("YAML must contain top-level 'entries' list of distribution metadata")
 
         # Extract recipe metadata (all optional at YAML load time)
         yaml_recipe_id = data.get("id")
         yaml_name = data.get("name")
         yaml_description = data.get("description")
         yaml_scope = data.get("scope")
-        yaml_tasks = data.get("tasks") or data.get("tasks", [])  # Support both singular and plural
+        yaml_tasks = data.get("tasks") or data.get("tasks", [])  # Support plural/fallback
         yaml_tags = data.get("tags", [])
         yaml_derived_from = data.get("derived_from")
 
@@ -52,11 +57,12 @@ def validate_recipe_yaml(yaml_str: str) -> tuple[bool, Optional[Recipe], list[st
             "tasks": yaml_tasks,
             "tags": yaml_tags,
             "derived_from": yaml_derived_from,
-            "entries": entries_data
+            "entries": entries_data # CORREZIONE 2: Passa direttamente la lista validata
         }
         if yaml_recipe_id is not None:
             recipe_kwargs["id"] = yaml_recipe_id
 
+        # Pydantic farà il parsing ciclando sulla lista di RecipeEntry
         recipe = Recipe(**recipe_kwargs)
 
         entries_count = len(recipe.entries)

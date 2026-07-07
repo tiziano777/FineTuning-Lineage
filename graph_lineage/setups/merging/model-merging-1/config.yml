@@ -1,24 +1,30 @@
-
 model:
   lineage_uri: .lineage/experiment.yml
 
 output:
   output_dir: /path/to/merged/output
+  model_name: "my-merged-llm"
 
 model_merging:
-  merge_method: avg  # parametrico: avg | (future: slerp, task_arithmetic, ...)
-  lora_enabled: false  # true per LoRA adapter merging
 
-  lora:
-    base_model_path: /path/to/base/model
-    merge_strategy: fully_merged_model  # fully_merged_model | adapter_only
+  base_model:
+    id: "my-merged-llm"
+    uri: "/path/to/base/model" 
 
+  method: "linear"           # linear (ex avg) | slerp | task_arithmetic | ties | dare
+  lora_enabled: false        # Se true, fonde gli adapter nell'URI di model.uri
+  
+  # Raggruppiamo i parametri puramente hardware/computazionali
+  compute:
+    torch_dtype: "bfloat16"  # Precisione di calcolo (caricamento in memoria)
+    save_dtype: "bfloat16"   # Precisione di esportazione sul disco
+  
+  # N sorgenti (modelli o adapter) tracciate con la stessa logica delle recipe entries
   sources:
-    - /path/to/model_or_adapter_1
-    - /path/to/model_or_adapter_2
-
-  save_dtype: bfloat16  # float16 | bfloat16 | float32
-  torch_dtype: bfloat16  # dtype per caricamento modelli in memoria
+    - uri: "/path/to/model_or_adapter_1"
+      weight: 0.5            # Opzionale: peso del modello nel merge (es. slerp/linear)
+    - uri: "/path/to/model_or_adapter_2"
+      weight: 0.5
 
 hardware:
   gpu:

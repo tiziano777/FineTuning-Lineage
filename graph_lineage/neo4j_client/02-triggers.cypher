@@ -48,25 +48,21 @@ YIELD name
 RETURN "Trigger auto_increment_chain_id installed" AS message;
 
 // ─────────────────────────────────────────────────────────────────────────
-// TRIGGER 4: Calculate 'deep' value - number of hops to :Base Experiment
+// TRIGGER 4: Calculate 'deep' value on Node Creation (with its relationship)
 // ─────────────────────────────────────────────────────────────────────────
-
 CALL apoc.trigger.install('neo4j', 'calculate_deep_trigger',
   'UNWIND $createdNodes AS new_node
-   WITH new_node
+   WITH new_node 
    WHERE "Experiment" IN labels(new_node)
    
-   // Calcoliamo il deep_value usando un blocco CASE lineare senza interrompere il flusso con i WHERE
-   WITH new_node,
-        CASE 
-          WHEN "Base" IN labels(new_node) THEN 0
-          ELSE
-            // Questo shortestPath funzionerà solo se le relazioni vengono create nella stessa transazione
-            // del nodo. Se le relazioni vengono create DOPO, questo trigger andrebbe spostato in phase: "afterAsync"
-            [(new_node)-[:RESUMED_FROM|DERIVED_FROM|RETRY_OF*]->(base:Experiment:Base) | length(shortestPath((new_node)-[:RESUMED_FROM|DERIVED_FROM|RETRY_OF*]->(base)))][0]
-        END AS calculated_deep
+   // Cerchiamo se il nuovo nodo è stato collegato a un padre nella stessa transazione
+   OPTIONAL MATCH (new_node)-[r]->(parent_node:Experiment)
+   WHERE type(r) IN ["RESUMED_FROM", "DERIVED_FROM", "RETRY_FROM"]
    
-   // Assegniamo il valore finale (usando -1 come fallback se non trova un cammino e non è Base)
-   SET new_node.deep = coalesce(calculated_deep, -1)',
-  {phase: 'before'}) YIELD name
+   // Se c\'è un padre, calcola la profondità, altrimenti assegna 0 (nodo radice)
+   WITH new_node, coalesce(parent_node.deep, 0) AS parentDeep, count(parent_node) AS hasParent
+   
+   SET new_node.deep = CASE WHEN hasParent > 0 THEN parentDeep + 1 ELSE 0 END',
+  {phase: 'before'}
+) YIELD name
 RETURN "Trigger calculate_deep_trigger installed" AS message;

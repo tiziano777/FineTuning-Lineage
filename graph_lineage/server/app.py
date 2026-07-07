@@ -24,9 +24,10 @@ from graph_lineage.data_classes.neo4j.nodes.experiment import ExperimentType, St
 from graph_lineage.diff.description import generate_description
 from graph_lineage.diff.snapshot import CodebaseSnapshot
 from graph_lineage.lineage.neo4j_ops import (
-    create_checkpoint_edge, create_checkpoint_node,create_experiment_edge, create_base_experiment_edge,
-    create_experiment_node, create_resumed_from_edge, find_experiment_by_id,
-    update_experiment_status,create_ckp_derived_from_edge,retrieve_ckp_id_by_ckp_uri,retrieve_ckp_by_experiment_id )
+    create_checkpoint_edge, create_checkpoint_node, create_base_experiment_edge,
+    find_experiment_by_id,
+    update_experiment_status,create_ckp_derived_from_edge,retrieve_ckp_id_by_ckp_uri,retrieve_ckp_by_experiment_id,
+    create_non_base_experiment_with_chain_edge, create_base_experiment_node_with_edges )
 from graph_lineage.lineage.rule_engine import ModelIdMismatchError, ModelDbMismatchError, detect_training_run_type
 
 from .schemas import CheckpointRequest, CheckpointResponse, HealthResponse, PostRequest, PostResponse, PreRequest, PreResponse
@@ -84,10 +85,7 @@ async def startup_initialize_schema():
         logger.error(f"[Startup] Unexpected error during schema initialization: {e}")
         logger.error("[Startup] API will continue but may encounter issues")
 
-
 # Edge type mapping per strategy — Experiment→Experiment edges only.
-# RESUME and BRANCH-with-checkpoint also create a separate Experiment→Checkpoint
-# RESUMED_FROM edge via create_resumed_from_edge(), handled explicitly below.
 _STRATEGY_EXP_EDGE_MAP: dict[str, str] = {
     "BRANCH": "DERIVED_FROM",
     "RETRY": "RETRY_FROM",   # aligned with schema: (Experiment)-[:RETRY_FROM]→(Experiment)
@@ -216,35 +214,40 @@ async def pre_execution(request: PreRequest) -> PreResponse:
             model_uri=request.model_uri or None
         )
 
-        # 5.a) Create node in Neo4j
-        create_experiment_node(experiment)
-
-        # 5.b) Create base experiment edge if applicable
+        # 5. Create Experiment node and edges atomically based on strategy
         logger.info("is_base=%s, strategy=%s", is_base, run_result.strategy)
         if is_base:
-            create_base_experiment_edge(exp_id=experiment.id, recipe_name=request.recipe_id, component_name=request.component_id, model_name=request.model_id)
-
-        # 6. Create exp2exp edges based on strategy
-        # Experiment→Experiment edges (DERIVED_FROM, RETRY_FROM, RESUMED_FROM) are created here.
-        if run_result.parent_exp_id and run_result.strategy in _STRATEGY_EXP_EDGE_MAP:
+            # Base experiment: create node + all resource edges (USES_RECIPE, USES_COMPONENT, USES_MODEL) in atomic transaction
+            logger.info(
+                "Creating base experiment (atomic): exp_id=%s, recipe=%s, component=%s, model=%s",
+                exp_id, request.recipe_id, request.component_id, request.model_id,
+            )
+            create_base_experiment_node_with_edges(
+                exp=experiment,
+                recipe_name=request.recipe_id,
+                component_name=request.component_id,
+                model_name=request.model_id,
+            )
+        else:
+            # Non-base experiment: create node + parent edge in atomic transaction
+            # This prevents orphaned experiments if the process fails mid-operation
             edge_type = _STRATEGY_EXP_EDGE_MAP[run_result.strategy]
             edge_props: dict[str, Any] = {}
             if run_result.diff_patch:
                 edge_props["diff_patch"] = str(run_result.diff_patch)
+            
             logger.info(
-                "Creating %s edge: from=%s, to=%s, props=%s",
-                edge_type, run_result.parent_exp_id, exp_id, edge_props,
+                "Creating experiment with %s edge (atomic): exp_id=%s, parent_exp_id=%s, props=%s",
+                edge_type, exp_id, run_result.parent_exp_id, edge_props,
             )
-            # HERE IS IMPORTANT: for resume2 strategy, we have to capture previous experiments in the chain,
-            #  returning entire node information also codebase from base.
-            create_experiment_edge(to_id=run_result.parent_exp_id, from_id=exp_id, rel_type=edge_type, properties=edge_props or None)
-
-        # Experiment→Checkpoint RESUMED_FROM edge:
-        # - RESUME always has parent_ckp_id (the checkpoint to resume from)
-        # ONLY IF A CHECKPOINT IS INVOLVED (parent_ckp_id is not None)
-        if run_result.strategy == StrategyType.RESUME:
-            logger.info("Creating CKP_RESUMED_FROM edge: exp_id=%s, ckp_uri=%s", exp_id, run_result.parent_ckp_id)
-            create_resumed_from_edge(exp_id, run_result.parent_ckp_id)
+            # Atomic: create node + parent edge + optional checkpoint edge in single transaction
+            create_non_base_experiment_with_chain_edge(
+                exp=experiment,
+                parent_exp_id=run_result.parent_exp_id,
+                strategy=edge_type,
+                edge_properties=edge_props or None,
+                parent_ckp_uri=run_result.parent_ckp_id if run_result.strategy == StrategyType.RESUME else None,
+            )
 
         # 7. Resolve base_experiment_id for response
         response_base_exp_id = request.base_experiment_id

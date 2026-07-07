@@ -86,93 +86,155 @@ def find_parent_experiment_id(experiment_id: str) -> str | None:
 
     return _run_sync(_find_parent_experiment_id_async(experiment_id))
 
-def create_experiment_node(exp: Experiment) -> str:
-    """Create an Experiment node in Neo4j and return its ID."""
-    async def _create_experiment_node_async(exp: Experiment) -> str:
-        """Create an Experiment node in Neo4j."""
+def create_base_experiment_node_with_edges(
+    exp: Experiment,
+    recipe_name: str,
+    component_name: str,
+    model_name: str,
+) -> str:
+    """Create a base Experiment node and connect to Recipe, Component, Model in single atomic transaction.
+
+    This ensures atomicity: if any resource doesn't exist or the connections fail,
+    the experiment node is not created, preventing orphaned base experiments.
+
+    Args:
+        exp: The Experiment node to create (should have base=True).
+        recipe_name: Name of the Recipe to connect via USES_RECIPE edge.
+        component_name: Name of the Component to connect via USES_COMPONENT edge.
+        model_name: Name of the Model to connect via USES_MODEL edge.
+
+    Returns:
+        The experiment ID.
+
+    Raises:
+        Exception: If any resource doesn't exist or database error occurs.
+    """
+    async def _create_base_experiment_node_with_edges_async(
+        exp: Experiment,
+        recipe_name: str,
+        component_name: str,
+        model_name: str,
+    ) -> str:
+        """Create base experiment with all resource edges in atomic transaction."""
         driver = await get_driver()
         props = exp.model_dump(mode="python")
         for key in ("created_at", "updated_at"):
             if key in props and props[key] is not None:
                 props[key] = props[key].isoformat()
-        
-        
-        # 0. Generiamo la stringa delle etichette (es: "Experiment:Training" o "Experiment:Evaluation")
-        # Usiamo exp.__labels__ che abbiamo definito nel modello Pydantic
-        labels_str = ":".join(exp.__labels__)
 
-        # 1. Rimuoviamo la proprietà "base" e Experiment_type, vogliamo che siano solo labels.
+        labels_str = ":".join(exp.__labels__)
         props.pop("base", None)
         props.pop("experiment_type", None)
-        
-        # 2. Iniettiamo le label usando la f-string (sicuro, perché le label sono controllate dal tuo codice)
-        # Il resto delle proprietà ($props) rimane parametrizzato per evitare Cypher Injection
+
+        # Atomic transaction: create node + all resource edges
         query = f"""
-        CREATE (e:{labels_str} $props)
+        MATCH (r:Recipe {{name: $recipe_name}})
+        MATCH (c:Component {{name: $component_name}})
+        MATCH (m:Model {{model_name: $model_name}})
+        CREATE (e:{labels_str} $exp_props)
+        CREATE (e)-[:USES_RECIPE]->(r)
+        CREATE (e)-[:USES_COMPONENT]->(c)
+        CREATE (e)-[:USES_MODEL]->(m)
         RETURN e.id AS id
         """
+
+        params: dict[str, Any] = {
+            "exp_props": props,
+            "recipe_name": recipe_name,
+            "component_name": component_name,
+            "model_name": model_name,
+        }
+
         async with driver.session() as session:
-            result = await session.run(query, {"props": props})
+            result = await session.run(query, params)
             record = await result.single()
+            if record is None:
+                raise ValueError(
+                    f"Failed to create base experiment: Recipe='{recipe_name}', "
+                    f"Component='{component_name}', Model='{model_name}' not found"
+                )
             return record["id"]
 
-    return _run_sync(_create_experiment_node_async(exp))
+    return _run_sync(_create_base_experiment_node_with_edges_async(
+        exp, recipe_name, component_name, model_name
+    ))
 
-def create_experiment_edge(from_id: str, to_id: str, rel_type: str, properties: dict[str, Any] | None = None,
-) -> None:
-    """Create a relationship between two Experiment nodes.
+def create_non_base_experiment_with_chain_edge(
+    exp: Experiment,
+    parent_exp_id: str,
+    strategy: str,
+    edge_properties: dict[str, Any] | None = None,
+    parent_ckp_uri: str | None = None,
+) -> str:
+    """Create a non-base Experiment node and connect it to its parent in a single atomic transaction.
+
+    This ensures atomicity: if the parent doesn't exist or the connection fails,
+    the experiment node is not created, preventing orphaned experiments.
 
     Args:
-        from_id: Source experiment ID.
-        to_id: Target experiment ID.
-        rel_type: Relationship type (DERIVED_FROM, RETRY_FROM, DERIVED_FROM).
-        properties: Optional relationship properties.
+        exp: The Experiment node to create (should have base=False).
+        parent_exp_id: ID of the parent experiment (must exist).
+        strategy: Edge type (DERIVED_FROM, RETRY_FROM, RESUMED_FROM, MERGED_FROM).
+        edge_properties: Optional properties for the Experiment→Experiment edge.
+        parent_ckp_uri: Optional checkpoint URI to create CKP_RESUMED_FROM edge (for RESUME strategy).
+
+    Returns:
+        The experiment ID.
+
+    Raises:
+        Exception: If parent experiment doesn't exist or database error occurs.
     """
-    async def _create_experiment_edge_async(
-        from_id: str,
-        to_id: str,
-        rel_type: str,
-        properties: dict[str, Any] | None = None,
-    ) -> None:
-        """Create a relationship between two Experiment nodes."""
+    async def _create_non_base_experiment_with_chain_edge_async(
+        exp: Experiment,
+        parent_exp_id: str,
+        strategy: str,
+        edge_properties: dict[str, Any] | None = None,
+        parent_ckp_uri: str | None = None,
+    ) -> str:
+        """Create non-base experiment with parent edge in atomic transaction."""
         driver = await get_driver()
-        props_clause = ""
-        params: dict[str, Any] = {"from_id": from_id, "to_id": to_id}
-        if properties:
-            props_clause = " $props"
-            params["props"] = properties
+        props = exp.model_dump(mode="python")
+        for key in ("created_at", "updated_at"):
+            if key in props and props[key] is not None:
+                props[key] = props[key].isoformat()
+
+        labels_str = ":".join(exp.__labels__)
+        props.pop("base", None)
+        props.pop("experiment_type", None)
+
+        # Build atomic transaction: create node + parent edge + optional checkpoint edge
         query = f"""
-        MATCH (a:Experiment {{id: $from_id}})
-        MATCH (b:Experiment {{id: $to_id}})
-        CREATE (a)-[:{rel_type}{props_clause}]->(b)
+        MATCH (parent:Experiment {{id: $parent_exp_id}})
+        CREATE (e:{labels_str} $exp_props)
+        CREATE (e)-[:{strategy} $edge_props]->(parent)
         """
-        async with driver.session() as session:
-            await session.run(query, params)
 
-    _run_sync(_create_experiment_edge_async(from_id, to_id, rel_type, properties))
+        params: dict[str, Any] = {
+            "exp_props": props,
+            "parent_exp_id": parent_exp_id,
+            "edge_props": edge_properties or {},
+        }
 
-def create_resumed_from_edge(exp_id: str, ckp_uri: str) -> None:
-    """Create CKP_RESUMED_FROM relationship from Experiment to Checkpoint.
-
-    Used for RESUME strategies where the new
-    experiment physically starts from a specific checkpoint's weights.
-
-    Args:
-        exp_id: Source experiment ID.
-        ckp_uri: Target checkpoint URI (the one weights are loaded from).
-    """
-    async def _create_resumed_from_edge_async(exp_id: str, ckp_uri: str) -> None:
-        """Create RESUMED_FROM relationship from Experiment to Checkpoint."""
-        driver = await get_driver()
-        query = """
-        MATCH (e:Experiment {id: $exp_id})
-        MATCH (c:Checkpoint {uri: $ckp_uri})
-        CREATE (e)-[:CKP_RESUMED_FROM]->(c)
+        # Optional: create checkpoint edge for RESUME strategy
+        if parent_ckp_uri:
+            query += """
+        OPTIONAL MATCH (ckp:Checkpoint {uri: $ckp_uri})
+        CREATE (e)-[:CKP_RESUMED_FROM]->(ckp)
         """
-        async with driver.session() as session:
-            await session.run(query, {"exp_id": exp_id, "ckp_uri": ckp_uri})
+            params["ckp_uri"] = parent_ckp_uri
 
-    _run_sync(_create_resumed_from_edge_async(exp_id, ckp_uri))
+        query += "\nRETURN e.id AS id"
+
+        async with driver.session() as session:
+            result = await session.run(query, params)
+            record = await result.single()
+            if record is None:
+                raise ValueError(f"Failed to create experiment with parent_exp_id={parent_exp_id}")
+            return record["id"]
+
+    return _run_sync(_create_non_base_experiment_with_chain_edge_async(
+        exp, parent_exp_id, strategy, edge_properties, parent_ckp_uri
+    ))
 
 def update_experiment_status(exp_id: str, status: str, exit_msg: str | None = None, metrics_uri: str | None = None) -> None:
     """Update experiment status in Neo4j."""
