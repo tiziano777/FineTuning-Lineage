@@ -13,12 +13,10 @@ class RecipeEntry(BaseModel):
     dist_uri: str = Field(..., min_length=1, description="Path or URI to distribution")
     replica: Optional[int] = Field(None, ge=1, description="Replication factor (N× oversampling)")
     samples: Optional[int] = Field(None, ge=0, description="Total number of samples in distribution")
-    system_prompt: Optional[List[str]] = Field(None, description="System prompt templates")
-    system_prompt_name: Optional[List[str]] = Field(None, description="System prompt names")
+    system_prompt: Optional[Dict[str, str]] = Field(None, description="System prompt name→content templates (unified dict format)")
     tokens: Optional[int] = Field(None, ge=0, description="Total token count")
     words: Optional[int] = Field(None, ge=0, description="Total word count")
     validation_error: Optional[str] = Field(None, description="Validation error if any")
-
 
 class RecipeConfig(BaseModel):
     """Full recipe configuration — preserves all metadata fields from the YAML.
@@ -31,8 +29,8 @@ class RecipeConfig(BaseModel):
         ...,
         description="List of distribution metadata objects (REQUIRED)"
     )
-    recipe_id: Optional[str] = Field(None, description="Recipe UUID")
-    recipe_name: Optional[str] = Field(None, description="Recipe short name")
+    id: str = Field(None, description="Recipe UUID")
+    name: str = Field(..., description="Recipe short name")
     description: Optional[str] = Field(None, description="Human-readable description")
     scope: Optional[str] = Field(None, description="Training scope (e.g. continual_ft, sft)")
     tasks: Optional[List[str]] = Field(None, description="Task categories covered")

@@ -1,11 +1,7 @@
 from __future__ import annotations
-
 from pathlib import Path
-
 import yaml
-
 from .recipe_config import RecipeConfig, RecipeEntry
-
 
 from pathlib import Path
 import yaml
@@ -31,7 +27,6 @@ class RecipeLoader:
         if isinstance(data, dict) and "recipe" in data and isinstance(data["recipe"], dict):
             data = data["recipe"]
 
-        # CORREZIONE: Ora 'entries' è una lista. Se è vuota o assente, usiamo una lista vuota [].
         raw_entries = data.get("entries", []) or []
         
         # Costruiamo la lista di oggetti RecipeEntry
@@ -43,8 +38,8 @@ class RecipeLoader:
         # Istanziamo RecipeConfig passando la lista. 
         # Pydantic farà il resto del lavoro di validazione sui campi opzionali.
         return RecipeConfig(
-            recipe_id=data.get("id"),
-            recipe_name=data.get("name"),
+            id=data.get("id"),
+            name=data.get("name"),
             description=data.get("description"),
             scope=data.get("scope"),
             # Usiamo None se assenti per non forzare liste vuote se l'utente non le dichiara nel DB

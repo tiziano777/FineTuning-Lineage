@@ -4,140 +4,113 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime
-from typing import Optional
-from enum import Enum
+from datetime import datetime, timezone
+from typing import Optional, Any, Dict
 
-from graph_lineage.data_classes.neo4j.nodes.model import Model
+from graph_lineage.data_classes.neo4j.nodes.model import Model, ModelType
 from graph_lineage.streamlit_ui.utils.errors import UIError
 from graph_lineage.streamlit_ui.utils.entity_constraints import EntityConstraints
 from graph_lineage.streamlit_ui.db.neo4j_async import AsyncNeo4jClient
 
 logger = logging.getLogger(__name__)
 
-class KindEnum(str, Enum):
-    """Enum for model kind."""
-    BASE = "BASE"
-    ADAPTER = "ADAPTER"
-    MERGED = "MERGED"
-
-
 class ModelRepository:
-    """Data access layer for Model entity."""
+    """Data access layer for Model entity.
+
+    Works directly with Model pydantic instances, preserving extra fields
+    via the ConfigDict(extra='allow') configuration on BaseEntity.
+    """
 
     def __init__(self, db_client: AsyncNeo4jClient):
         """Initialize repository with Neo4j client."""
         self.db = db_client
         self.constraints = EntityConstraints(db_client)
 
-    async def _create(
-        self,
-        model_id: str,
-        model_name: str,
-        version: str = "",
-        uri: str = "",
-        url: str = "",
-        doc_url: str = "",
-        description: str = "",
-        kind: Optional[KindEnum] = None,
-        architecture_info_ref: str = "",
-    ) -> Model:
-        """Create a new model.
+    def _model_to_db_params(self, model: Model, include_timestamps: bool = True) -> Dict[str, Any]:
+        """Convert Model instance to flat dict for Neo4j query parameters.
+
+        Handles both defined fields and extra/custom fields uniformly.
+        Pydantic extra fields are merged at the top level with standard fields.
+        """
+        # Start with model dump - includes all defined + extra fields
+        data = model.model_dump(exclude={'id', 'created_at', 'updated_at'} if not include_timestamps else set())
+
+        # Ensure kind is stored as string value, not enum object
+        if isinstance(data.get('kind'), ModelType):
+            data['kind'] = data['kind'].value
+
+        # Add core fields back if needed
+        if include_timestamps:
+            data['id'] = model.id
+            data['created_at'] = model.created_at.isoformat() if hasattr(model.created_at, 'isoformat') else str(model.created_at)
+            data['updated_at'] = model.updated_at.isoformat() if hasattr(model.updated_at, 'isoformat') else str(model.updated_at)
+        else:
+            data['id'] = model.id
+
+        return data
+
+    def _row_to_model(self, row: Dict[str, Any]) -> Model:
+        """Convert Neo4j result row back to Model instance.
+
+        Extra fields in the row that are not part of the Model schema
+        will be preserved thanks to ConfigDict(extra='allow').
+        """
+        if not row:
+            raise UIError("Empty row cannot be converted to Model")
+
+        data = dict(row)
+
+        if 'kind' in data and isinstance(data['kind'], str):
+            try:
+                data['kind'] = ModelType(data['kind'])
+            except ValueError:
+                data['kind'] = ModelType.UNKNOWN
+
+        return Model(**data)
+
+    async def _create(self, model: Model) -> Model:
+        """Create a new model from a Model instance.
 
         Args:
-            model_id: Unique model ID.
-            model_name: Unique model name.
-            version: Model version.
-            uri: Model URI.
-            url: Model URL.
-            doc_url: Documentation URL.
-            description: Model description.
-            kind: Model kind (BASE | ADAPTER | MERGED).
-            architecture_info_ref: Reference to architecture document.
+            model: Complete Model instance with all fields (standard + custom).
 
         Returns:
-            Created model data.
+            Created model data as Model instance.
         """
-        now = datetime.utcnow().isoformat()
-        query = """
-        CREATE (m:Model {
-            id: $id,
-            model_name: $model_name,
-            version: $version,
-            uri: $uri,
-            url: $url,
-            doc_url: $doc_url,
-            description: $description,
-            kind: $kind,
-            architecture_info_ref: $architecture_info_ref,
-            created_at: $created_at,
-            updated_at: $updated_at
-        })
-        RETURN m.id as id, m.model_name as model_name, m.version as version,
-               m.uri as uri, m.url as url, m.doc_url as doc_url,
-               m.description as description, m.kind as kind, m.architecture_info_ref as architecture_info_ref, m.created_at as created_at, m.updated_at as updated_at
+        now = datetime.now(timezone.utc).isoformat()
+
+        # Build dynamic property map from model data
+        params = self._model_to_db_params(model, include_timestamps=False)
+
+        # Generate property placeholders dynamically to support extra fields
+        prop_keys = list(params.keys())
+        prop_map = ', '.join([f"{k}: ${k}" for k in prop_keys])
+
+        query = f"""
+        CREATE (m:Model {{{prop_map}}})
+        RETURN m
         """
 
-        result = await self.db.run_single(
-            query,
-            id=model_id,
-            model_name=model_name,
-            version=version,
-            uri=uri,
-            url=url,
-            doc_url=doc_url,
-            description=description,
-            kind=kind,
-            architecture_info_ref=architecture_info_ref,
-            created_at=now,
-            updated_at=now,
-        )
+        result = await self.db.run_single(query, **params)
 
-        if not result:
+        if not result or 'm' not in result:
             raise UIError("Failed to create model in Neo4j")
 
-        logger.info(f"Model created: id={model_id}, name={model_name}")
-        return Model(**result)
+        logger.info(f"Model created: id={model.id}, name={model.model_name}")
+        return self._row_to_model(result['m'])
 
-    async def create_model(
-        self,
-        model_name: str,
-        version: str = "",
-        uri: str = "",
-        url: str = "",
-        doc_url: str = "",
-        description: str = "",
-        kind: Optional[KindEnum] = None,
-        architecture_info_ref: str = "",
-    ) -> Model:
-        """Create a new model (generates UUID automatically).
+    async def create_model(self, model: Model) -> Model:
+        """Create a new model (assigns UUID if not provided).
 
         Args:
-            model_name: Unique model name.
-            version: Model version.
-            uri: Model URI.
-            url: Model URL.
-            doc_url: Documentation URL.
-            description: Model description.
-            kind: Model kind (BASE | ADAPTER | MERGED).
-            architecture_info_ref: Reference to architecture document.
+            model: Model instance. If id is empty, a new UUID is generated.
 
         Returns:
-            Created model data.
+            Created model data as Model instance.
         """
-        import uuid
-        model_id = str(uuid.uuid4())
-        return await self._create(
-            model_id=model_id,
-            model_name=model_name,
-            version=version,
-            uri=uri,
-            url=url,
-            doc_url=doc_url,
-            description=description,
-            kind=kind,
-            architecture_info_ref=architecture_info_ref,
-        )
+        if not model.id:
+            model.id = str(uuid.uuid4())
+        return await self._create(model)
 
     async def get_by_id(self, model_id: str) -> Optional[Model]:
         """Get model by ID.
@@ -150,13 +123,13 @@ class ModelRepository:
         """
         query = """
         MATCH (m:Model {id: $id})
-        RETURN m.id as id, m.model_name as model_name, m.version as version,
-               m.uri as uri, m.url as url, m.doc_url as doc_url,
-               m.description as description, m.kind as kind, m.architecture_info_ref as architecture_info_ref, m.created_at as created_at, m.updated_at as updated_at
+        RETURN m
         """
 
         result = await self.db.run_single(query, id=model_id)
-        return Model(**result) if result else None
+        if not result or 'm' not in result:
+            return None
+        return self._row_to_model(result['m'])
 
     async def list_all(self) -> list[Model]:
         """List all models with default limit of 100.
@@ -172,24 +145,22 @@ class ModelRepository:
         offset: int = 0,
     ) -> list[Model]:
         """List models with pagination support.
-        
+
         Args:
             limit: Maximum number of models to return.
             offset: Number of models to skip (for pagination).
-            
+
         Returns:
             List of Model objects.
         """
         query = """
         MATCH (m:Model)
-        RETURN m.id as id, m.model_name as model_name, m.version as version,
-               m.uri as uri, m.url as url, m.doc_url as doc_url,
-               m.description as description, m.kind as kind, m.architecture_info_ref as architecture_info_ref, m.created_at as created_at, m.updated_at as updated_at
+        RETURN m
         ORDER BY m.created_at DESC
         SKIP $offset LIMIT $limit
         """
         results = await self.db.run_list(query, limit=limit, offset=offset)
-        return [Model(**row) for row in results]
+        return [self._row_to_model(row['m']) for row in results if 'm' in row]
 
     async def list_models(self) -> list[Model]:
         """Alias for list_all for manager compatibility.
@@ -210,28 +181,53 @@ class ModelRepository:
         """
         return await self.get_by_id(model_id)
 
-    async def update_model(
-        self,
-        model_id: str,
-        version: str = "",
-        uri: str = "",
-        url: str = "",
-        doc_url: str = "",
-        description: str = "",
-        kind: Optional[KindEnum] = None,
-        architecture_info_ref: str = "",
-    ) -> Model:
-        """Alias for update for manager compatibility."""
-        return await self.update(
-            model_id=model_id,
-            version=version,
-            uri=uri,
-            url=url,
-            doc_url=doc_url,
-            description=description,
-            kind=kind,
-            architecture_info_ref=architecture_info_ref,
-        )
+    async def update_model(self, model: Model) -> Model:
+        """Update model from a Model instance.
+
+        Preserves existing fields not present in the update, and handles
+        extra/custom fields dynamically.
+
+        Args:
+            model: Model instance with updated fields. Must have valid id.
+
+        Returns:
+            Updated model data as Model instance.
+        """
+        if not model.id:
+            raise UIError("Model id is required for update")
+
+        now = datetime.now(timezone.utc).isoformat()
+
+        # Build dynamic SET clauses for all fields present in the model
+        # This ensures extra fields are also updated
+        data = model.model_dump(exclude={'id', 'created_at'})
+        data['updated_at'] = now
+
+        # Ensure kind is string
+        if isinstance(data.get('kind'), ModelType):
+            data['kind'] = data['kind'].value
+
+        set_clauses = []
+        for key in data.keys():
+            set_clauses.append(f"m.{key} = ${key}")
+
+        set_statement = ', '.join(set_clauses)
+
+        query = f"""
+        MATCH (m:Model {{id: $id}})
+        SET {set_statement}
+        RETURN m
+        """
+
+        params = {'id': model.id, **data}
+
+        result = await self.db.run_single(query, **params)
+
+        if not result or 'm' not in result:
+            raise UIError(f"Model {model.id} not found")
+
+        logger.info(f"Model updated: id={model.id}")
+        return self._row_to_model(result['m'])
 
     async def delete_model(self, model_id: str) -> None:
         """Alias for delete for manager compatibility.
@@ -252,71 +248,73 @@ class ModelRepository:
         """
         return await self.count_dependencies(model_id)
 
-    async def upsert_by_name(
-        self,
-        model_name: str,
-        version: str = "",
-        uri: str = "",
-        url: str = "",
-        doc_url: str = "",
-        description: str = "",
-        kind: Optional[KindEnum] = None,
-        architecture_info_ref: str = "",
-    ) -> Model:
+    async def upsert_by_name(self, model: Model) -> Model:
         """Upsert model by model_name using MERGE semantics.
 
         Creates the model if no model with model_name exists,
         otherwise updates non-empty fields on the existing model.
+        Preserves extra/custom fields during updates.
 
         Args:
-            model_name: Unique model name (merge key).
-            version: Model version.
-            url: Model URL.
-            doc_url: Documentation URL.
-            description: Model description.
-            kind: Model kind (BASE | ADAPTER | MERGED).
-            architecture_info_ref: Reference to architecture document.
+            model: Model instance with model_name as merge key.
 
         Returns:
-            Upserted model data.
+            Upserted model data as Model instance.
         """
-        now = datetime.utcnow().isoformat()
-        model_id = str(uuid.uuid4())
-        query = """
-        MERGE (m:Model {model_name: $model_name})
-        ON CREATE SET m.id = $id, m.version = $version, m.url = $url,
-                      m.doc_url = $doc_url, m.description = $description,
-                        m.kind = $kind, m.architecture_info_ref = $architecture_info_ref,
-                      m.created_at = $created_at, m.updated_at = $updated_at
-        ON MATCH SET m.version = CASE WHEN $version <> '' THEN $version ELSE m.version END,
-                     m.url = CASE WHEN $url <> '' THEN $url ELSE m.url END,
-                     m.doc_url = CASE WHEN $doc_url <> '' THEN $doc_url ELSE m.doc_url END,
-                     m.description = CASE WHEN $description <> '' THEN $description ELSE m.description END,
-                     m.kind = CASE WHEN $kind IS NOT NULL THEN $kind ELSE m.kind END,
-                     m.architecture_info_ref = CASE WHEN $architecture_info_ref <> '' THEN $architecture_info_ref ELSE m.architecture_info_ref END,
-                     m.updated_at = $updated_at
-        RETURN m.id as id, m.model_name as model_name, m.version as version,
-               m.url as url, m.doc_url as doc_url, m.description as description,
-                m.kind as kind, m.architecture_info_ref as architecture_info_ref,
-               m.created_at as created_at, m.updated_at as updated_at
+        if not model.model_name:
+            raise UIError("model_name is required for upsert")
+
+        now = datetime.now(timezone.utc).isoformat()
+
+        if not model.id:
+            model.id = str(uuid.uuid4())
+
+        # Build dynamic ON CREATE and ON MATCH sets
+        data = model.model_dump(exclude={'model_name'})
+
+        # Ensure kind is string
+        if isinstance(data.get('kind'), ModelType):
+            data['kind'] = data['kind'].value
+
+        # Remove empty values for conditional update logic
+        create_fields = []
+        match_fields = []
+
+        for key, value in data.items():
+            if key in ('created_at', 'updated_at'):
+                continue
+            create_fields.append(f"m.{key} = ${key}")
+
+            # For match: only update if value is meaningful (not empty string, not None for kind)
+            if key == 'kind':
+                match_fields.append(f"m.{key} = CASE WHEN ${key} IS NOT NULL THEN ${key} ELSE m.{key} END")
+            elif isinstance(value, str):
+                match_fields.append(f"m.{key} = CASE WHEN ${key} <> '' THEN ${key} ELSE m.{key} END")
+            else:
+                match_fields.append(f"m.{key} = CASE WHEN ${key} IS NOT NULL THEN ${key} ELSE m.{key} END")
+
+        create_set = ', '.join(create_fields) if create_fields else ''
+        match_set = ', '.join(match_fields) if match_fields else ''
+
+        query = f"""
+        MERGE (m:Model {{model_name: $model_name}})
+        ON CREATE SET m.created_at = $created_at, m.updated_at = $updated_at{', ' + create_set if create_set else ''}
+        ON MATCH SET m.updated_at = $updated_at{', ' + match_set if match_set else ''}
+        RETURN m
         """
-        result = await self.db.run_single(
-            query,
-            id=model_id,
-            model_name=model_name,
-            version=version,
-            url=url,
-            doc_url=doc_url,
-            description=description,
-            kind=kind,
-            architecture_info_ref=architecture_info_ref,
-            created_at=now,
-            updated_at=now,
-        )
-        if not result:
+
+        params = {
+            'model_name': model.model_name,
+            'created_at': now,
+            'updated_at': now,
+            **{k: v for k, v in data.items() if k not in ('created_at', 'updated_at')}
+        }
+
+        result = await self.db.run_single(query, **params)
+        if not result or 'm' not in result:
             raise UIError("Failed to upsert model")
-        logger.info(f"Model upserted: name={model_name}")
-        return Model(**result)
+        logger.info(f"Model upserted: name={model.model_name}")
+        return self._row_to_model(result['m'])
 
     async def update(
         self,
@@ -326,10 +324,11 @@ class ModelRepository:
         url: str = "",
         doc_url: str = "",
         description: str = "",
-        kind: Optional[KindEnum] = None,
+        kind: Optional[ModelType] = None,
         architecture_info_ref: str = "",
+        **extra_fields: Any,
     ) -> Model:
-        """Update model fields.
+        """Update model fields (legacy signature with extra fields support).
 
         Args:
             model_id: Model ID.
@@ -338,43 +337,26 @@ class ModelRepository:
             url: New URL.
             doc_url: New documentation URL.
             description: New description.
-            kind: New model kind (BASE | ADAPTER | MERGED).
+            kind: New model kind.
             architecture_info_ref: New reference to architecture document.
+            **extra_fields: Additional custom fields to update.
 
         Returns:
-            Updated model data.
+            Updated model data as Model instance.
         """
-        now = datetime.utcnow().isoformat()
-
-        query = """
-        MATCH (m:Model {id: $id})
-        SET m.version = $version, m.uri = $uri, m.url = $url,
-            m.doc_url = $doc_url, m.description = $description,
-            m.kind = $kind, m.architecture_info_ref = $architecture_info_ref, m.updated_at = $updated_at
-        RETURN m.id as id, m.model_name as model_name, m.version as version,
-               m.uri as uri, m.url as url, m.doc_url as doc_url,
-               m.description as description, m.kind as kind, m.architecture_info_ref as architecture_info_ref,
-               m.updated_at as updated_at
-        """
-
-        result = await self.db.run_single(
-            query,
+        model = Model(
             id=model_id,
+            model_name="",  # Will be preserved by update logic
             version=version,
             uri=uri,
             url=url,
             doc_url=doc_url,
-            kind=kind,
-            architecture_info_ref=architecture_info_ref,
             description=description,
-            updated_at=now,
+            kind=kind or ModelType.UNKNOWN,
+            architecture_info_ref=architecture_info_ref,
+            **extra_fields
         )
-
-        if not result:
-            raise UIError(f"Model {model_id} not found")
-
-        logger.info(f"Model updated: id={model_id}")
-        return Model(**result)
+        return await self.update_model(model)
 
     async def delete(self, model_id: str) -> None:
         """Delete model with constraint checking.
@@ -445,3 +427,4 @@ class ModelRepository:
             Number of dependent relationships.
         """
         return await self.db.count_relationships(model_id, "Model")
+   

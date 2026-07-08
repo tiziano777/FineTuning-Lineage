@@ -17,17 +17,11 @@ from graph_lineage.streamlit_ui.utils.task_enum import TaskEnum
 
 logger = logging.getLogger(__name__)
 
-
 # ----------------------------------------------------------------------
 # Async helpers — ogni operazione di scrittura passa un oggetto Recipe
 # ----------------------------------------------------------------------
 
-async def save_recipe_from_yaml_async(
-    yaml_content: str,
-    description: str = "",
-    filename: str | None = None,
-    overwrite: bool = False,
-) -> Recipe:
+async def save_recipe_from_yaml_async(yaml_content: str, description: str = "", filename: str | None = None, overwrite: bool = False) -> Recipe:
     """Parsa e persiste una recipe da YAML (create, o upsert se overwrite=True)."""
     db_client = get_neo4j_client()
     repo = RecipeRepository(db_client)
@@ -37,7 +31,6 @@ async def save_recipe_from_yaml_async(
         filename=filename,
         overwrite=overwrite,
     )
-
 
 async def create_recipe_from_form_async(
     name: str,
@@ -79,43 +72,36 @@ async def create_recipe_from_form_async(
 
     return await repo.create(recipe)
 
-
 async def update_recipe_async(recipe: Recipe) -> Recipe:
     """Persiste le modifiche su una recipe esistente."""
     db_client = get_neo4j_client()
     repo = RecipeRepository(db_client)
     return await repo.update(recipe)
 
-
 async def search_recipes_async(query: str) -> list[Recipe]:
     db_client = get_neo4j_client()
     repo = RecipeRepository(db_client)
     return await repo.search(query)
-
 
 async def list_recipes_async(limit: int = 20) -> list[Recipe]:
     db_client = get_neo4j_client()
     repo = RecipeRepository(db_client)
     return await repo.list_with_limit(limit=limit)
 
-
 async def delete_recipe_async(recipe_id: str) -> None:
     db_client = get_neo4j_client()
     repo = RecipeRepository(db_client)
     await repo.delete(recipe_id=recipe_id)
-
 
 async def is_recipe_deletable_async(recipe_id: str) -> bool:
     db_client = get_neo4j_client()
     repo = RecipeRepository(db_client)
     return await repo.is_deletable(recipe_id=recipe_id)
 
-
 async def get_recipe_by_id_async(recipe_id: str) -> Recipe | None:
     db_client = get_neo4j_client()
     repo = RecipeRepository(db_client)
     return await repo.get_by_id(recipe_id)
-
 
 def run() -> None:
     """Run recipe management page."""
@@ -300,8 +286,7 @@ def run() -> None:
                 "samples": None,
                 "tokens": None,
                 "words": None,
-                "system_prompt": [],
-                "system_prompt_name": [],
+                "system_prompt": {},
                 "custom_fields": {},
             })
             st.rerun()
@@ -372,23 +357,43 @@ def run() -> None:
                             key=f"words_{entry['entry_id']}",
                         )
 
-                    system_prompt_text = st.text_area(
-                        "System Prompts (one per line)",
-                        value="\n".join(entry.get("system_prompt", [])) if entry.get("system_prompt") else "",
-                        placeholder="prompt1\nprompt2",
-                        height=80,
-                        key=f"system_prompt_{entry['entry_id']}",
-                    )
-                    entry["system_prompt"] = [p.strip() for p in system_prompt_text.split("\n") if p.strip()]
+                    # ─── System Prompts as Dict[str, str] ───
+                    st.markdown("##### System Prompts (Dict: name → content)")
+                    if "system_prompt" not in entry or not isinstance(entry["system_prompt"], dict):
+                        entry["system_prompt"] = {}
 
-                    system_prompt_names_text = st.text_area(
-                        "System Prompt Names (one per line)",
-                        value="\n".join(entry.get("system_prompt_name", [])) if entry.get("system_prompt_name") else "",
-                        placeholder="prompt_name_1\nprompt_name_2",
-                        height=80,
-                        key=f"system_prompt_name_{entry['entry_id']}",
-                    )
-                    entry["system_prompt_name"] = [n.strip() for n in system_prompt_names_text.split("\n") if n.strip()]
+                    col_add_prompt, col_remove = st.columns([3, 1])
+                    with col_add_prompt:
+                        new_prompt_name = st.text_input(
+                            "Prompt Name",
+                            key=f"new_prompt_name_{entry['entry_id']}",
+                            placeholder="e.g., DPO_Text2SQL",
+                        )
+                    with col_remove:
+                        st.write("")
+                        if st.button("➕ Add Prompt", key=f"add_prompt_{entry['entry_id']}"):
+                            if new_prompt_name and new_prompt_name.strip():
+                                pname = new_prompt_name.strip()
+                                if pname not in entry["system_prompt"]:
+                                    entry["system_prompt"][pname] = ""
+                                    st.rerun()
+
+                    # Show existing prompts
+                    if entry["system_prompt"]:
+                        for prompt_name in list(entry["system_prompt"].keys()):
+                            col_val, col_del = st.columns([4, 1])
+                            with col_val:
+                                entry["system_prompt"][prompt_name] = st.text_area(
+                                    f"Content for '{prompt_name}'",
+                                    value=entry["system_prompt"][prompt_name],
+                                    height=80,
+                                    key=f"prompt_content_{entry['entry_id']}_{prompt_name}",
+                                )
+                            with col_del:
+                                st.write("")
+                                if st.button("🗑️ Remove", key=f"remove_prompt_{entry['entry_id']}_{prompt_name}"):
+                                    del entry["system_prompt"][prompt_name]
+                                    st.rerun()
 
                     st.markdown("#### Entry Custom Fields (Advanced)")
                     col_add, col_remove = st.columns([3, 1])
@@ -454,7 +459,6 @@ def run() -> None:
                             "tokens": entry.get("tokens"),
                             "words": entry.get("words"),
                             "system_prompt": entry.get("system_prompt") or None,
-                            "system_prompt_name": entry.get("system_prompt_name") or None,
                         }
                         if entry.get("custom_fields"):
                             entry_dict.update(entry["custom_fields"])
@@ -546,8 +550,9 @@ def run() -> None:
                                             with target_cols:
                                                 for key in keys:
                                                     val = full_data[key]
-                                                    if key == "system_prompt" and isinstance(val, list):
-                                                        val = [str(e)[:150] + "..." if len(str(e)) > 150 else str(e) for e in val]
+                                                    if key == "system_prompt" and isinstance(val, dict):
+                                                        val_display = ", ".join([f"{k}: {v[:50]}..." if len(v) > 50 else f"{k}: {v}" for k, v in val.items()])
+                                                        val = val_display or "(empty)"
                                                     st.write(f"**{key}:** {val}")
 
                                     if validation_error:
@@ -607,8 +612,7 @@ def run() -> None:
                                         "samples": entry_dict.get("samples"),
                                         "tokens": entry_dict.get("tokens"),
                                         "words": entry_dict.get("words"),
-                                        "system_prompt": list(entry_dict.get("system_prompt", []) or []),
-                                        "system_prompt_name": list(entry_dict.get("system_prompt_name", []) or []),
+                                        "system_prompt": dict(entry_dict.get("system_prompt") or {}),
                                         "custom_fields": dict(entry_custom or {}),
                                     })
 
@@ -709,8 +713,7 @@ def run() -> None:
                                     "samples": None,
                                     "tokens": None,
                                     "words": None,
-                                    "system_prompt": [],
-                                    "system_prompt_name": [],
+                                    "system_prompt": {},
                                     "custom_fields": {},
                                 })
                                 st.rerun()
@@ -788,21 +791,43 @@ def run() -> None:
                                                 key=f"edit_words_{key_suffix}_{entry_id}",
                                             )
 
-                                        sp_text = st.text_area(
-                                            "System Prompts (one per line)",
-                                            value="\n".join(entry.get("system_prompt", [])),
-                                            height=80,
-                                            key=f"edit_sp_{key_suffix}_{entry_id}",
-                                        )
-                                        entry["system_prompt"] = [p.strip() for p in sp_text.split("\n") if p.strip()]
+                                        # ─── System Prompts as Dict[str, str] ───
+                                        st.markdown("##### System Prompts (Dict: name → content)")
+                                        if "system_prompt" not in entry or not isinstance(entry["system_prompt"], dict):
+                                            entry["system_prompt"] = {}
 
-                                        spn_text = st.text_area(
-                                            "System Prompt Names (one per line)",
-                                            value="\n".join(entry.get("system_prompt_name", [])),
-                                            height=80,
-                                            key=f"edit_spn_{key_suffix}_{entry_id}",
-                                        )
-                                        entry["system_prompt_name"] = [n.strip() for n in spn_text.split("\n") if n.strip()]
+                                        col_add_prompt, col_remove = st.columns([3, 1])
+                                        with col_add_prompt:
+                                            new_prompt_name = st.text_input(
+                                                "Prompt Name",
+                                                key=f"edit_new_prompt_name_{key_suffix}_{entry_id}",
+                                                placeholder="e.g., DPO_Text2SQL",
+                                            )
+                                        with col_remove:
+                                            st.write("")
+                                            if st.button("➕ Add Prompt", key=f"edit_add_prompt_{key_suffix}_{entry_id}"):
+                                                if new_prompt_name and new_prompt_name.strip():
+                                                    pname = new_prompt_name.strip()
+                                                    if pname not in entry["system_prompt"]:
+                                                        entry["system_prompt"][pname] = ""
+                                                        st.rerun()
+
+                                        # Show existing prompts
+                                        if entry["system_prompt"]:
+                                            for prompt_name in list(entry["system_prompt"].keys()):
+                                                col_val, col_del = st.columns([4, 1])
+                                                with col_val:
+                                                    entry["system_prompt"][prompt_name] = st.text_area(
+                                                        f"Content for '{prompt_name}'",
+                                                        value=entry["system_prompt"][prompt_name],
+                                                        height=80,
+                                                        key=f"edit_prompt_content_{key_suffix}_{entry_id}_{prompt_name}",
+                                                    )
+                                                with col_del:
+                                                    st.write("")
+                                                    if st.button("🗑️ Remove", key=f"edit_remove_prompt_{key_suffix}_{entry_id}_{prompt_name}"):
+                                                        del entry["system_prompt"][prompt_name]
+                                                        st.rerun()
 
                                         # ── Entry Custom Fields ──
                                         st.markdown("##### Entry Custom Fields")
@@ -860,7 +885,6 @@ def run() -> None:
                                                 "tokens": e["tokens"],
                                                 "words": e["words"],
                                                 "system_prompt": e["system_prompt"] if e["system_prompt"] else None,
-                                                "system_prompt_name": e["system_prompt_name"] if e["system_prompt_name"] else None,
                                             }
                                             # Aggiungi custom fields
                                             for ck, cv in e.get("custom_fields", {}).items():

@@ -21,8 +21,9 @@ class Component(BaseEntity):
 
     description: Optional[str] = Field("", description="Component description")
 
-    technique_code: str = Field(..., min_length=1, description="Technique code (e.g., grpo, sft)")
-    framework_code: str = Field(..., min_length=1, description="Framework code (e.g., unsloth, trl)")
+    technique_code: Optional[str] = Field(..., min_length=1, description="Technique code (e.g., grpo, sft)")
+    framework_code: Optional[str] = Field(..., min_length=1, description="Framework code (e.g., unsloth, trl)")
     opt_code: Optional[str] = Field("", description="Optimization code, Lora, Qlora, etc")
 
     docs_url: Optional[str] = Field("", description="Documentation URL")
+    

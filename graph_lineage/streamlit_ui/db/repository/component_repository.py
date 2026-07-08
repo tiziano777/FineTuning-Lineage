@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
-from typing import Optional
+from datetime import datetime, timezone
+from typing import Optional, Any
 
 from graph_lineage.data_classes.neo4j.nodes.component import Component
 from graph_lineage.streamlit_ui.utils.errors import UIError
@@ -15,27 +15,112 @@ logger = logging.getLogger(__name__)
 
 _SETUPS_PREFIX = "./graph_lineage/setups/"
 
-# Columns returned by every SELECT query
-_RETURN_COLS = """
-    c.id as id, c.name as name, c.uri as uri,
-    c.opt_code as opt_code, c.technique_code as technique_code,
-    c.framework_code as framework_code,
-    c.docs_url as docs_url, c.description as description,
-    c.created_at as created_at, c.updated_at as updated_at
-"""
+# Standard fields known to the Component model
+_STANDARD_FIELDS = {
+    "id", "name", "uri", "opt_code", "technique_code",
+    "framework_code", "docs_url", "description",
+    "created_at", "updated_at",
+}
 
 
 class ComponentRepository:
-    """Data access layer for Component entity."""
+    """Data access layer for Component entity.
+
+    Supports dynamic extra fields via Pydantic ConfigDict(extra='allow').
+    All CRUD operations preserve custom fields stored in Neo4j.
+    No APOC triggers required — extra fields are handled natively
+    by Pydantic which merges them at the top level automatically.
+    """
 
     def __init__(self, db_client: AsyncNeo4jClient):
         """Initialize repository with Neo4j client."""
         self.db = db_client
         self.constraints = EntityConstraints(db_client)
 
-    async def create(
+    # ─────────────────────────────────────────────────────────────────────
+    # Helper: build property map from Component instance
+    # ─────────────────────────────────────────────────────────────────────
+
+    def _component_to_props(self, component: Component) -> dict[str, Any]:
+        """Serialize a Component instance into a flat dict for Neo4j.
+
+        Includes both standard fields and custom extra fields.
+        Pydantic's model_dump() automatically includes extra fields
+        thanks to ConfigDict(extra='allow').
+        """
+        props = component.model_dump(mode="json", exclude_none=False)
+        # Ensure timestamps are ISO strings
+        for ts_field in ("created_at", "updated_at"):
+            val = props.get(ts_field)
+            if isinstance(val, datetime):
+                props[ts_field] = val.isoformat()
+        return props
+
+    def _record_to_component(self, record: dict | None) -> Component | None:
+        """Convert a Neo4j record dict into a Component instance.
+
+        Pydantic's extra='allow' automatically absorbs any extra keys
+        at the top level — no manual merging needed!
+        """
+        if not record:
+            return None
+        return Component(**record)
+
+    def _build_dynamic_set(self, props: dict[str, Any], alias: str = "c") -> str:
+        """Build a dynamic SET clause from a flat property dict.
+
+        Sanitizes keys to prevent Cypher injection.
+        """
+        lines = []
+        for key in props.keys():
+            safe_key = key.replace("`", "``")
+            lines.append(f"{alias}.`{safe_key}` = ${key}")
+        return ",\n            ".join(lines)
+
+    # ─────────────────────────────────────────────────────────────────────
+    # CRUD Operations
+    # ─────────────────────────────────────────────────────────────────────
+
+    async def create(self, component: Component) -> Component:
+        """Create a new component from a Component instance.
+
+        Args:
+            component: Fully populated Component instance (including extras).
+
+        Returns:
+            Created Component with all fields (including extras).
+        """
+        # Auto-resolve URI if empty
+        if not component.uri and component.name:
+            component.uri = f"{_SETUPS_PREFIX}{component.name}"
+
+        # Ensure timestamps
+        now = datetime.now(timezone.utc)
+        if not component.created_at:
+            component.created_at = now
+        if not component.updated_at:
+            component.updated_at = now
+
+        props = self._component_to_props(component)
+        set_clause = self._build_dynamic_set(props)
+
+        query = f"""
+        CREATE (c:Component)
+        SET {set_clause}
+        RETURN c {{.*}} as c
+        """
+
+        result = await self.db.run_single(query, **props)
+
+        if not result or "c" not in result:
+            raise UIError("Failed to create component in Neo4j")
+
+        created = self._record_to_component(result["c"])
+        logger.info(f"Component created: id={created.id}, name={created.name}")
+        return created
+
+    async def create_from_params(
         self,
-        component_id: str,
         name: str,
         technique_code: str,
         framework_code: str,
@@ -43,89 +128,19 @@ class ComponentRepository:
         uri: str = "",
         docs_url: str = "",
         description: str = "",
+        **extra_fields: Any,
     ) -> Component:
-        """Create a new component.
+        """Convenience factory: create Component from individual params + extras.
 
         Args:
-            component_id: Unique component ID.
-            name: Component name (= setup template folder name, e.g. "dpo_trl").
-            technique_code: Technique code.
-            framework_code: Framework code.
-            opt_code: Optimization code.
-            uri: Internal URI to setup template. Auto-derived from name if empty.
-            docs_url: Documentation URL.
-            description: Component description.
+            name, technique_code, framework_code: Required fields.
+            opt_code, uri, docs_url, description: Optional standard fields.
+            **extra_fields: Any additional custom metadata fields.
 
         Returns:
-            Created component data.
+            Created Component instance.
         """
-        resolved_uri = uri if uri else f"{_SETUPS_PREFIX}{name}"
-        now = datetime.utcnow().isoformat()
-
-        query = f"""
-        CREATE (c:Component {{
-            id: $id,
-            name: $name,
-            uri: $uri,
-            opt_code: $opt_code,
-            technique_code: $technique_code,
-            framework_code: $framework_code,
-            docs_url: $docs_url,
-            description: $description,
-            created_at: $created_at,
-            updated_at: $updated_at
-        }})
-        RETURN {_RETURN_COLS}
-        """
-
-        result = await self.db.run_single(
-            query,
-            id=component_id,
-            name=name,
-            uri=resolved_uri,
-            opt_code=opt_code,
-            technique_code=technique_code,
-            framework_code=framework_code,
-            docs_url=docs_url,
-            description=description,
-            created_at=now,
-            updated_at=now,
-        )
-
-        if not result:
-            raise UIError("Failed to create component in Neo4j")
-
-        logger.info(f"Component created: id={component_id}, name={name}, technique={technique_code}")
-        return Component(**result)
-
-    async def create_component(
-        self,
-        name: str,
-        opt_code: str,
-        technique_code: str,
-        framework_code: str,
-        uri: str = "",
-        docs_url: str = "",
-        description: str = "",
-    ) -> Component:
-        """Create a new component (generates UUID automatically).
-
-        Args:
-            name: Component name (= setup template folder name).
-            opt_code: Optimization code.
-            technique_code: Technique code (e.g., lora_grpo).
-            framework_code: Framework code (e.g., unsloth).
-            uri: Internal URI. Auto-derived from name if empty.
-            docs_url: Documentation URL.
-            description: Component description.
-
-        Returns:
-            Created Component object.
-        """
-        import uuid
-        component_id = str(uuid.uuid4())
-        return await self.create(
-            component_id=component_id,
+        component = Component(
             name=name,
             technique_code=technique_code,
             framework_code=framework_code,
@@ -133,16 +148,18 @@ class ComponentRepository:
             uri=uri,
             docs_url=docs_url,
             description=description,
+            **extra_fields,
         )
+        return await self.create(component)
 
     async def get_by_id(self, component_id: str) -> Optional[Component]:
-        """Get component by ID."""
-        query = f"""
-        MATCH (c:Component {{id: $id}})
-        RETURN {_RETURN_COLS}
+        """Get component by ID. Returns Component or None."""
+        query = """
+        MATCH (c:Component {id: $id})
+        RETURN c {.*} as c
         """
         result = await self.db.run_single(query, id=component_id)
-        return Component(**result) if result else None
+        return self._record_to_component(result.get("c") if result else None)
 
     async def list_all(self) -> list[Component]:
         """List all components with default limit of 100."""
@@ -153,56 +170,31 @@ class ComponentRepository:
         limit: int = 100,
         offset: int = 0,
     ) -> list[Component]:
-        """List components with pagination support.
-        
-        Args:
-            limit: Maximum number of components to return.
-            offset: Number of components to skip (for pagination).
-            
-        Returns:
-            List of Component objects.
-        """
-        query = f"""
+        """List components with pagination support."""
+        query = """
         MATCH (c:Component)
-        RETURN {_RETURN_COLS}
+        RETURN c {.*} as c
         ORDER BY c.created_at DESC
         SKIP $offset LIMIT $limit
         """
         results = await self.db.run_list(query, limit=limit, offset=offset)
-        return [Component(**row) for row in results]
+        return [self._record_to_component(r["c"]) for r in results if "c" in r]
+
+    # ─────────────────────────────────────────────────────────────────────
+    # Alias methods for manager compatibility
+    # ─────────────────────────────────────────────────────────────────────
 
     async def list_components(self) -> list[Component]:
-        """Alias for list_all for manager compatibility."""
+        """Alias for list_all."""
         return await self.list_all()
 
     async def get_component(self, component_id: str) -> Optional[Component]:
-        """Alias for get_by_id for manager compatibility."""
+        """Alias for get_by_id."""
         return await self.get_by_id(component_id)
 
-    async def update_component(
-        self,
-        component_id: str,
-        name: str = "",
-        uri: str = "",
-        docs_url: str = "",
-        description: str = "",
-    ) -> Component:
-        """Alias for update for manager compatibility."""
-        return await self.update(
-            component_id=component_id,
-            name=name,
-            uri=uri,
-            docs_url=docs_url,
-            description=description,
-        )
-
-    async def delete_component(self, component_id: str) -> None:
-        """Alias for delete for manager compatibility."""
-        await self.delete(component_id)
-
-    async def check_component_dependencies(self, component_id: str) -> int:
-        """Alias for count_dependencies for manager compatibility."""
-        return await self.count_dependencies(component_id)
+    # ─────────────────────────────────────────────────────────────────────
+    # Update
+    # ─────────────────────────────────────────────────────────────────────
 
     async def update(
         self,
@@ -211,24 +203,21 @@ class ComponentRepository:
         uri: str = "",
         docs_url: str = "",
         description: str = "",
+        **extra_fields: Any,
     ) -> Component:
         """Update component fields.
 
         If name is provided and uri is empty, uri is re-derived from name.
+        Any extra_fields are merged into the node (create or overwrite).
 
         Args:
             component_id: Component ID.
-            name: New component name (updates uri too if uri is empty).
-            uri: Explicit URI override. If empty and name given, auto-derived.
-            docs_url: New documentation URL.
-            description: New description.
+            name, uri, docs_url, description: Standard fields to update.
+            **extra_fields: Additional custom metadata to set/update.
 
         Returns:
-            Updated component data.
+            Updated Component instance with all fields.
         """
-        now = datetime.utcnow().isoformat()
-
-        # Fetch current values for fields not being updated
         existing = await self.get_by_id(component_id)
         if not existing:
             raise UIError(f"Component {component_id} not found")
@@ -241,29 +230,60 @@ class ComponentRepository:
         else:
             new_uri = existing.uri
 
+        now = datetime.now(timezone.utc).isoformat()
+
+        # Build props dict for all fields to set
+        props = {
+            "id": component_id,
+            "name": new_name,
+            "uri": new_uri,
+            "docs_url": docs_url,
+            "description": description,
+            "updated_at": now,
+        }
+
+        # Merge extra fields
+        props.update(extra_fields)
+
+        set_clause = self._build_dynamic_set(props)
+
         query = f"""
         MATCH (c:Component {{id: $id}})
-        SET c.name = $name, c.uri = $uri,
-            c.docs_url = $docs_url, c.description = $description,
-            c.updated_at = $updated_at
-        RETURN {_RETURN_COLS}
+        SET {set_clause}
+        RETURN c {{.*}} as c
         """
 
-        result = await self.db.run_single(
-            query,
-            id=component_id,
-            name=new_name,
-            uri=new_uri,
-            docs_url=docs_url,
-            description=description,
-            updated_at=now,
-        )
+        result = await self.db.run_single(query, **props)
 
-        if not result:
+        if not result or "c" not in result:
             raise UIError(f"Component {component_id} not found")
 
+        updated = self._record_to_component(result["c"])
         logger.info(f"Component updated: id={component_id}")
-        return Component(**result)
+        return updated
+
+    async def update_component(
+        self,
+        component_id: str,
+        name: str = "",
+        uri: str = "",
+        docs_url: str = "",
+        description: str = "",
+        **extra_fields: Any,
+    ) -> Component:
+        """Alias for update for manager compatibility."""
+        return await self.update(
+            component_id=component_id,
+            name=name,
+            uri=uri,
+            docs_url=docs_url,
+            description=description,
+            **extra_fields,
+        )
+
+    # ─────────────────────────────────────────────────────────────────────
+    # Delete
+    # ─────────────────────────────────────────────────────────────────────
 
     async def delete(self, component_id: str) -> None:
         """Delete component with constraint checking."""
@@ -285,6 +305,14 @@ class ComponentRepository:
             logger.error(f"Component deletion failed: {component_id}", exc_info=True)
             raise UIError(f"Failed to delete component: {str(e)}")
 
+    async def delete_component(self, component_id: str) -> None:
+        """Alias for delete for manager compatibility."""
+        await self.delete(component_id)
+
+    # ─────────────────────────────────────────────────────────────────────
+    # Dependencies
+    # ─────────────────────────────────────────────────────────────────────
+
     async def is_deletable(self, component_id: str) -> bool:
         """Check if component can be deleted (no related experiments)."""
         existing = await self.get_by_id(component_id)
@@ -303,3 +331,7 @@ class ComponentRepository:
     async def count_dependencies(self, component_id: str) -> int:
         """Count relationships to this component."""
         return await self.db.count_relationships(component_id, "Component")
+
+    async def check_component_dependencies(self, component_id: str) -> int:
+        """Alias for count_dependencies for manager compatibility."""
+        return await self.count_dependencies(component_id)

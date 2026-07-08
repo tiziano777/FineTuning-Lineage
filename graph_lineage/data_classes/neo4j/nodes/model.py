@@ -6,12 +6,33 @@ from pydantic import Field
 from .base import BaseEntity
 from enum import Enum
 
-class KindEnum(str, Enum):
-    """Enum for model kind."""
-    NONE = "NONE"
-    BASE = "BASE"
-    ADAPTER = "ADAPTER"
-    MERGED = "MERGED"
+class ModelType(Enum):
+    """Enum per i tipi di modelli LLM."""
+    
+    # Modelli base/fondazionali
+    FOUNDATIONAL = "foundational"
+    BASE = "base"
+    
+    # Modelli addestrati/istruiti
+    INSTRUCT = "instruct"
+    THINKING = "thinking"
+    
+    # Modelli specializzati
+    DOMAIN_SPECIFIC = "domain_specific"
+    FINE_TUNED = "fine_tuned"
+    
+    # Modelli derivati
+    MERGED = "merged"
+    DISTILLED = "distilled"
+    
+    # Modelli compressi
+    QUANTIZED = "quantized"
+    
+    # Modelli multimodali
+    MULTIMODAL = "multimodal"
+    
+    # Altri
+    UNKNOWN = "unknown"
 
 class Model(BaseEntity):
     """Model entity -- base model for fine-tuning."""
@@ -23,6 +44,7 @@ class Model(BaseEntity):
     doc_url: Optional[str] = Field("", description="Documentation URL")
     description: Optional[str] = Field("", description="Model description")
     
-    kind: KindEnum = Field("NONE", description="Model kind: BASE | ADAPTER | MERGED")
+    kind: ModelType = Field(ModelType.UNKNOWN, description="Model Type (foundational, instruct, domain_specific, etc.)")
     architecture_info_ref: Optional[str] = Field("", description="Reference to architecture document")
+
   

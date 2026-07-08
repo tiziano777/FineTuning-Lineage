@@ -7,6 +7,7 @@ from enum import Enum
 from pydantic import Field
 from .base import BaseEntity
 
+
 class StatusType(str, Enum):
     RUNNING = "RUNNING"
     COMPLETED = "COMPLETED"

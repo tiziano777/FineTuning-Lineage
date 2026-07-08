@@ -1,21 +1,15 @@
 from __future__ import annotations
 
 from pathlib import Path
-
 import pandas as pd
 
-import pyarrow as pa
-import pyarrow.parquet as pq
-# from mds import MDSWriter
 from datasets import Dataset, DatasetDict, Features, Value, load_dataset, load_from_disk, concatenate_datasets
-
 
 _LOADERS: list[tuple[str, object]] = [
     ("*.parquet", lambda p: pd.read_parquet(p)),
     ("*.jsonl.gz", lambda p: pd.read_json(p, lines=True, compression="gzip")),
     ("*.jsonl", lambda p: pd.read_json(p, lines=True)),
 ]
-
 
 class DataLoader:
     """Read all data files from a distribution directory into a list of dicts.

@@ -46,8 +46,12 @@ class RecipeRepository:
     @staticmethod
     def _recipe_to_props(recipe: Recipe, *, exclude: set[str] | None = None) -> dict:
         """Appiattisce un Recipe (campi core + eventuali campi custom) in un dict
-        di proprietà salvabili su Neo4j. `entries` viene serializzato come stringa
-        JSON perché Neo4j non supporta liste di mappe come proprietà native.
+        di proprietà salvabili su Neo4j.
+        
+        Nel processo:
+        - `entries` viene serializzato come stringa JSON (Neo4j non supporta liste di mappe)
+        - Ogni entry contiene `system_prompt` come Dict[str, str] ({prompt_name: content})
+        - Tutti i campi custom (extra='allow') vengono preservati automaticamente
         """
         exclude_fields = (exclude or set()) | {"entries"}
         props = recipe.model_dump(mode="json", exclude_none=True, exclude=exclude_fields)
@@ -63,9 +67,14 @@ class RecipeRepository:
         filename: Optional[str] = None,
     ) -> Recipe:
         """Parsa un contenuto YAML in un'istanza Recipe validata.
-
+        
+        Atteso formato YAML con:
+        - entries: lista di distribuzioni
+        - Ogni entry può contenere system_prompt: Dict[str, str] (nuovo formato)
+        
         Qualsiasi campo non definito esplicitamente su Recipe/RecipeEntry resta
         come campo custom (extra='allow'), senza bisogno di gestione manuale.
+        Questo assicura massima estendibilità per campi futuri.
         """
         try:
             data = yaml.safe_load(yaml_content)
