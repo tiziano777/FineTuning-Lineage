@@ -1,28 +1,19 @@
-"""Repository for Experiment entity - Neo4j data access layer."""
+"""Repository for Experiment entity — Neo4j data access layer."""
 
 from __future__ import annotations
 
 import json
 import logging
-import uuid
-from datetime import datetime
-from typing import Optional, Any
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional, Set
 
 from graph_lineage.data_classes.neo4j.nodes.experiment import Experiment
-from graph_lineage.streamlit_ui.utils.errors import UIError
 from graph_lineage.streamlit_ui.db.neo4j_async import AsyncNeo4jClient
+from graph_lineage.streamlit_ui.utils.errors import UIError
 
 logger = logging.getLogger(__name__)
-"""
-PATCH per graph_lineage/streamlit_ui/db/repository/experiment_repository.py
-Aggiungere i seguenti metodi alla classe ExperimentRepository esistente.
-"""
 
-import json
-from datetime import datetime
-from typing import Any, Optional
-
-# ── Costanti per i campi agentici ─────────────────────────────────────────────
+# ── Constants for agentic enums (used for UI hints, not DB constraints) ──
 
 SCOPE_OPTIONS = [
     "baseline",
@@ -55,243 +46,278 @@ VALIDATION_SCOPE_OPTIONS = [
     "human_eval",
 ]
 
+# ── Fields known to be stored as JSON strings in Neo4j ──
+# These are deserialized from JSON when reading from Neo4j.
+# All other string fields are left as-is to avoid accidental
+# deserialization of legitimate string values.
+
+JSON_SERIALIZED_FIELDS: Set[str] = {
+    "codebase",
+    "evidences",
+    "open_questions",
+    "tags",
+    "lessons_learned",
+    "changed_files",
+    # Add any other field that is stored as JSON in Neo4j
+}
+
+def _serialize_for_neo4j(value: Any) -> Any:
+    """Serialize Python values for Neo4j storage.
+
+    - list/dict -> JSON string (Neo4j stores strings reliably; lists of primitives
+      work natively but dicts inside lists need JSON)
+    - datetime with to_native -> convert
+    - Everything else -> as-is
+    """
+    if value is None:
+        return None
+    if hasattr(value, "to_native") and callable(value.to_native):
+        return value.to_native()
+    if isinstance(value, (list, dict)):
+        return json.dumps(value, ensure_ascii=False, default=str)
+    return value
+
+def _deserialize_from_neo4j(field_name: str, value: Any) -> Any:
+    """Deserialize Neo4j values back to Python.
+
+    Only fields in JSON_SERIALIZED_FIELDS are parsed as JSON.
+    All other values are returned as-is, preventing accidental
+    deserialization of legitimate string content.
+    """
+    if value is None:
+        return None
+    if field_name in JSON_SERIALIZED_FIELDS and isinstance(value, str):
+        try:
+            return json.loads(value)
+        except (json.JSONDecodeError, TypeError):
+            return value
+    return value
+
+def _flatten_experiment(exp: Experiment) -> Dict[str, Any]:
+    """Convert Experiment to flat dict for Cypher parameters.
+
+    All declared fields + extra fields are flattened. Complex types are serialized.
+    """
+    # model_dump with extra='allow' already includes extra fields as top-level keys
+    data: Dict[str, Any] = exp.model_dump(mode="json", exclude_none=False)
+
+    # Serialize complex types for Neo4j
+    return {k: _serialize_for_neo4j(v) for k, v in data.items()}
+
+def _row_to_experiment(row: Dict[str, Any]) -> Experiment:
+    """Convert a Neo4j result row to an Experiment object.
+
+    Deserializes JSON strings only for known fields and passes everything
+    through to Pydantic. Extra fields are preserved via extra='allow'.
+    """
+    deserialized = {
+        k: _deserialize_from_neo4j(k, v)
+        for k, v in row.items()
+    }
+    return Experiment(**deserialized)
+
 class ExperimentRepository:
     """Data access layer for Experiment entity."""
 
     def __init__(self, db_client: AsyncNeo4jClient):
-        """Initialize repository with Neo4j client."""
         self.db = db_client
 
-    async def create(
-        self,
-        id: str,
-        model_id: str,
-        status: str = "PENDING",
-        description: str = "",
-    ) -> Experiment:
-        """Create a new experiment.
+    # ── CRUD: Create ──
 
-        Args:
-            id: Unique experiment ID.
-            model_id: Associated Model ID.
-            status: Experiment status.
-            description: Experiment description.
+    async def create(self, experiment: Experiment) -> Experiment:
+        """Create a new experiment node. All fields (including extra) are persisted."""
 
-        Returns:
-            Created experiment data.
-        """
-        now = datetime.utcnow().isoformat()
+        data = _flatten_experiment(experiment)
 
-        query = """
-        CREATE (e:Experiment {
-            id: $id,
-            id: $id,
-            model_id: $model_id,
-            status: $status,
-            description: $description,
-            created_at: $created_at,
-            updated_at: $updated_at,
-            usable: true
-        })
-        RETURN e.id as id, e.id as id, e.model_id as model_id,
-               e.status as status, e.description as description,
-               e.created_at as created_at, e.updated_at as updated_at
+        # Build dynamic Cypher
+        fields = list(data.keys())
+        props = ", ".join(f"{k}: ${k}" for k in fields)
+
+        query = f"""
+        CREATE (e:Experiment {{{props}}})
+        RETURN e {{.*}} AS node
         """
 
-        result = await self.db.run_single(
-            query,
-            id=id,
-            model_id=model_id,
-            status=status,
-            description=description,
-            created_at=now,
-            updated_at=now,
-        )
-
+        result = await self.db.run_single(query, **data)
         if not result:
             raise UIError("Failed to create experiment in Neo4j")
 
-        logger.info(f"Experiment created: id={id}, model_id={model_id}")
-        return Experiment(**result)
+        logger.info(f"Experiment created: id={experiment.id}")
+        return _row_to_experiment(result["node"])
 
     async def create_experiment(
         self,
         model_id: str,
         status: str = "PENDING",
         description: str = "",
+        **kwargs: Any,
     ) -> Experiment:
-        """Create a new experiment (generates UUID automatically).
-
-        Args:
-            model_id: Associated Model ID.
-            status: Experiment status (PENDING, RUNNING, COMPLETED, FAILED).
-            description: Experiment description.
-
-        Returns:
-            Created experiment data.
-        """
-        import uuid
-        id = str(uuid.uuid4())
-        return await self.create(
-            id=id,
+        """Convenience: create with minimal args, rest via kwargs (extra fields)."""
+        exp = Experiment(
             model_id=model_id,
-            status=status,
+            status=status,  # type: ignore[arg-type]
             description=description,
+            **kwargs,
         )
+        return await self.create(exp)
+
+    # ── CRUD: Read ──
 
     async def get_by_id(self, id: str) -> Optional[Experiment]:
-        """Get experiment by ID.
-
-        Args:
-            id: Experiment ID.
-
-        Returns:
-            Experiment object or None if not found.
-        """
+        """Get experiment by ID. Returns full object with all extra fields."""
         query = """
         MATCH (e:Experiment {id: $id})
-        RETURN e.id as id, e.model_id as model_id,
-               e.status as status, e.description as description,
-               e.created_at as created_at, e.updated_at as updated_at
+        RETURN e {.*} AS node
         """
-
         result = await self.db.run_single(query, id=id)
-        return Experiment(**result) if result else None
+        return _row_to_experiment(result["node"]) if result else None
 
     async def get_experiment(self, id: str) -> Optional[Experiment]:
-        """Alias for get_by_id for manager compatibility."""
+        """Alias for manager compatibility."""
         return await self.get_by_id(id)
 
-    async def list_all(self, status: Optional[str] = None) -> list[Experiment]:
-        """List all experiments optionally filtered by status.
+    async def list_all(
+        self,
+        status: Optional[str] = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> List[Experiment]:
+        """List experiments with optional status filter and pagination."""
+        where_clause = ""
+        params: Dict[str, Any] = {"limit": limit, "offset": offset}
+        if status:
+            where_clause = "WHERE e.status = $status"
+            params["status"] = status
 
-        Args:
-            status: Optional status filter.
-
-        Returns:
-            List of Experiment objects.
+        query = f"""
+        MATCH (e:Experiment)
+        {where_clause}
+        RETURN e {{.*}} AS node
+        ORDER BY e.created_at DESC
+        SKIP $offset LIMIT $limit
         """
-        return await self.list_with_limit(
-            limit=100,
-            offset=0,
-            status=status
-        )
+        results = await self.db.run_list(query, **params)
+        return [_row_to_experiment(r["node"]) for r in results]
 
     async def list_with_limit(
         self,
         limit: int = 100,
         offset: int = 0,
         status: Optional[str] = None,
-    ) -> list[Experiment]:
-        """List experiments with pagination support.
-        
-        Args:
-            limit: Maximum number of experiments to return.
-            offset: Number of experiments to skip (for pagination).
-            status: Optional status filter.
-            
-        Returns:
-            List of Experiment objects.
+    ) -> List[Experiment]:
+        """Alias with explicit pagination args."""
+        return await self.list_all(status=status, limit=limit, offset=offset)
+
+    async def list_experiments(self, status: Optional[str] = None) -> List[Experiment]:
+        """Alias for manager compatibility."""
+        return await self.list_all(status=status)
+
+    async def list_rich(
+        self,
+        status_filter: Optional[str] = None,
+        search: Optional[str] = None,
+    ) -> List[Experiment]:
+        """List experiments with related nodes and ALL properties.
+
+        Returns Experiment objects where extra fields (including agentic metadata)
+        are preserved via Pydantic extra='allow'.
+
+        Note: This method resolves only DIRECT relationships (USES_MODEL, etc.).
+        For lineage-resolved resources, use list_rich_with_lineage().
         """
-        where_clause = ""
-        params = {"limit": limit, "offset": offset}
-        if status:
-            where_clause = "WHERE e.status = $status"
-            params["status"] = status
-        
+        where_clauses: List[str] = []
+        params: Dict[str, Any] = {}
+
+        if status_filter:
+            where_clauses.append("e.status = $status_filter")
+            params["status_filter"] = status_filter
+        if search:
+            where_clauses.append(
+                "(e.id CONTAINS $search OR e.description CONTAINS $search OR e.name CONTAINS $search)"
+            )
+            params["search"] = search
+
+        where_str = "WHERE " + " AND ".join(where_clauses) if where_clauses else ""
+
         query = f"""
         MATCH (e:Experiment)
-        {where_clause}
-        RETURN e.id as id, e.model_id as model_id,
-               e.status as status, e.description as description,
-               e.created_at as created_at, e.updated_at as updated_at
-        ORDER BY e.created_at DESC
-        SKIP $offset LIMIT $limit
+        OPTIONAL MATCH (e)-[:USES_MODEL]->(m:Model)
+        OPTIONAL MATCH (e)-[:USES_RECIPE]->(r:Recipe)
+        OPTIONAL MATCH (e)-[:USES_COMPONENT]->(c:Component)
+        OPTIONAL MATCH (ckp:Checkpoint)-[:PRODUCED_BY]->(e)
+        {where_str}
+        WITH e, m, r, c, COUNT(ckp) AS ckp_count
+        RETURN e {{.*,
+            model_name: m.model_name,
+            recipe_name: r.name,
+            technique_code: c.technique_code,
+            framework_code: c.framework_code,
+            ckp_count: ckp_count
+        }} AS node
+        ORDER BY node.created_at DESC  // <--- MODIFICATO QUI (era e.created_at)
+        LIMIT 100
         """
         results = await self.db.run_list(query, **params)
-        return [Experiment(**row) for row in results]
+        return [_row_to_experiment(r["node"]) for r in results]
 
-    async def list_experiments(self, status: Optional[str] = None) -> list[Experiment]:
-        """Alias for list_all for manager compatibility."""
-        return await self.list_all(status=status)
+    # ── CRUD: Update ──
 
     async def update(
         self,
         id: str,
-        status: Optional[str] = None,
-        description: Optional[str] = None,
-        exit_status: Optional[str] = None,
-        exit_msg: Optional[str] = None,
+        experiment: Optional[Experiment] = None,
+        **fields: Any,
     ) -> Experiment:
-        """Update experiment fields.
+        """Update experiment by ID.
 
-        Args:
-            id: Experiment ID.
-            status: New status.
-            description: New description.
-            exit_status: Exit status.
-            exit_msg: Exit message.
+        Pass either a full Experiment object OR keyword args for partial update.
+        Extra fields in kwargs are automatically persisted.
 
-        Returns:
-            Updated experiment data.
+        To explicitly set a field to None, pass the sentinel _UNSET.
+        To set a field to a falsy value (0, "", []), pass it normally.
         """
-        now = datetime.utcnow().isoformat()
-        params = {"id": id, "updated_at": now}
+        if experiment is not None and fields:
+            raise UIError("Pass either experiment= OR kwargs, not both.")
 
-        # Build parameterized query based on which fields are provided
-        if status is not None and description is not None and exit_status is not None and exit_msg is not None:
-            query = """
-            MATCH (e:Experiment {id: $id})
-            SET e.status = $status, e.description = $description,
-                e.exit_status = $exit_status, e.exit_msg = $exit_msg,
-                e.updated_at = $updated_at
-            RETURN e.id as id, e.id as id, e.model_id as model_id,
-                   e.status as status, e.description as description,
-                   e.updated_at as updated_at
-            """
-            params.update({"status": status, "description": description, "exit_status": exit_status, "exit_msg": exit_msg})
-        elif status is not None and description is not None:
-            query = """
-            MATCH (e:Experiment {id: $id})
-            SET e.status = $status, e.description = $description, e.updated_at = $updated_at
-            RETURN e.id as id, e.id as id, e.model_id as model_id,
-                   e.status as status, e.description as description,
-                   e.updated_at as updated_at
-            """
-            params.update({"status": status, "description": description})
-        elif status is not None:
-            query = """
-            MATCH (e:Experiment {id: $id})
-            SET e.status = $status, e.updated_at = $updated_at
-            RETURN e.id as id, e.id as id, e.model_id as model_id,
-                   e.status as status, e.description as description,
-                   e.updated_at as updated_at
-            """
-            params["status"] = status
-        elif description is not None:
-            query = """
-            MATCH (e:Experiment {id: $id})
-            SET e.description = $description, e.updated_at = $updated_at
-            RETURN e.id as id, e.id as id, e.model_id as model_id,
-                   e.status as status, e.description as description,
-                   e.updated_at as updated_at
-            """
-            params["description"] = description
+        if experiment is not None:
+            data = _flatten_experiment(experiment)
+            data.pop("id", None)  # Don't overwrite id
         else:
-            query = """
-            MATCH (e:Experiment {id: $id})
-            RETURN e.id as id, e.id as id, e.model_id as model_id,
-                   e.status as status, e.description as description,
-                   e.updated_at as updated_at
-            """
+            # Use a sentinel to distinguish "not provided" from "set to None"
+            _UNSET = object()
+            data = {}
+            for k, v in fields.items():
+                if v is _UNSET:
+                    data[k] = None  # Explicitly set to None
+                elif v is not None:
+                    data[k] = _serialize_for_neo4j(v)
+                elif k in ("usable", "base", "dead_end", "is_base", "manual_save"):
+                    # Boolean fields: None means "not provided", False is valid
+                    pass  # Skip None for boolean fields unless explicitly set
+                else:
+                    # For other fields, None means "remove/unset" — include it
+                    data[k] = None
 
-        result = await self.db.run_single(query, **params)
+        if not data:
+            raise UIError("No fields provided for update")
 
+        data["updated_at"] = datetime.now(timezone.utc).isoformat()
+        data["id"] = id  # For the MATCH clause
+
+        set_clauses = [f"e.{k} = ${k}" for k in data if k != "id"]
+
+        query = f"""
+        MATCH (e:Experiment {{id: $id}})
+        SET {', '.join(set_clauses)}
+        RETURN e {{.*}} AS node
+        """
+
+        result = await self.db.run_single(query, **data)
         if not result:
-            raise UIError(f"Experiment {id} not found")
+            raise UIError(f"Experiment '{id}' not found")
 
         logger.info(f"Experiment updated: id={id}")
-        return Experiment(**result)
+        return _row_to_experiment(result["node"])
 
     async def update_experiment(
         self,
@@ -300,399 +326,254 @@ class ExperimentRepository:
         description: Optional[str] = None,
         exit_status: Optional[str] = None,
         exit_msg: Optional[str] = None,
+        **kwargs: Any,
     ) -> Experiment:
-        """Alias for update for manager compatibility."""
+        """Alias for manager compatibility with explicit args + extra kwargs."""
         return await self.update(
             id=id,
             status=status,
             description=description,
             exit_status=exit_status,
             exit_msg=exit_msg,
+            **kwargs,
         )
 
-    async def delete(self, id: str) -> None:
-        """Delete experiment with constraint checking.
+    async def update_metadata(
+        self,
+        id: str,
+        description: Optional[str] = None,
+        notes: Optional[str] = None,
+        **extra: Any,
+    ) -> Experiment:
+        """Update metadata fields (description, notes, and any extra fields)."""
+        fields = {}
+        if description is not None:
+            fields["description"] = description
+        if notes is not None:
+            fields["notes"] = notes
+        fields.update(extra)
+        return await self.update(id=id, **fields)
 
-        Args:
-            id: Experiment ID to delete.
+    # ── Agentic metadata ──
 
-        Raises:
-            UIError: If experiment not found, has generated checkpoints,
-                     or has derived/branched experiments.
+    async def get_agentic_metadata(self, id: str) -> Dict[str, Any]:
+        """Fetch all agentic metadata fields for a given experiment.
+
+        Returns a flat dict with all non-core properties. Extra fields are
+        included automatically because we don't hardcode the RETURN.
         """
+        query = """
+        MATCH (e:Experiment {id: $id})
+        RETURN e {.*} AS node
+        """
+        result = await self.db.run_single(query, id=id)
+        if not result:
+            return {}
+
+        node = result["node"]
+        # Core fields to exclude — everything else is considered agentic/extra
+        core_fields = {
+            "id",
+            "created_at",
+            "updated_at",
+            "description",
+            "uri",
+            "base",
+            "name",
+            "chain_id",
+            "status",
+            "exit_status",
+            "exit_msg",
+            "strategy",
+            "experiment_type",
+            "model_id",
+            "model_uri",
+            "recipe_id",
+            "component_id",
+            "codebase",
+            "changed_files",
+            "usable",
+            "manual_save",
+            "metrics_uri",
+            # UI-computed fields from list_rich / list_rich_with_lineage
+            "model_name",
+            "recipe_name",
+            "technique_code",
+            "framework_code",
+            "ckp_count",
+        }
+        return {
+            k: _deserialize_from_neo4j(k, v)
+            for k, v in node.items()
+            if k not in core_fields
+        }
+
+    async def update_agentic_metadata(
+        self,
+        id: str,
+        agentic_metadata: Optional[Dict[str, Any]] = None,
+        **flat_fields: Any,
+    ) -> Experiment:
+        """Update agentic metadata as a nested dict OR flat fields.
+
+        If agentic_metadata dict is provided, its keys are flattened and stored
+        as individual node properties (enabling Neo4j indexing/querying).
+        If flat fields are provided, they are stored directly.
+        """
+        if agentic_metadata is not None and flat_fields:
+            raise UIError("Pass either agentic_metadata= OR flat kwargs, not both.")
+
+        if agentic_metadata is not None:
+            # Flatten nested dict into individual properties
+            payload = {
+                k: _serialize_for_neo4j(v)
+                for k, v in agentic_metadata.items()
+            }
+        else:
+            payload = flat_fields
+
+        return await self.update(id=id, **payload)
+
+    # ── CRUD: Delete ──
+
+    async def delete(self, id: str) -> None:
+        """Delete experiment with constraint checking."""
         existing = await self.get_by_id(id)
         if not existing:
             raise UIError(f"Experiment '{id}' not found")
 
-        # Check if experiment can be deleted
         if not await self.is_deletable(id):
             raise UIError(
                 f"Cannot delete experiment '{id}': it has produced checkpoints "
-                "or has derived/branched experiments. "
-                "Remove dependent experiments/checkpoints first."
+                "or has derived/branched experiments. Remove dependents first."
             )
 
-        try:
-            query = "MATCH (e:Experiment {id: $id}) DETACH DELETE e"
-            await self.db.run(query, id=id)
-            logger.warning(f"Experiment deleted: id={id}")
-        except Exception as e:
-            logger.error(f"Experiment deletion failed: {id}", exc_info=True)
-            raise UIError(f"Failed to delete experiment: {str(e)}")
+        query = "MATCH (e:Experiment {id: $id}) DETACH DELETE e"
+        await self.db.run(query, id=id)
+        logger.warning(f"Experiment deleted: id={id}")
 
     async def delete_experiment(self, id: str) -> None:
-        """Alias for delete for manager compatibility."""
+        """Alias for manager compatibility."""
         await self.delete(id)
 
     async def is_deletable(self, id: str) -> bool:
-        """Check if experiment can be deleted.
-
-        Experiment cannot be deleted if:
-        - It has outgoing PRODUCED relationships (generated checkpoints)
-        - It has outgoing DERIVED_FROM relationships (has derived/branched experiments)
-        - It has outgoing STARTED_FROM relationships (physical branching from checkpoints)
-        - It has outgoing RETRY_OF relationships (experiment is base for retries)
-
-        Args:
-            id: Experiment ID to check.
-
-        Returns:
-            True if experiment has no blocking outgoing relationships, False otherwise.
-        """
-        existing = await self.get_by_id(id)
-        if not existing:
-            return True
-
-        # Query for blocking outgoing relationships
+        """Check if experiment has no blocking outgoing relationships."""
         query = """
         MATCH (e:Experiment {id: $id})
         OPTIONAL MATCH (e)-[:PRODUCED]->(cp:Checkpoint)
         OPTIONAL MATCH (e)-[:DERIVED_FROM]->(e2:Experiment)
         OPTIONAL MATCH (e)-[:STARTED_FROM]->(cp2:Checkpoint)
         OPTIONAL MATCH (e)-[:RETRY_OF]->(e3:Experiment)
-        RETURN COUNT(DISTINCT cp) as produced_count,
-               COUNT(DISTINCT e2) as derived_count,
-               COUNT(DISTINCT cp2) as started_from_count,
-               COUNT(DISTINCT e3) as retry_count
+        RETURN COUNT(DISTINCT cp) AS produced_count,
+               COUNT(DISTINCT e2) AS derived_count,
+               COUNT(DISTINCT cp2) AS started_from_count,
+               COUNT(DISTINCT e3) AS retry_count
         """
         result = await self.db.run_single(query, id=id)
         if result:
-            produced_count = result.get("produced_count", 0)
-            derived_count = result.get("derived_count", 0)
-            started_from_count = result.get("started_from_count", 0)
-            retry_count = result.get("retry_count", 0)
-            return (
-                produced_count == 0
-                and derived_count == 0
-                and started_from_count == 0
-                and retry_count == 0
+            return all(
+                result.get(k, 0) == 0
+                for k in ("produced_count", "derived_count", "started_from_count", "retry_count")
             )
         return True
 
     async def count_dependencies(self, id: str) -> int:
-        """Count checkpoints for this experiment.
-
-        Args:
-            id: Experiment ID.
-
-        Returns:
-            Number of dependent checkpoints.
-        """
+        """Count checkpoints linked to this experiment."""
         query = """
-        MATCH (e:Experiment {id: $id})-[r:HAS_CHECKPOINT]->(cp)
-        RETURN count(r) as dep_count
+        MATCH (e:Experiment {id: $id})-[:HAS_CHECKPOINT]->(cp)
+        RETURN COUNT(cp) AS dep_count
         """
-
         result = await self.db.run_single(query, id=id)
         return result["dep_count"] if result else 0
 
     async def check_experiment_dependencies(self, id: str) -> int:
-        """Alias for count_dependencies for manager compatibility."""
+        """Alias for manager compatibility."""
         return await self.count_dependencies(id)
 
-    async def list_rich(self, status_filter: str = None, search: str = None) -> list[Experiment]:
-        """List experiments with USES_MODEL, USES_RECIPE, USES_TECHNIQUE relationships and checkpoint count.
-        
-        Returns:
-            List of Experiment objects with UI metadata nested in custom_fields.
+    # ── Graph lineage resolution ──
+
+    async def list_rich_with_lineage(
+        self,
+        status_filter: Optional[str] = None,
+        search: Optional[str] = None,
+    ) -> List[Experiment]:
+        """List experiments with resolved lineage resources (Model, Recipe, Component).
+
+        For each experiment, walks the DERIVED_FROM|RETRY_OF|RESUMED_FROM chain
+        backwards to find the nearest ancestor with USES_* relationships.
         """
-        query = """
+        where_clauses: List[str] = []
+        params: Dict[str, Any] = {}
+
+        if status_filter:
+            where_clauses.append("e.status = $status_filter")
+            params["status_filter"] = status_filter
+        if search:
+            where_clauses.append(
+                "(e.id CONTAINS $search OR e.name CONTAINS $search OR e.description CONTAINS $search)"
+            )
+            params["search"] = search
+
+        where_str = "WHERE " + " AND ".join(where_clauses) if where_clauses else ""
+
+        query = f"""
         MATCH (e:Experiment)
-        OPTIONAL MATCH (e)-[:USES_MODEL]->(m:Model)
-        OPTIONAL MATCH (e)-[:USES_RECIPE]->(r:Recipe)
-        OPTIONAL MATCH (e)-[:USES_TECHNIQUE]->(c:Component)
+        {where_str}
+
+        // 1. CORREZIONE: Cambiato in *0..50 per includere l'esperimento stesso
+        OPTIONAL MATCH (e)-[:USES_MODEL]->(direct_model:Model)
+        CALL {{
+            WITH e
+            MATCH path = (e)-[:DERIVED_FROM|RETRY_OF|RESUMED_FROM*0..50]->(ancestor:Experiment)-[:USES_MODEL]->(inherited_model:Model)
+            RETURN inherited_model
+            ORDER BY length(path) ASC
+            LIMIT 1
+        }}
+        WITH e, COALESCE(direct_model, inherited_model) AS resolved_model
+
+        // 2. CORREZIONE: Cambiato in *0..50 per includere l'esperimento stesso
+        OPTIONAL MATCH (e)-[:USES_RECIPE]->(direct_recipe:Recipe)
+        CALL {{
+            WITH e
+            MATCH path = (e)-[:DERIVED_FROM|RETRY_OF|RESUMED_FROM*0..50]->(ancestor:Experiment)-[:USES_RECIPE]->(inherited_recipe:Recipe)
+            RETURN inherited_recipe
+            ORDER BY length(path) ASC
+            LIMIT 1
+        }}
+        WITH e, resolved_model, COALESCE(direct_recipe, inherited_recipe) AS resolved_recipe
+
+        // 3. CORREZIONE: Cambiato in *0..50 per includere l'esperimento stesso
+        OPTIONAL MATCH (e)-[:USES_COMPONENT]->(direct_comp:Component)
+        CALL {{
+            WITH e
+            MATCH path = (e)-[:DERIVED_FROM|RETRY_OF|RESUMED_FROM*0..50]->(ancestor:Experiment)-[:USES_COMPONENT]->(inherited_comp:Component)
+            RETURN inherited_comp
+            ORDER BY length(path) ASC
+            LIMIT 1
+        }}
+        WITH e, resolved_model, resolved_recipe, COALESCE(direct_comp, inherited_comp) AS resolved_comp
+
         OPTIONAL MATCH (ckp:Checkpoint)-[:PRODUCED_BY]->(e)
-        WITH e, m, r, c, COUNT(ckp) as ckp_count
-        RETURN 
-            e.id, e.status, e.description, e.uri, e.base, e.name, e.chain_id,
-            e.exit_status, e.exit_msg, e.strategy, e.experiment_type,
-            e.model_id, e.model_uri, e.recipe_id, e.component_id,
-            e.codebase, e.changed_files, e.usable, e.manual_save, e.metrics_uri,
-            e.created_at, e.updated_at,
-            m.model_name as model_name, r.name as recipe_name,
-            c.technique_code as technique_code, c.framework_code as framework_code,
-            ckp_count, e.config_hash,
-            e.scope, e.hypothesis, e.motivation, e.conclusion, e.conclusion_type,
-            e.evidences, e.open_questions, e.is_base, e.exploration_priority,
-            e.dead_end, e.tags, e.confidence, e.retry_policy, e.validation_scope,
-            e.compute_cost, e.duration_seconds, e.estimated_gain,
-            e.notes
-        ORDER BY e.created_at DESC
+
+        // Raggruppiamo passando 'e' e il conteggio
+        WITH e, resolved_model, resolved_recipe, resolved_comp, COUNT(ckp) AS ckp_count
+
+        // 4. Mettiamo tutte le proprietà estruse DENTRO il dizionario del nodo 'e'
+        RETURN e {{.*,
+            model_name: resolved_model.model_name,
+            model_id: resolved_model.id,
+            model_uri: resolved_model.uri,
+            recipe_name: resolved_recipe.name,
+            recipe_id: resolved_recipe.id,
+            component_technique: resolved_comp.technique_code,
+            component_framework: resolved_comp.framework_code,
+            component_id: resolved_comp.id,
+            ckp_count: ckp_count
+        }} AS node
+        ORDER BY node.created_at DESC
         LIMIT 100
         """
-        results = await self.db.run_list(query)
-        experiments = []
-        for row in results:
-            exp = Experiment(
-                id=row.get("id"),
-                status=row.get("status"),
-                description=row.get("description"),
-                uri=row.get("uri", ""),
-                base=row.get("base", True),
-                name=row.get("name", ""),
-                chain_id=row.get("chain_id", 0),
-                exit_status=row.get("exit_status"),
-                exit_msg=row.get("exit_msg"),
-                strategy=row.get("strategy", ""),
-                experiment_type=row.get("experiment_type", "training"),
-                model_id=row.get("model_id"),
-                model_uri=row.get("model_uri"),
-                recipe_id=row.get("recipe_id"),
-                component_id=row.get("component_id"),
-                codebase=row.get("codebase", ""),
-                changed_files=row.get("changed_files") or [],
-                usable=row.get("usable", True),
-                manual_save=row.get("manual_save", False),
-                metrics_uri=row.get("metrics_uri"),
-                created_at=row.get("created_at"),
-                updated_at=row.get("updated_at"),
-            )
-            # Store UI-specific metadata in custom_fields
-            if exp.__dict__ is not None:  # Allow dynamic assignment
-                exp.model_name = row.get("model_name")
-                exp.recipe_name = row.get("recipe_name")
-                exp.technique_code = row.get("technique_code")
-                exp.framework_code = row.get("framework_code")
-                exp.ckp_count = row.get("ckp_count", 0)
-                exp.config_hash = row.get("config_hash")
-                exp.notes = row.get("notes")
-                # Agentic metadata
-                exp.scope = row.get("scope")
-                exp.hypothesis = row.get("hypothesis")
-                exp.motivation = row.get("motivation")
-                exp.conclusion = row.get("conclusion")
-                exp.conclusion_type = row.get("conclusion_type")
-                exp.evidences = row.get("evidences")
-                exp.open_questions = row.get("open_questions")
-                exp.is_base_exp = row.get("is_base")  # Rename to avoid collision with base
-                exp.exploration_priority = row.get("exploration_priority")
-                exp.dead_end = row.get("dead_end")
-                exp.tags = row.get("tags")
-                exp.confidence = row.get("confidence")
-                exp.retry_policy = row.get("retry_policy")
-                exp.validation_scope = row.get("validation_scope")
-                exp.compute_cost = row.get("compute_cost")
-                exp.duration_seconds = row.get("duration_seconds")
-                exp.estimated_gain = row.get("estimated_gain")
-            
-            experiments.append(exp)
-        
-        return experiments
-
-    async def update_metadata(self, id: str, description: str = None, notes: str = None) -> Experiment:
-        """Update only description and notes fields (metadata edit).
-        
-        Returns:
-            Updated Experiment object.
-        """
-        sets = []
-        params = {"id": id, "updated_at": datetime.utcnow().isoformat()}
-        if description is not None:
-            sets.append("e.description = $description")
-            params["description"] = description
-        if notes is not None:
-            sets.append("e.notes = $notes")
-            params["notes"] = notes
-        if not sets:
-            raise UIError("No fields to update")
-        
-        query = f"""
-        MATCH (e:Experiment {{id: $id}})
-        SET {', '.join(sets)}, e.updated_at = $updated_at
-        RETURN 
-            e.id, e.status, e.description, e.uri, e.base, e.name, e.chain_id,
-            e.exit_status, e.exit_msg, e.strategy, e.experiment_type,
-            e.model_id, e.model_uri, e.recipe_id, e.component_id,
-            e.codebase, e.changed_files, e.usable, e.manual_save, e.metrics_uri,
-            e.created_at, e.updated_at, e.notes
-        """
-        result = await self.db.run_single(query, **params)
-        if not result:
-            raise UIError("Experiment not found")
-        
-        return Experiment(**{k: v for k, v in result.items() if k in Experiment.model_fields})
-
-    async def get_agentic_metadata(self, id: str) -> Optional[dict]:
-        """Fetch only the agentic metadata fields for a given experiment.
-
-        Args:
-            id: Experiment ID (id property on the node).
-
-        Returns:
-            Dict with all agentic metadata fields, or None if experiment not found.
-        """
-        query = """
-        MATCH (e:Experiment {id: $id})
-        RETURN
-            e.scope                AS scope,
-            e.hypothesis           AS hypothesis,
-            e.motivation           AS motivation,
-            e.conclusion           AS conclusion,
-            e.conclusion_type      AS conclusion_type,
-            e.evidences            AS evidences,
-            e.open_questions       AS open_questions,
-            e.is_base              AS is_base,
-            e.exploration_priority AS exploration_priority,
-            e.dead_end             AS dead_end,
-            e.tags                 AS tags,
-            e.confidence           AS confidence,
-            e.retry_policy         AS retry_policy,
-            e.validation_scope     AS validation_scope,
-            e.compute_cost         AS compute_cost,
-            e.duration_seconds     AS duration_seconds,
-            e.estimated_gain       AS estimated_gain
-        """
-        result = await self.db.run_single(query, id=id)
-        if result is None:
-            return None
-
-        # Deserializza i campi JSON serializzati come stringa
-        for json_field in ("evidences", "open_questions", "tags"):
-            raw = result.get(json_field)
-            if isinstance(raw, str):
-                try:
-                    result[json_field] = json.loads(raw)
-                except (json.JSONDecodeError, TypeError):
-                    result[json_field] = []
-            elif raw is None:
-                result[json_field] = [] if json_field in ("open_questions", "tags") else None
-
-        return dict(result)
-
-    async def update_agentic_metadata(
-        self,
-        id: str,
-        *,
-        # Gruppo 1 — identità
-        scope: Optional[str] = None,
-        hypothesis: Optional[str] = None,
-        motivation: Optional[str] = None,
-        # Gruppo 2 — conoscenza post-run
-        conclusion: Optional[str] = None,
-        conclusion_type: Optional[str] = None,
-        evidences: Optional[list[dict]] = None,
-        open_questions: Optional[list[str]] = None,
-        # Gruppo 3 — navigabilità
-        is_base: Optional[bool] = None,
-        exploration_priority: Optional[float] = None,
-        dead_end: Optional[bool] = None,
-        tags: Optional[list[str]] = None,
-        # Gruppo 4 — affidabilità
-        confidence: Optional[float] = None,
-        retry_policy: Optional[str] = None,
-        validation_scope: Optional[str] = None,
-        # Gruppo 5 — costi
-        compute_cost: Optional[float] = None,
-        duration_seconds: Optional[int] = None,
-        estimated_gain: Optional[float] = None,
-    ) -> dict:
-        """Update agentic/epistemic metadata fields on an :Experiment node.
-
-        Only fields explicitly passed (non-None) are written. Fields left as None
-        are NOT touched, preserving whatever was already stored.
-
-        JSON array fields (evidences, open_questions, tags) are serialised to
-        strings before writing, because Neo4j stores them as node properties
-        and the driver handles list<string> natively but list<dict> is safer
-        as JSON strings.
-
-        Args:
-            id: Experiment ID (id property, not internal id).
-            scope: Macro-category enum.
-            hypothesis: Claim to be verified, written pre-run.
-            motivation: Why this experiment was created.
-            conclusion: Post-run narrative summary.
-            conclusion_type: Epistemic outcome enum.
-            evidences: Structured list of metric observations.
-            open_questions: Open research questions generated by this run.
-            is_base: Whether this is a baseline/reference experiment.
-            exploration_priority: Agent's confidence in this direction [0-1].
-            dead_end: Whether this direction should not be explored further.
-            tags: Free-form labels for semantic clustering.
-            confidence: Reliability of result [0-1].
-            retry_policy: Retry behaviour enum.
-            validation_scope: Granularity of evaluation enum.
-            compute_cost: Estimated GPU-hours or token equivalent.
-            duration_seconds: Actual wall-clock duration of the run.
-            estimated_gain: Predicted delta on primary metric (pre-run).
-
-        Returns:
-            Dict with id confirming the write.
-
-        Raises:
-            UIError: If no fields provided or experiment not found.
-        """
-        from graph_lineage.streamlit_ui.utils.errors import UIError  # local import to avoid circular
-
-        # Mappa campo → valore, serializzando dove necessario
-        field_map: dict[str, Any] = {}
-
-        # Scalari semplici
-        for name, val in [
-            ("scope", scope),
-            ("hypothesis", hypothesis),
-            ("motivation", motivation),
-            ("conclusion", conclusion),
-            ("conclusion_type", conclusion_type),
-            ("is_base", is_base),
-            ("exploration_priority", exploration_priority),
-            ("dead_end", dead_end),
-            ("confidence", confidence),
-            ("retry_policy", retry_policy),
-            ("validation_scope", validation_scope),
-            ("compute_cost", compute_cost),
-            ("duration_seconds", duration_seconds),
-            ("estimated_gain", estimated_gain),
-        ]:
-            if val is not None:
-                field_map[name] = val
-
-        # Array/JSON — serializzati come stringa per uniformità
-        if evidences is not None:
-            field_map["evidences"] = json.dumps(evidences, ensure_ascii=False)
-        if open_questions is not None:
-            field_map["open_questions"] = json.dumps(open_questions, ensure_ascii=False)
-        if tags is not None:
-            # tags è una lista di stringhe: il driver Neo4j la gestisce nativamente
-            field_map["tags"] = tags
-
-        if not field_map:
-            raise UIError("Nessun campo da aggiornare fornito")
-
-        # Costruisce SET dinamico (parametrizzato, nessun rischio di injection)
-        set_clauses = [f"e.{k} = ${k}" for k in field_map]
-        set_clauses.append("e.updated_at = $updated_at")
-        field_map["updated_at"] = datetime.utcnow().isoformat()
-        field_map["id"] = id
-
-        query = f"""
-        MATCH (e:Experiment {{id: $id}})
-        SET {', '.join(set_clauses)}
-        RETURN e.id AS id
-        """
-
-        result = await self.db.run_single(query, **field_map)
-        if not result:
-            raise UIError(f"Experiment '{id}' non trovato")
-
-        return dict(result)
+        results = await self.db.run_list(query, **params)
+        return [_row_to_experiment(r["node"]) for r in results]
+    
+   

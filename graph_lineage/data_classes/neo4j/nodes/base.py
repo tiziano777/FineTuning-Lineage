@@ -23,11 +23,5 @@ class BaseEntity(BaseModel):
     
     @property
     def custom_fields(self) -> Dict[str, Any]:
-        """
-        Estrae i campi extra non definiti né nella classe base né nel nodo figlio.
-        Usa self.__class__ in modo corretto per guardare i campi del modello finale istanziato.
-        """
-        return {
-            k: v for k, v in self.__dict__.items() 
-            if k not in self.__class__.model_fields
-        }
+        """Estrae i campi extra non definiti nel modello usando le feature native di Pydantic v2."""
+        return self.model_extra or {}
