@@ -212,7 +212,7 @@ class ExperimentRepository:
         """Alias for manager compatibility."""
         return await self.list_all(status=status)
 
-    async def list_rich(
+    async def list(
         self,
         status_filter: Optional[str] = None,
         search: Optional[str] = None,
@@ -395,7 +395,7 @@ class ExperimentRepository:
             "usable",
             "manual_save",
             "metrics_uri",
-            # UI-computed fields from list_rich / list_rich_with_lineage
+            # UI-computed fields from list / list_with_lineage
             "model_name",
             "recipe_name",
             "technique_code",
@@ -492,7 +492,7 @@ class ExperimentRepository:
 
     # ── Graph lineage resolution ──
 
-    async def list_rich_with_lineage(
+    async def list_with_lineage(
         self,
         status_filter: Optional[str] = None,
         search: Optional[str] = None,

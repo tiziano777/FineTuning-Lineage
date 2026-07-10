@@ -34,7 +34,7 @@ _AGENTIC_SECTIONS = {
 }
 
 _KNOWN_CORE_FIELDS = {
-    "id", "created_at", "updated_at", "description", "uri", "base",
+    "id", "created_at", "updated_at", "description", "uri", "base", "deep",
     "name", "chain_id", "status", "exit_status", "exit_msg",
     "strategy", "experiment_type", "model_id", "model_uri",
     "recipe_id", "component_id", "codebase", "changed_files",
@@ -357,12 +357,12 @@ def _experiment_to_dict(exp: Experiment) -> Dict[str, Any]:
 # ASYNC DB HELPERS
 # ═══════════════════════════════════════════════════════════════════════════════
 
-async def _list_rich_with_lineage(
+async def _list_with_lineage(
     status_filter: Optional[str] = None,
     search: Optional[str] = None,
 ) -> List[Experiment]:
     repo = ExperimentRepository(get_neo4j_client())
-    return await repo.list_rich_with_lineage(status_filter=status_filter, search=search)
+    return await repo.list_with_lineage(status_filter=status_filter, search=search)
 
 
 async def _update_metadata(
@@ -855,7 +855,7 @@ def _render_tab_edit(experiments_objs: List[Experiment]) -> None:
                     **{k: v for k, v in dynamic_fields.items() if v is not None},
                 }
                 payload = {k: v for k, v in payload.items() if v is not None}
-                run_async(_update_metadata(selected_exp_id, **payload))
+                run_async(_update_metadata(selected_exp_id,notes=notes, **payload))
                 st.success("Metadata updated successfully!")
                 logger.info(f"Updated experiment {selected_exp_id}")
                 if dyn_session_key in st.session_state:
@@ -889,7 +889,7 @@ def _render_tab_browse() -> None:
         filter_val = None if status_filter == "All" else status_filter
         search_val = search.strip() if search and search.strip() else None
         experiments_objs = run_async(
-            _list_rich_with_lineage(status_filter=filter_val, search=search_val)
+            _list_with_lineage(status_filter=filter_val, search=search_val)
         )
         experiments = [_experiment_to_dict(e) for e in experiments_objs]
 
@@ -983,14 +983,14 @@ def run() -> None:
 
     with tab_edit:
         try:
-            experiments_objs = run_async(_list_rich_with_lineage())
+            experiments_objs = run_async(_list_with_lineage())
             _render_tab_edit(experiments_objs)
         except UIError as e:
             st.error(f"Error: {e.user_message}")
 
     with tab_agentic:
         try:
-            experiments_objs = run_async(_list_rich_with_lineage())
+            experiments_objs = run_async(_list_with_lineage())
             _render_tab_agentic(experiments_objs)
         except UIError as e:
             st.error(f"Error: {e.user_message}")
