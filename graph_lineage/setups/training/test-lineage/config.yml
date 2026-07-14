@@ -2,7 +2,6 @@ model:
   lineage_uri: .lineage/experiment.yml
   model_uri: null
   model_id: null
-  checkpoint_resume_from: null
 
   dataset:
     cache_dir: /nfs/training-output/.dpo-cache/${experiment.name}/data

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pydantic import BaseModel, Field
+from graph_lineage.data_classes.neo4j.nodes.experiment import RunType
 
 # EXPERIMENT LINEAGE CONFIG FILE WRAPPER
 
@@ -15,7 +16,7 @@ class ExperimentConfig(BaseModel):
     base: bool | None
     name: str = Field(..., min_length=1)
     description: str = ""
-    experiment_type: str = Field(..., min_length=1)
+    experiment_type: RunType = Field(..., description="training | evaluation | inference | merging")
     uri: str | None = None 
     status: str | None = None
     model: str | None = None 

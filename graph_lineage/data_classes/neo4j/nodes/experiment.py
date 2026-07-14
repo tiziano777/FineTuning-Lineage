@@ -19,7 +19,9 @@ class StrategyType(str, Enum):
     BRANCH = "BRANCH"
     RETRY = "RETRY"
 
-class ExperimentType(str, Enum):
+class RunType(str, Enum):
+    """Tipo di run lineage — generalizza il precedente ExperimentType."""
+
     TRAINING = "training"
     EVALUATION = "evaluation"
     INFERENCE = "inference"
@@ -38,7 +40,7 @@ class Experiment(BaseEntity):
     exit_status: Optional[str] = None
     exit_msg: Optional[str] = None
     strategy: StrategyType = Field(..., description="NEW | RESUME | BRANCH | RETRY")
-    experiment_type: ExperimentType = Field("training", description="training | evaluation | inference | merging")
+    experiment_type: RunType = Field("training", description="training | evaluation | inference | merging")
 
     model_id: Optional[str] = Field(None, description="model_id used for entire lineage experimentations")
     model_uri: Optional[str] = Field(None, description="model_uri used for entire lineage experimentations")
@@ -95,6 +97,7 @@ class Experiment(BaseEntity):
             data["codebase"] = json.dumps(data["codebase"])
 
         return data
+    
     @field_validator('agentic_metadata', mode='before')
     @classmethod
     def deserialize_agentic_metadata(cls, v):
@@ -106,3 +109,4 @@ class Experiment(BaseEntity):
             except json.JSONDecodeError:
                 return {}
         return v
+    

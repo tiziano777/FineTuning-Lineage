@@ -10,8 +10,9 @@ from pathlib import Path
 from typing import Any, Dict
 
 from modules.utils.config_validator import load_config, require_field, resolve_config
-from modules.lineage.utils.callbacks import LineageCheckpointCallback
 from modules.lineage import lineage_tracker
+from modules.lineage.nodes.base import NodeSpec
+from modules.lineage.nodes.checkpoint import CheckpointTracker
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -143,37 +144,41 @@ def preflight(config_path: str) -> Dict[str, Any]:
 # Train
 # ---------------------------------------------------------------------------
 
-@lineage_tracker(capture_checkpoints=True) # False for testing without ckp callback
-def train(config_path: str = "config.yml", dry_run: bool = False, lineage_callback=None):
-    logger.info("Starting DPO training with config: %s", config_path)
-    ctx = preflight(config_path)
+@lineage_tracker(nodes=[
+    NodeSpec(tracker=CheckpointTracker(), kwarg_name="lineage_callback"),
+])
+def train(
+    config_path: str = "config.yml",
+    dry_run: bool = False,
+    lineage_callback=None,
+    lineage_emit=None,
+):
+    """Simulated training function.
+
+    Args:
+        config_path: Path to the training configuration.
+        dry_run: If True, skip actual training.
+        lineage_callback: Injected checkpoint callback (optional).
+        lineage_emit: Manual emit function for ad-hoc node creation (optional).
+    """
+    print(f"Starting training with config: {config_path}")
+
+    # Example of manual emit for a custom metric node
+    if lineage_emit:
+        lineage_emit("Metric", {"name": "final_loss", "value": 0.123}, "produced")
+
+    # Example of using the injected callback with a Trainer
+    # from transformers import Trainer
+    # trainer = Trainer(..., callbacks=[lineage_callback])
+    # trainer.train()
 
     if dry_run:
-        logger.info("Dry run complete — all checks passed.")
+        print("Dry run mode — no training performed.")
         return
 
-    config = ctx["config"]
-    model_id = ctx["model_id"]
-    output_dir = ctx["output_dir"]
-    model_uri = ctx["model_uri"]
-    ref_model = ctx["ref_model"]
-    precompute_ref_log_probs = ctx["precompute_ref_log_probs"]
-    training_cfg = ctx["training_cfg"]
-
-    # -----------------------------------------------------------------------
-    # Callbacks
-    # -----------------------------------------------------------------------
-    callbacks = []
-
-    # Lineage callback (already instantiated by decorator)
-    if lineage_callback is not None:
-        callbacks.append(lineage_callback)
-
-    # -----------------------------------------------------------------------
-    # Trainer
-    # -----------------------------------------------------------------------
-    trainer =  TrainerFakeWithCallbackTrigger(output_dir=output_dir, callbacks=callbacks if callbacks else None)
-    trainer.train()
+    # Simulate training completion
+    print("Training completed.")
+    return {"metrics_uri": "s3://bucket/run-123/metrics.json"}
 
 
 if __name__ == "__main__":

@@ -1,30 +1,10 @@
-"""Pydantic models for server API request/response schemas.
-
-These mirror the client SDK models (modules/lineage/models.py) to keep
-the API contract in sync.
-"""
+"""Pydantic models for Client-Server communication payloads."""
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
-from enum import Enum
-
-class StrategyType(str, Enum):
-    NEW = "NEW"
-    RESUME = "RESUME"
-    BRANCH = "BRANCH"
-    RETRY = "RETRY"
-
-class StatusType(str, Enum):
-    RUNNING = "RUNNING"
-    COMPLETED = "COMPLETED"
-    FAILED = "FAILED"
-
-class ExperimentType(str, Enum):
-    TRAINING = "training"
-    EVALUATION = "evaluation"
-    INFERENCE = "inference"
-    MERGING = "merging"
+from typing import Any, Optional
+from pydantic import BaseModel, ConfigDict, Field
+from graph_lineage.data_classes.neo4j.nodes.experiment import RunType
 
 # ─── PRE-EXECUTION ─────────────────────────────────────────────────────────────
 
@@ -32,75 +12,76 @@ class PreRequest(BaseModel):
     """Payload sent to server before training execution starts.
 
     Contains the full experiment config and captured codebase content
-    for the server to run rule_engine detection and create the experiment node.
+    for the server to run rule detection and create the experiment node.
     """
-    # Experiment identity
-    experiment_id: str | None = None  # current_exp_id, assigned as root first exp_id by server if not provided
-    experiment_name: str
-    experiment_uri: str | None = None
-    base: bool | None 
-    base_experiment_id: str | None = None
-    previous_experiment_id: str | None = None
-    description: str | None = None
-    experiment_type: ExperimentType 
+    model_config = ConfigDict(populate_by_name=True)
 
+    # Experiment identity
+    experiment_id: Optional[str] = None
+    experiment_name: str
+    experiment_uri: Optional[str] = None
+    base: Optional[bool] = None
+    base_experiment_id: Optional[str] = None
+    previous_experiment_id: Optional[str] = None
+    description: Optional[str] = None
+    run_type: RunType = Field(alias="experiment_type")
     merging: bool = False
-    codebase: str # JSON string of {relative_path: content}
+    codebase: str  # JSON string of {relative_path: content}
 
     # BASE NODE RELATIONSHIPS
-    model_id: str | None = None
-    model_uri: str | None = None
-    component_id: str | None = None
-    recipe_id: str | None = None
+    model_id: Optional[str] = None
+    model_uri: Optional[str] = None
+    component_id: Optional[str] = None
+    recipe_id: Optional[str] = None
 
-    checkpoint_resume_from: str | None = None  # checkpoint_id to resume from, if any
+    checkpoint_resume_from: Optional[str] = None
 
 class PreResponse(BaseModel):
-    """Response sent back to client after PRE processing."""
+    """Server response after PRE-execution processing.
+
+    Contains the assigned experiment_id, detected strategy, and metadata
+    the client needs to update local state.
+    """
 
     experiment_id: str
-    strategy: StrategyType
+    strategy: str  # NEW, RETRY, BRANCH, RESUME, MERGE
     base: bool
     description: str
-    base_experiment_id: str | None = None
-    previous_experiment_id: str | None = None
-
+    base_experiment_id: Optional[str] = None
+    previous_experiment_id: Optional[str] = None
 
 # ─── POST-EXECUTION ───────────────────────────────────────────────────────────
 
-
 class PostRequest(BaseModel):
-    """Payload received from client after training ends."""
+    """Payload sent to server after training execution ends.
+
+    Reports final status and optional metrics URI.
+    """
 
     experiment_id: str
-    status: StatusType
-    exit_message: str | None = None
-    metrics_uri: str | None = None
-    strategy: StrategyType | None = None  # NEW, RETRY, BRANCH, RESUME, MERGE or None
-    checkpoint_resume_from: str | None = None  # checkpoint_uri to resume from, if any
-
+    status: str  # COMPLETED or FAILED
+    exit_message: Optional[str] = None
+    metrics_uri: Optional[str] = None
+    strategy: Optional[str] = None  # NEW, RETRY, BRANCH, RESUME, MERGE or None
+    checkpoint_resume_from: Optional[str] = None
 
 class PostResponse(BaseModel):
-    """Acknowledgement sent back to client."""
+    """Server acknowledgement of POST-execution update."""
 
     experiment_id: str
-    status: StatusType
+    status: str
     acknowledged: bool = True
-
 
 # ─── HEALTH ────────────────────────────────────────────────────────────────────
 
-
 class HealthResponse(BaseModel):
-    """Health check response."""
+    """Server health check response."""
 
     status: str = "ok"
     version: str = ""
     neo4j_connected: bool = False
 
-
 # ─── CHECKPOINT ────────────────────────────────────────────────────────────────
-
 
 class CheckpointRequest(BaseModel):
     """Payload received from client when a checkpoint is saved."""
@@ -110,14 +91,32 @@ class CheckpointRequest(BaseModel):
     epoch: int
     run: int
     uri: str
-    metrics: str = Field(default_factory=str) 
+    metrics: str = Field(default_factory=str)
     derived_from: str = ""
     is_merging: bool = False
 
 
 class CheckpointResponse(BaseModel):
-    """Acknowledgement sent back after checkpoint creation."""
+    """Server acknowledgement of checkpoint creation."""
 
     checkpoint_id: str
     experiment_id: str
     acknowledged: bool = True
+
+# ─── GENERIC NODE ─────────────────────────────────────────────────────────────
+
+class GenericNodeRequest(BaseModel):
+    """Payload for creating a generic node linked to a run."""
+
+    run_id: str
+    node_type: str
+    payload: dict[str, Any]
+    edge_type: str = "produced"
+
+
+class GenericNodeResponse(BaseModel):
+    """Server acknowledgement of generic node creation."""
+
+    node_id: str
+    acknowledged: bool = True
+

@@ -12,9 +12,9 @@ except ImportError:
     TrainerCallback = object  # type: ignore[assignment, misc]
     TrainerState = Any  # type: ignore[assignment, misc]
 
-from ..http.client import ExecutionContext
-from ..http.base.connector import ConnectorFactory, ServerError
-from ..http.data_classes.http_config import CheckpointRequest, CheckpointResponse
+from ...http.client import ExecutionContext
+from ...http.base.connector import ConnectorFactory, ServerError
+from ...http.data_classes.http_config import CheckpointRequest, CheckpointResponse
 
 logger = logging.getLogger(__name__)
 

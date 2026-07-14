@@ -64,11 +64,11 @@ def prepare(config_path: str,strategy: PromptAssignmentStrategy = PromptAssignme
 
     all_samples: list[dict] = []
     dropped=0
-    for uri, entry in recipe.entries.items():
+    for entry in recipe.entries:
         hn_filter_instance = None
         hn_filter_entry_stats = None
         if hn_enabled:
-            hn_config = HardNegativeConfig(uri=uri)
+            hn_config = HardNegativeConfig(uri=entry.dist_uri)
             hn_filter_entry_stats = hn_config.get_config(entry_uri=entry.dist_uri)
             # Inject weights from config.yml into filter config
             if hn_params:
@@ -83,14 +83,15 @@ def prepare(config_path: str,strategy: PromptAssignmentStrategy = PromptAssignme
                 hn_filter_entry_stats["gamma"] = hn_params.get("gamma", 0.2)
             hn_filter_instance = HardNegativeFilter(hn_filter_entry_stats)
 
-        logger.info("Processing: %s (replica=%d, chat_type=%s)", uri, entry.replica, entry.chat_type)
+        logger.info("Processing: %s (replica=%d, chat_type=%s)", entry.dist_uri, entry.replica, entry.chat_type)
 
         raw_data = DataLoader.base_load(entry.dist_uri)
         logger.info("  Loaded %d raw samples", len(raw_data))
 
         template_fn = registry.get_template_fn(entry.chat_type)
-        prompts = entry.system_prompt or []
-        prompt_names = entry.system_prompt_name or []
+        prompts = list(entry.system_prompt.values()) if entry.system_prompt else []
+        prompt_names = list(entry.system_prompt.keys()) if entry.system_prompt else []
+
 
         for rep in range(entry.replica):
             for row_idx, sample in enumerate(raw_data):
@@ -105,7 +106,7 @@ def prepare(config_path: str,strategy: PromptAssignmentStrategy = PromptAssignme
                             #logger.info("  Dropped sample (hard negative filter): %s", sample_copy.get("_id_hash", ""))
                             dropped+=1
                             continue
-                        processed["_source_uri"] = uri
+                        processed["_source_uri"] = entry.dist_uri
                         processed["_replica"] = rep
                         processed["_system_prompt_id"] = prompt_id
                         # Include _id_hash from the original sample when available

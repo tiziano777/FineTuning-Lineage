@@ -1,4 +1,3 @@
-# graph_lineage/setups/_base/modules/lineage/client.py
 """LineageClient: main entry point for client-server lineage communication."""
 
 from __future__ import annotations
@@ -24,8 +23,10 @@ logger = logging.getLogger(__name__)
 _MODEL_ID_MISMATCH_STATUS = 409  # ModelIdMismatchError → exit 7
 _BASE_EXP_NOT_FOUND_STATUS = 422  # base_experiment_id not found → exit 6
 
+
 class LineageClientError(Exception):
     """Raised on unrecoverable client errors."""
+
 
 @dataclass
 class ExecutionContext:
@@ -36,6 +37,11 @@ class ExecutionContext:
     project_root: Path
     server_config: ServerConfig
     extra: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def run_id(self) -> str:
+        """Alias concettuale per experiment_id (preparazione al dominio generico 'Run')."""
+        return self.experiment_id
 
 def _find_project_root(start: Path) -> Path:
     """Walk up from start to find directory containing .lineage/."""
@@ -103,10 +109,10 @@ class LineageClient:
     """Client for lineage tracking communication with the server."""
 
     def __init__(
-        self, 
-        project_root: Optional[Path] = None, 
-        config_dict: Optional[dict] = None,  # <-- Sostituito/Aggiunto il dizionario
-        config_path: Optional[str] = None    # <-- Tenuto opzionale solo per risolvere i path se serve
+        self,
+        project_root: Optional[Path] = None,
+        config_dict: Optional[dict] = None,
+        config_path: Optional[str] = None,
     ):
         # 1. Risoluzione della project_root
         if project_root is not None:
@@ -120,7 +126,7 @@ class LineageClient:
         # 2. Salviamo il dizionario e il path (opzionale) come metadato
         self._config_dict = config_dict or {}
         self._config_path = config_path
-        
+
         self._server_config: Optional[ServerConfig] = None
         self._connector: Optional[Connector] = None
 
@@ -143,7 +149,7 @@ class LineageClient:
         if self._connector is None:
             self._connector = ConnectorFactory.create(self.server_config)
         return self._connector
-    
+
     def _retry(self, fn, retries: int | None = None):
         """Execute fn with retries on ConnectionError."""
         max_retries = retries if retries is not None else self.server_config.retries
@@ -177,7 +183,7 @@ class LineageClient:
 
         try:
             # 1. Load experiment config (config.yml takes priority over .lineage/experiment.yml)
-            exp_data = self._config_dict.get("experiment") 
+            exp_data = self._config_dict.get("experiment")
 
             # 2. Capture codebase snapshot
             codebase = capture_codebase(self._project_root)
@@ -185,48 +191,55 @@ class LineageClient:
             codebase_size = len(codebase.encode('utf-8'))
             logger.info(f"Codebase: JSON size: {codebase_size / (1024*1024):.2f} MB")
             logger.info(f"Codebase: Number of files: {len(json.loads(codebase))}")
-            
-            correct_model_id= self._config_dict.get("model").get("model_id") == exp_data.get("model")
-            correct_recipe= self._config_dict.get("recipe").get("name") == exp_data.get("recipe")
+
+            correct_model_id = self._config_dict.get("model", {}).get("model_id") == exp_data.get("model")
+            correct_recipe = self._config_dict.get("recipe", {}).get("name") == exp_data.get("recipe")
             if not correct_model_id or not correct_recipe:
-                logger.warning("Model ID, URI, merging, or recipe mismatch: model_id in config (%s) does not match model_id in experiment block (%s), recipe in config (%s) does not match recipe in experiment block (%s).",
-                    self._config_dict.get("model").get("model_id"), exp_data.get("model"),
-                    self._config_dict.get("recipe").get("name"), exp_data.get("recipe"))
+                logger.warning(
+                    "Model ID, URI, merging, or recipe mismatch: model_id in config (%s) does not match model_id in experiment block (%s), recipe in config (%s) does not match recipe in experiment block (%s).",
+                    self._config_dict.get("model", {}).get("model_id"), exp_data.get("model"),
+                    self._config_dict.get("recipe", {}).get("name"), exp_data.get("recipe")
+                )
                 sys.exit(7)
 
             # 3. Build PRE request
             request = PreRequest(
-                experiment_id=exp_data.get("id"), # this is the old experiment id! 
+                experiment_id=exp_data.get("id"),
                 experiment_name=exp_data.get("name"),
                 experiment_uri=str(self._project_root),
-                base_experiment_id=exp_data.get("base_experiment_id"),
                 base=exp_data.get("base"),
+                base_experiment_id=exp_data.get("base_experiment_id"),
                 previous_experiment_id=exp_data.get("previous_experiment_id"),
                 description=exp_data.get("description"),
                 experiment_type=exp_data.get("experiment_type"),
-
-                model_uri=self._config_dict.get("model").get("model_uri"),
-                model_id=self._config_dict.get("experiment").get("model"),
-                recipe_id=self._config_dict.get("experiment").get("recipe"),
-                component_id=self._config_dict.get("experiment").get("component"),
-
+                model_uri=self._config_dict.get("model", {}).get("model_uri"),
+                model_id=self._config_dict.get("experiment", {}).get("model"),
+                recipe_id=self._config_dict.get("experiment", {}).get("recipe"),
+                component_id=self._config_dict.get("experiment", {}).get("component"),
                 codebase=codebase,
-
-                checkpoint_resume_from=self._config_dict.get("model").get("checkpoint_resume_from"),
+                checkpoint_resume_from=self._config_dict.get("model", {}).get("checkpoint_resume_from"),
             )
 
-            logger.info("PRE-execution: sending request to server: exp_name: %s, exp_uri: %s, model_id: %s, base_exp_id: %s, prev_exp_id: %s, description: %s, model_uri: %s, recipe_id: %s, component_id: %s, model_id %s, component_id %s, recipe_id: %s, checkpoint_resume_from: %s",
-                request.experiment_name, request.experiment_uri, request.model_id, request.base_experiment_id, request.previous_experiment_id, request.description, request.model_uri, request.recipe_id, request.component_id, request.model_id, request.component_id, request.recipe_id, request.checkpoint_resume_from)
+            logger.info(
+                "PRE-execution: sending request to server: exp_name: %s, exp_uri: %s, model_id: %s, base_exp_id: %s, prev_exp_id: %s, description: %s, model_uri: %s, recipe_id: %s, component_id: %s, model_id %s, component_id %s, recipe_id: %s, checkpoint_resume_from: %s",
+                request.experiment_name, request.experiment_uri, request.model_id, request.base_experiment_id,
+                request.previous_experiment_id, request.description, request.model_uri, request.recipe_id,
+                request.component_id, request.model_id, request.component_id, request.recipe_id,
+                request.checkpoint_resume_from,
+            )
 
             # 4. Send to server (with retries)
             connector = self._get_connector()
             logger.info("Sending PRE request with config %s", self.server_config)
 
             response: PreResponse = self._retry(lambda: connector.send_pre(request))
-            
-            logger.info("Received PRE response from server: exp_id: %s, base %s, base_exp_id: %s, strategy: %s, previous_exp_id: %s",
-                response.experiment_id, response.base, response.base_experiment_id, response.strategy, response.previous_experiment_id)
-            
+
+            logger.info(
+                "Received PRE response from server: exp_id: %s, base %s, base_exp_id: %s, strategy: %s, previous_exp_id: %s",
+                response.experiment_id, response.base, response.base_experiment_id, response.strategy,
+                response.previous_experiment_id,
+            )
+
             # 5. Update local .lineage/experiment.yml (always from base file, not merged)
             base_exp_data = _load_experiment_data(self._project_root)
             base_exp_data["id"] = response.experiment_id
@@ -238,9 +251,11 @@ class LineageClient:
 
             logger.info("Updating .lineage/experiment.yml with data: %s", base_exp_data)
             _save_experiment_yml(self._project_root, base_exp_data)
-            logger.info("Updated .lineage/experiment.yml with experiment_id: %s, base_experiment_id: %s, previous_experiment_id: %s, base: %s, status: RUNNING",
-                response.experiment_id, response.base_experiment_id, response.previous_experiment_id, response.base)
-            
+            logger.info(
+                "Updated .lineage/experiment.yml with experiment_id: %s, base_experiment_id: %s, previous_experiment_id: %s, base: %s, status: RUNNING",
+                response.experiment_id, response.base_experiment_id, response.previous_experiment_id, response.base,
+            )
+
             logger.info(
                 "PRE-execution complete: strategy=%s, exp_id=%s",
                 response.strategy, response.experiment_id,
@@ -320,6 +335,75 @@ class LineageClient:
 
         except Exception as e:
             logger.error("POST-execution error: %s", e, exc_info=True)
+
+    def emit_node(
+        self,
+        ctx: ExecutionContext,
+        node_type: str,
+        payload: dict[str, Any],
+        edge_type: str = "produced",
+    ) -> None:
+        """Crea un nodo generico collegato al run corrente sul grafo."""
+        if ctx is None:
+            logger.warning("emit_node called with None context, skipping")
+            return
+
+        def _emit():
+            if node_type == "Checkpoint":
+                # Fallback compatibilità server esistente (endpoint /api/v1/checkpoint)
+                from .data_classes.http_config import CheckpointRequest
+                request = CheckpointRequest(
+                    experiment_id=ctx.experiment_id,
+                    name=payload.get("name", ""),
+                    epoch=payload.get("epoch", 0),
+                    run=payload.get("run", 0),
+                    uri=payload.get("uri", ""),
+                    metrics=payload.get("metrics", ""),
+                    derived_from=payload.get("derived_from", ""),
+                    is_merging=payload.get("is_merging", False),
+                )
+                connector = self._get_connector()
+                connector.send_checkpoint(request)
+            else:
+                # Endpoint generico (preparato per futura estensione server)
+                import json
+                import urllib.request
+                from urllib.error import URLError
+
+                base_url = getattr(
+                    self.server_config, "url", getattr(self.server_config, "base_url", None)
+                )
+                if not base_url:
+                    logger.warning("Cannot determine server URL for generic node emission")
+                    return
+
+                url = f"{base_url.rstrip('/')}/graph/nodes"
+                data = json.dumps({
+                    "run_id": ctx.run_id,
+                    "node_type": node_type,
+                    "payload": payload,
+                    "edge_type": edge_type,
+                }).encode("utf-8")
+
+                req = urllib.request.Request(
+                    url,
+                    data=data,
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                try:
+                    timeout = getattr(self.server_config, "timeout", 30)
+                    with urllib.request.urlopen(req, timeout=timeout) as resp:
+                        resp.read()
+                except URLError as e:
+                    # Wrappa in ConnectionError per uniformità con il meccanismo di retry
+                    raise ConnectionError(f"Failed to emit generic node: {e}") from e
+
+        try:
+            self._retry(_emit)
+            logger.info("Node emitted: type=%s, edge=%s, run=%s", node_type, edge_type, ctx.run_id)
+        except Exception as e:
+            logger.error("Failed to emit node %s: %s", node_type, e)
 
     def close(self) -> None:
         """Release resources."""

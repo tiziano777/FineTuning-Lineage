@@ -19,7 +19,7 @@ class PreRequest(BaseModel):
     """Payload sent to server before training execution starts.
 
     Contains the full experiment config and captured codebase content
-    for the server to run rule_engine detection and create the experiment node.
+    for the server to run rules detection and create the experiment/run node.
     """
     # Experiment identity
     experiment_id: Optional[str] = None  # current_exp_id, assigned as root first exp_id by server if not provided

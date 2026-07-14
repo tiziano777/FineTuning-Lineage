@@ -16,7 +16,7 @@ from pathlib import Path
 import streamlit as st
 import yaml
 
-from graph_lineage.data_classes.neo4j.nodes.experiment import ExperimentType
+from graph_lineage.data_classes.neo4j.nodes.experiment import RunType
 from graph_lineage.data_classes.neo4j.nodes.component import Component
 from graph_lineage.data_classes.neo4j.nodes.model import Model
 from graph_lineage.streamlit_ui.db.repository.component_repository import ComponentRepository
@@ -40,7 +40,7 @@ _SETUPS_ROOT_DIR = Path(__file__).parent.parent.parent / "setups"
 # File visibili nel tab "Browse Templates"
 _BROWSE_ALLOWED_FILES = {"requirements.txt", "prepare.py", "train.py", "config.yml"}
  
-def _get_setups_dir(experiment_type: ExperimentType) -> Path:
+def _get_setups_dir(experiment_type: RunType) -> Path:
     """Setups directory scoped al experiment type selezionato nel wizard."""
     return _SETUPS_ROOT_DIR / experiment_type.value
  
@@ -266,7 +266,7 @@ def _generate_config_yml(selections: dict, recipe: Recipe, template_config: dict
     return yaml.dump(config, default_flow_style=False, sort_keys=False, allow_unicode=True)
 
 # STEP 2: Other manifest generation
-def _generate_experiment_yml(experiment_type: ExperimentType, setup_name: str, selections: dict) -> str:
+def _generate_experiment_yml(experiment_type: RunType, setup_name: str, selections: dict) -> str:
     """Generate .lineage/experiment.yml from template with user values."""
     template = _safe_read_file(_get_base_dir() / ".lineage" / "experiment.yml")
     content = template.replace("{{SETUP_NAME}}", setup_name)
@@ -278,7 +278,7 @@ def _generate_experiment_yml(experiment_type: ExperimentType, setup_name: str, s
     content = content.replace("{{EXPERIMENT_TYPE}}", experiment_type.value)
     return content
 
-def _generate_server_yml(experiment_type: ExperimentType, selections: dict) -> str:
+def _generate_server_yml(experiment_type: RunType, selections: dict) -> str:
     """Generate .lineage/server.yml from template with user values."""
     template = _safe_read_file(_get_base_dir() / ".lineage" / "server.yml")
     template = template.replace("{{SERVER_URL}}", selections.get("server_url", "http://localhost:8502"))
@@ -289,7 +289,7 @@ def _generate_server_yml(experiment_type: ExperimentType, selections: dict) -> s
     return template
 
 # STEP 3: Zip packaging
-def _build_zip(experiment_type: ExperimentType, component_uri: str | None, selections: dict, recipe: Recipe) -> bytes:
+def _build_zip(experiment_type: RunType, component_uri: str | None, selections: dict, recipe: Recipe) -> bytes:
     """Build zip archive: template + generated configs.
     
     Packaging logic (order matters):
@@ -400,7 +400,7 @@ def run() -> None:
         _render_experiment_type_step()
         return
  
-    experiment_type: ExperimentType = st.session_state.wizard_experiment_type
+    experiment_type: RunType = st.session_state.wizard_experiment_type
  
     header_col, reset_col = st.columns([5, 1])
     with header_col:
@@ -413,13 +413,13 @@ def run() -> None:
     tab_create, tab_browse = st.tabs(["Create Setup", "Browse Templates"])
  
     with tab_create:
-        if experiment_type == ExperimentType.TRAINING:
+        if experiment_type == RunType.TRAINING:
             _render_create_form_training()
-        elif experiment_type == ExperimentType.EVALUATION:
+        elif experiment_type == RunType.EVALUATION:
             _render_create_form_evaluation()
-        elif experiment_type == ExperimentType.INFERENCE:
+        elif experiment_type == RunType.INFERENCE:
             _render_create_form_inference()
-        elif experiment_type == ExperimentType.MERGING:
+        elif experiment_type == RunType.MERGING:
             _render_create_form_merging()
  
     with tab_browse:
@@ -430,7 +430,7 @@ def _render_experiment_type_step() -> None:
     st.subheader("Step 1 — Seleziona l'Experiment Type")
     st.caption("Il passo successivo mostrerà solo i campi rilevanti per il use case scelto.")
  
-    options = list(ExperimentType)
+    options = list(RunType)
     selected = st.radio(
         "Experiment Type",
         options=options,
@@ -448,7 +448,7 @@ def _render_experiment_type_step() -> None:
  
 def _render_create_form_training() -> None:
     """Render the setup creation form — TRAINING use case."""
-    experiment_type = ExperimentType.TRAINING
+    experiment_type = RunType.TRAINING
  
     st.subheader("Configure your training setup")
  
@@ -645,7 +645,7 @@ def _render_create_form_training() -> None:
  
 def _render_create_form_evaluation() -> None:
     """Render the setup creation form — EVALUATION use case."""
-    experiment_type = ExperimentType.EVALUATION
+    experiment_type = RunType.EVALUATION
  
     st.subheader("Configure your evaluation setup")
  
@@ -840,7 +840,7 @@ def _render_create_form_evaluation() -> None:
  
 def _render_create_form_inference() -> None:
     """Render the setup creation form — INFERENCE use case."""
-    experiment_type = ExperimentType.INFERENCE
+    experiment_type = RunType.INFERENCE
  
     st.subheader("Configure your inference setup")
  
@@ -1036,7 +1036,7 @@ def _render_create_form_inference() -> None:
  
 def _render_create_form_merging() -> None:
     """Render the setup creation form — MERGING use case."""
-    experiment_type = ExperimentType.MERGING
+    experiment_type = RunType.MERGING
  
     st.subheader("Configure your merging setup")
  
@@ -1227,7 +1227,7 @@ def _render_create_form_merging() -> None:
 # UI — Browse templates (scoped al experiment type del wizard)
 # ---------------------------------------------------------------------------
  
-def _render_browse_templates(experiment_type: ExperimentType) -> None:
+def _render_browse_templates(experiment_type: RunType) -> None:
     """Show available templates and their contents, per experiment type."""
     st.subheader(f"Available Templates — {experiment_type.value.capitalize()}")
  

@@ -3,14 +3,18 @@
 Public API:
     - LineageClient: Full client for manual PRE/POST lifecycle
     - lineage_tracker: Decorator that wraps training functions automatically
+    - NodeSpec: Specification for a node tracker to inject into a run
     - ServerConfig, ServerConfigError: Configuration classes
     - Connector, ConnectorFactory, ServerError: Transport layer
     - PreRequest, PreResponse, PostRequest, PostResponse: Payloads
 
 Usage as decorator:
-    from modules.lineage import lineage_tracker
+    from modules.lineage import lineage_tracker, NodeSpec
+    from modules.lineage.nodes.checkpoint import CheckpointTracker
 
-    @lineage_tracker()
+    @lineage_tracker(nodes=[
+        NodeSpec(tracker=CheckpointTracker(), kwarg_name="lineage_callback"),
+    ])
     def train(config_path: str):
         ...
 
@@ -33,10 +37,12 @@ from __future__ import annotations
 import functools
 import logging
 import os
+import warnings
 import yaml
-from typing import Any, Callable, Dict
+from typing import Any, Callable, Dict, List, Optional
 
 from .http.client import LineageClient
+from .nodes.base import NodeSpec
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +52,7 @@ def _get_merged_config(config_path: str) -> Dict[str, Any]:
     e restituisce il dizionario unito SENZA modificare i file su disco.
     """
     lineage_path = os.path.join(".lineage", "experiment.yml")
-    
+
     # 1. Carica la configurazione del progetto (Base)
     config_data = {}
     if config_path and os.path.exists(config_path):
@@ -105,7 +111,11 @@ def _extract_metrics_uri_from_config(config_path: str, experiment_id: str) -> st
         metrics_uri = metrics_uri.replace("${experiment.id}", experiment_id)
     return metrics_uri
 
-def lineage_tracker(config_path_arg: int = 0, capture_checkpoints: bool = False) -> Callable:
+def lineage_tracker(
+    config_path_arg: int = 0,
+    nodes: Optional[List[NodeSpec]] = None,
+    capture_checkpoints: bool = False,
+) -> Callable:
     """Decorator that wraps a training function with PRE/POST lifecycle.
 
     The decorated function's first positional argument (or the one at
@@ -121,20 +131,40 @@ def lineage_tracker(config_path_arg: int = 0, capture_checkpoints: bool = False)
     Args:
         config_path_arg: Index of the positional arg that is the config path.
                          Defaults to 0 (first argument).
-        capture_checkpoints: If True, creates a LineageCheckpointCallback and
-                             injects it as `lineage_callback` kwarg into the
-                             wrapped function.
+        nodes: List of NodeSpec defining which node trackers to inject into the
+               wrapped function. Each enabled tracker produces a callback object
+               passed via the kwarg named in `spec.kwarg_name`.
+        capture_checkpoints: (Deprecated) If True, creates a LineageCheckpointCallback
+                             and injects it as `lineage_callback` kwarg. Use
+                             `nodes=[NodeSpec(tracker=CheckpointTracker(), kwarg_name='lineage_callback')]`
+                             instead.
 
     Returns:
         Decorator function.
 
     Example:
-        @lineage_tracker(capture_checkpoints=True)
-        def train(config_path: str, lineage_callback=None):
+        @lineage_tracker(nodes=[
+            NodeSpec(tracker=CheckpointTracker(), kwarg_name="lineage_callback"),
+        ])
+        def train(config_path: str, lineage_callback=None, lineage_emit=None):
             trainer = Trainer(..., callbacks=[lineage_callback])
             trainer.train()
             # no explicit return needed — decorator normalises to 0
     """
+    effective_nodes = list(nodes) if nodes is not None else []
+
+    # Retrocompatibilità: converte il flag booleano in NodeSpec
+    if capture_checkpoints:
+        warnings.warn(
+            "capture_checkpoints is deprecated, use nodes=[NodeSpec(tracker=CheckpointTracker(), "
+            "kwarg_name='lineage_callback')] instead",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        from .nodes.checkpoint import CheckpointTracker
+        effective_nodes.append(
+            NodeSpec(tracker=CheckpointTracker(), kwarg_name="lineage_callback")
+        )
 
     def decorator(fn: Callable) -> Callable:
         @functools.wraps(fn)
@@ -145,20 +175,21 @@ def lineage_tracker(config_path_arg: int = 0, capture_checkpoints: bool = False)
             )
             # --- INSERIMENTO FASE DEEP MERGE (PUNTO ORA ZERO) ---
             if cp:
-                logger.info(f"Esecuzione della fase di Deep Merge per il file: {cp}")
+                logger.info("Esecuzione della fase di Deep Merge per il file: %s", cp)
                 merged_config = _get_merged_config(cp)
             else:
                 logger.warning("Nessun config_path rilevato. Fase di Deep Merge saltata.")
+                merged_config = {}
             # ---------------------------------------------------
 
             logger.info("Configurazione Experiment dopo Deep Merge: %s", str(merged_config.get('experiment', {})))
 
             # 2. Initialize client (passes config_path so experiment block is read)
             client = LineageClient(config_dict=merged_config, config_path=cp)
-            
+
             logger.info("Lineage client initialized with config_path: %s, project_root: %s",
                         client._config_path, client._project_root)
-            
+
             # 3. PRE-execution: send metadata to server and get context
             ctx = client.pre_execution()
 
@@ -168,48 +199,60 @@ def lineage_tracker(config_path_arg: int = 0, capture_checkpoints: bool = False)
                 result = fn(*args, **kwargs)
                 return 0 if result is None else result
 
-            # 5. Inject checkpoint callback if requested
-            if capture_checkpoints:
-                from .utils.callbacks import LineageCheckpointCallback
-                callback = LineageCheckpointCallback(ctx=ctx)
-                kwargs["lineage_callback"] = callback
+            # 5. Prepare manual emit function (always injected as lineage_emit)
+            def emit(node_type: str, payload: dict[str, Any], edge_type: str = "produced") -> None:
+                client.emit_node(ctx, node_type, payload, edge_type)
+
+            kwargs["lineage_emit"] = emit
+
+            # 6. Inject node callbacks for each enabled NodeSpec
+            for spec in effective_nodes:
+                if spec.enabled:
+                    try:
+                        callback = spec.tracker.build_callback(ctx, emit)
+                        kwargs[spec.kwarg_name] = callback
+                        logger.debug(
+                            "Injected %s callback as kwarg '%s'", spec.tracker.node_type, spec.kwarg_name
+                        )
+                    except Exception as e:
+                        logger.warning("Failed to build callback for %s: %s", spec.tracker.node_type, e)
 
             result = None
             metrics_uri = None
 
             try:
-                # 6. Execute training
+                # 7. Execute training
                 result = fn(*args, **kwargs)
 
-                # 7. Extract metrics_uri from result (if dict),
+                # 8. Extract metrics_uri from result (if dict),
                 #  then store to Postgres
                 if isinstance(result, dict) and "metrics_uri" in result:
                     metrics_uri = result["metrics_uri"]
 
-                # 8. Fallback: extract from config.yml
+                # 9. Fallback: extract from config.yml
                 if metrics_uri is None and cp:
                     metrics_uri = _extract_metrics_uri_from_config(cp, ctx.experiment_id)
 
-                # 9. POST-execution (success)
+                # 10. POST-execution (success)
                 client.post_execution(
                     ctx=ctx,
                     status="COMPLETED",
                     metrics_uri=metrics_uri,
                 )
 
-                # 10. Normalise return: training functions typically return None;
+                # 11. Normalise return: training functions typically return None;
                 #    return 0 as a clean success exit code for callers that check it.
                 return 0 if result is None else result
 
             except Exception as e:
-                # 11. Extract metrics_uri from config even on failure
+                # 12. Extract metrics_uri from config even on failure
                 if metrics_uri is None and cp:
                     try:
                         metrics_uri = _extract_metrics_uri_from_config(cp, ctx.experiment_id)
                     except Exception:
                         pass
 
-                # 12. POST-execution (failure)
+                # 13. POST-execution (failure)
                 client.post_execution(
                     ctx=ctx,
                     status="FAILED",

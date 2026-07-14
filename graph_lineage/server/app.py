@@ -2,9 +2,10 @@
 
 Endpoints:
     GET  /health       → Health check (DB connectivity)
-    POST /api/v1/pre   → PRE-execution lifecycle (rule engine + create experiment)
-    POST /api/v1/post  → POST-execution lifecycle (update status)
-    POST /api/v1/checkpoint → Mid-training checkpoint creation
+    POST /api/v1/pre   → PRE-execution lifecycle (handler dispatch)
+    POST /api/v1/post  → POST-execution lifecycle (update status + handler hook)
+    POST /api/v1/checkpoint → Mid-training checkpoint creation (wrapper su generic node)
+    POST /graph/nodes  → Creazione nodo generico collegato a un run
 
 Run with: uvicorn graph_lineage.server.app:app --host 0.0.0.0 --port 8000
 """
@@ -15,28 +16,33 @@ import logging
 import sys
 import uuid
 import json
-from typing import Any
 from fastapi import FastAPI, HTTPException
 
-from graph_lineage.data_classes.neo4j.nodes.checkpoint import Checkpoint
-from graph_lineage.data_classes.neo4j.nodes.experiment import Experiment
-from graph_lineage.data_classes.neo4j.nodes.experiment import ExperimentType, StatusType, StrategyType
-from graph_lineage.diff.description import generate_description
+from graph_lineage.data_classes.neo4j.nodes.experiment import StatusType, StrategyType
 from graph_lineage.diff.snapshot import CodebaseSnapshot
-from graph_lineage.lineage.neo4j_ops import (
-    create_checkpoint_edge, create_checkpoint_node, create_base_experiment_edge,
-    find_experiment_by_id,
-    update_experiment_status,create_ckp_derived_from_edge,retrieve_ckp_id_by_ckp_uri,retrieve_ckp_by_experiment_id,
-    create_non_base_experiment_with_chain_edge, create_base_experiment_node_with_edges )
-from graph_lineage.lineage.rule_engine import ModelIdMismatchError, ModelDbMismatchError, detect_training_run_type
+from graph_lineage.lineage.generic_node_ops import create_generic_edge, create_generic_graph_node
+from graph_lineage.lineage.experiment_neo4j_ops import find_experiment_by_id, update_experiment_status
 
-from .schemas import CheckpointRequest, CheckpointResponse, HealthResponse, PostRequest, PostResponse, PreRequest, PreResponse
+from graph_lineage.server.handlers.registry import get_handler
+from graph_lineage.server.handlers.training import ModelIdMismatchError, ModelDbMismatchError
+
+from .schemas import (
+    CheckpointRequest,
+    CheckpointResponse,
+    GenericNodeRequest,
+    GenericNodeResponse,
+    HealthResponse,
+    PostRequest,
+    PostResponse,
+    PreRequest,
+    PreResponse,
+)
 
 # Configura logging base
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[logging.StreamHandler(sys.stdout)]
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)],
 )
 
 # Silenzia TUTTO Uvicorn
@@ -56,6 +62,7 @@ app = FastAPI(
     version=__version__,
     description="Receives experiment lifecycle events from remote GPU workers.",
 )
+
 
 # ─────────────────────────────────────────────────────────────────────────
 # STARTUP EVENT: Initialize and verify Neo4j schema
@@ -82,24 +89,20 @@ async def startup_initialize_schema():
             logger.error("[Startup] API will continue but may encounter issues")
 
     except Exception as e:
-        logger.error(f"[Startup] Unexpected error during schema initialization: {e}")
+        logger.error("[Startup] Unexpected error during schema initialization: %s", e)
         logger.error("[Startup] API will continue but may encounter issues")
 
-# Edge type mapping per strategy — Experiment→Experiment edges only.
-_STRATEGY_EXP_EDGE_MAP: dict[str, str] = {
-    "BRANCH": "DERIVED_FROM",
-    "RETRY": "RETRY_FROM",   # aligned with schema: (Experiment)-[:RETRY_FROM]→(Experiment)
-    "MERGE": "MERGED_FROM",
-    "RESUME": "RESUMED_FROM"  # aligned with schema: (Experiment)-[:RESUMED_FROM]→(Experiment) (Experiment)-[:CKP_RESUMED_FROM]→(Checkpoint)
-}
 
-
+# ─────────────────────────────────────────────────────────────────────────
+# HEALTH
+# ─────────────────────────────────────────────────────────────────────────
 @app.get("/health", response_model=HealthResponse)
 async def health() -> HealthResponse:
     """Health check endpoint."""
     neo4j_ok = False
     try:
         from graph_lineage.neo4j_client.client import get_driver
+
         driver = await get_driver()
         async with driver.session() as session:
             await session.run("RETURN 1")
@@ -114,32 +117,31 @@ async def health() -> HealthResponse:
     )
 
 
+# ─────────────────────────────────────────────────────────────────────────
+# PRE-EXECUTION
+# ─────────────────────────────────────────────────────────────────────────
 @app.post("/api/v1/pre", response_model=PreResponse)
 async def pre_execution(request: PreRequest) -> PreResponse:
-    """PRE-execution endpoint: detect strategy, create experiment node.
+    """PRE-execution endpoint: dispatch to run-type handler, detect strategy, create run node.
 
     Flow:
     1. Build CodebaseSnapshot from request codebase
-    2. Look up parent experiment (by base_experiment_id or URI)
-    3. Build minimal LineageConfig for rule_engine
-    4. Detect run type
-    5. Create Experiment node in Neo4j
-    6. Create edges based on strategy:
-       - BRANCH  → DERIVED_FROM (Exp→Exp) + optionally RESUMED_FROM (Exp→Ckp)
-       - RETRY   → RETRY_FROM (Exp→Exp)
-       - RESUME  → RESUMED_FROM (Exp→Ckp) only
-       - MERGE   → DERIVED_FROM (Exp→Exp)
-    7. Return strategy + experiment_id
+    2. Look up parent/current experiment (for response resolution)
+    3. Dispatch to RunTypeHandler.detect()
+    4. Create Experiment node via handler.create_nodes()
+    5. Resolve base_experiment_id for response
+    6. Return strategy + run_id
     """
     try:
         logger.info("START PRE: %s", str(request.experiment_id))
-        logger.info("Experiment_type: %s", request.experiment_type)
+        logger.info("run_type: %s", request.run_type)
+
         # 1. Build snapshot from client codebase content
         snapshot = CodebaseSnapshot(files=json.loads(request.codebase))
         logger.info("snapshot files: %d", len(snapshot.files))
-        
+
         # 2.a Find parent experiment if exists (by previous_experiment_id)
-        
+        parent = None
         if request.previous_experiment_id:
             parent = find_experiment_by_id(request.previous_experiment_id)
             if parent is None:
@@ -149,7 +151,7 @@ async def pre_execution(request: PreRequest) -> PreResponse:
                 )
         else:
             logger.info("no parent experiment found")
-        
+
         # 2.b Find current experiment if exists (by experiment_id)
         if request.experiment_id:
             t_exp = find_experiment_by_id(request.experiment_id)
@@ -160,119 +162,44 @@ async def pre_execution(request: PreRequest) -> PreResponse:
                 )
         else:
             logger.info("no current experiment found")
-        
 
-        # 3. Detect run type
-        # ModelIdMismatchError → HTTP 409 (client maps to exit code 7)
+        # 3. Dispatch to handler
+        handler = get_handler(request.run_type)
         try:
-            if request.experiment_type == ExperimentType.TRAINING:
-                run_result = await detect_training_run_type(request=request)
-            else:
-                raise HTTPException(
-                    status_code=422,
-                    detail=f"Unsupported experiment_type '{request.experiment_type}'",
-                )
-        except ModelIdMismatchError as e:
+            result = await handler.detect(request)
+        except (ModelIdMismatchError, ModelDbMismatchError) as e:
             raise HTTPException(status_code=409, detail=str(e))
-        except ModelDbMismatchError as e:
-            raise HTTPException(status_code=409, detail=str(e))
-
 
         logger.info(
-            "run type detected: strategy=%s, parent_exp_id=%s, parent_ckp_id=%s",
-            run_result.strategy, run_result.parent_exp_id, run_result.parent_ckp_id,
+            "run type detected: strategy=%s, parent_run_id=%s, parent_ckp_id=%s",
+            result.strategy, result.parent_run_id, result.parent_ckp_id,
         )
 
-        # 4. Build Experiment node
-        exp_id = str(uuid.uuid4())
-        is_base = run_result.strategy == StrategyType.NEW
+        # 4. Create run node and edges
+        run_id = handler.create_nodes(request, result)
 
-
-        auto_description = generate_description(
-            strategy=run_result.strategy,
-            changed_files=run_result.changed_files,
-            exp_id=run_result.parent_exp_id,
-            ckp_id=run_result.parent_ckp_id,
-        )
-        description = request.description or auto_description
-
-        experiment = Experiment(
-            id=exp_id,
-            name=request.experiment_name,
-            description=description,
-            uri=request.experiment_uri or "",
-            experiment_type=request.experiment_type,
-            base=is_base,
-            status=StatusType.RUNNING,
-            strategy=StrategyType(run_result.strategy),
-            model_id=request.model_id,
-            codebase= json.dumps(snapshot.files) if is_base else json.dumps(run_result.diff_patch or {}),
-            changed_files=run_result.changed_files or [],
-            # metrics_uri is populated at POST time (not known at PRE)
-            # it can be changed when a StorageSystem were included
-            metrics_uri=None, # log of relevations during run
-            model_uri=request.model_uri or None
-        )
-
-        # 5. Create Experiment node and edges atomically based on strategy
-        logger.info("is_base=%s, strategy=%s", is_base, run_result.strategy)
-        if is_base:
-            # Base experiment: create node + all resource edges (USES_RECIPE, USES_COMPONENT, USES_MODEL) in atomic transaction
-            logger.info(
-                "Creating base experiment (atomic): exp_id=%s, recipe=%s, component=%s, model=%s",
-                exp_id, request.recipe_id, request.component_id, request.model_id,
-            )
-            create_base_experiment_node_with_edges(
-                exp=experiment,
-                recipe_name=request.recipe_id,
-                component_name=request.component_id,
-                model_name=request.model_id,
-            )
-        else:
-            # Non-base experiment: create node + parent edge in atomic transaction
-            # This prevents orphaned experiments if the process fails mid-operation
-            edge_type = _STRATEGY_EXP_EDGE_MAP[run_result.strategy]
-            edge_props: dict[str, Any] = {}
-            if run_result.diff_patch:
-                edge_props["diff_patch"] = str(run_result.diff_patch)
-            
-            logger.info(
-                "Creating experiment with %s edge (atomic): exp_id=%s, parent_exp_id=%s, props=%s",
-                edge_type, exp_id, run_result.parent_exp_id, edge_props,
-            )
-            # Atomic: create node + parent edge + optional checkpoint edge in single transaction
-            create_non_base_experiment_with_chain_edge(
-                exp=experiment,
-                parent_exp_id=run_result.parent_exp_id,
-                strategy=edge_type,
-                edge_properties=edge_props or None,
-                parent_ckp_uri=run_result.parent_ckp_id if run_result.strategy == StrategyType.RESUME else None,
-            )
-
-        # 7. Resolve base_experiment_id for response
+        # 5. Resolve base_experiment_id for response
         response_base_exp_id = request.base_experiment_id
-
-        if run_result.strategy == StrategyType.NEW:
-            # Per NEW, l'experiment_id è anche il base_experiment_id
-            response_base_exp_id = exp_id
-        elif not response_base_exp_id and run_result.strategy != StrategyType.NEW:
+        if result.strategy == StrategyType.NEW:
+            response_base_exp_id = run_id
+        elif not response_base_exp_id and result.strategy != StrategyType.NEW:
             if parent and parent.base:
                 response_base_exp_id = parent.id
             elif request.previous_experiment_id:
                 response_base_exp_id = request.previous_experiment_id
 
         logger.info(
-            "PRE complete: strategy=%s, exp_id=%s, base_exp_id=%s, previous_experiment_id=%s",
-            run_result.strategy, exp_id, response_base_exp_id, request.experiment_id,
+            "PRE complete: strategy=%s, run_id=%s, base_exp_id=%s, previous_experiment_id=%s",
+            result.strategy, run_id, response_base_exp_id, request.experiment_id,
         )
 
         return PreResponse(
-            experiment_id=exp_id, # New Experiment ID created 
-            strategy=StrategyType(run_result.strategy),
-            base=is_base,
-            description=description,
+            experiment_id=run_id,
+            strategy=StrategyType(result.strategy),
+            base=result.strategy == StrategyType.NEW,
+            description=result.extra.get("description", "") if result.extra else "",
             base_experiment_id=response_base_exp_id,
-            previous_experiment_id=request.experiment_id
+            previous_experiment_id=request.experiment_id,
         )
 
     except HTTPException:
@@ -282,36 +209,32 @@ async def pre_execution(request: PreRequest) -> PreResponse:
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ─────────────────────────────────────────────────────────────────────────
+# POST-EXECUTION
+# ─────────────────────────────────────────────────────────────────────────
 @app.post("/api/v1/post", response_model=PostResponse)
 async def post_execution(request: PostRequest) -> PostResponse:
-    """POST-execution endpoint: update experiment status."""
+    """POST-execution endpoint: update experiment status, then dispatch handler hook."""
     logger.info("START POST: %s", str(request))
     try:
+        # 1. Generic status update
         update_experiment_status(
             exp_id=request.experiment_id,
             status=StatusType(request.status),
             exit_msg=request.exit_message,
             metrics_uri=request.metrics_uri,
         )
-        
-        # ckp2ckp edge creation for RESUME strategy after experiment is completed
-        if request.status == StatusType.COMPLETED and request.strategy == StrategyType.RESUME and request.checkpoint_resume_from:
-            old_checkpoint = retrieve_ckp_id_by_ckp_uri(request.checkpoint_resume_from)
-            new_ckps = retrieve_ckp_by_experiment_id(request.experiment_id)
-            if new_ckps:
-                first_ckp = None
-                min=0
-                for ckp in new_ckps:
-                    if min == 0 or ckp.epoch < min:
-                        min = ckp.epoch
-                        first_ckp = ckp
-                
-                logger.info(
-                    "Creating CKP_DERIVED_FROM edge: base_ckp_id=%s, new_ckp_id=%s",
-                    old_checkpoint, first_ckp.id,
-                )
-                create_ckp_derived_from_edge(base_ckp_id=old_checkpoint, new_ckp_id=first_ckp.id)
-            
+
+        # 2. Dispatch handler-specific post logic
+        exp = find_experiment_by_id(request.experiment_id)
+        if exp is None:
+            raise HTTPException(
+                status_code=422,
+                detail=f"experiment_id '{request.experiment_id}' not found in DB",
+            )
+
+        handler = get_handler(exp.experiment_type)
+        handler.on_post(request)
 
         logger.info(
             "POST complete: exp_id=%s, status=%s",
@@ -324,37 +247,46 @@ async def post_execution(request: PostRequest) -> PostResponse:
             acknowledged=True,
         )
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error("POST-execution server error: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ─────────────────────────────────────────────────────────────────────────
+# CHECKPOINT (backward compatibility — wrapper su generic node)
+# ─────────────────────────────────────────────────────────────────────────
 @app.post("/api/v1/checkpoint", response_model=CheckpointResponse)
 async def checkpoint_created(request: CheckpointRequest) -> CheckpointResponse:
     """Checkpoint endpoint: create checkpoint node and link to experiment.
 
-    Flow:
-    1. Build Checkpoint entity from request
-    2. Create Checkpoint node in Neo4j
-    3. Create (Experiment)-[:PRODUCED]->(Checkpoint) edge
-    4. Return checkpoint_id acknowledgement
+    Implementato come caso specifico dell'endpoint generico /graph/nodes.
+    Ora crea nodi con label :Node:Checkpoint per essere trovati da
+    MATCH (n:Checkpoint) o MATCH (n:Node {type: "Checkpoint"}).
     """
     try:
         ckp_id = str(uuid.uuid4())
 
-        checkpoint = Checkpoint(
-            id=ckp_id,
-            name=request.name,
-            derived_from=request.derived_from,
-            epoch=request.epoch,
-            run=request.run,
-            uri=request.uri,
-            metrics=request.metrics,
-            is_merging=request.is_merging,
+        # Funzioni SYNC (coerenti con neo4j_ops) — NO await
+        create_generic_graph_node(
+            node_id=ckp_id,
+            node_type="Checkpoint",
+            payload={
+                "name": request.name,
+                "derived_from": request.derived_from,
+                "epoch": request.epoch,
+                "run": request.run,
+                "uri": request.uri,
+                "metrics": request.metrics,
+                "is_merging": request.is_merging,
+            },
         )
-
-        create_checkpoint_node(checkpoint)
-        create_checkpoint_edge(request.experiment_id, ckp_id)
+        create_generic_edge(
+            parent_id=request.experiment_id,
+            child_id=ckp_id,
+            edge_type="PRODUCED",
+        )
 
         logger.info(
             "Checkpoint created: id=%s, name=%s, exp=%s",
@@ -370,4 +302,41 @@ async def checkpoint_created(request: CheckpointRequest) -> CheckpointResponse:
     except Exception as e:
         logger.error("Checkpoint server error: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
-    
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# GENERIC NODE
+# ─────────────────────────────────────────────────────────────────────────
+@app.post("/graph/nodes", response_model=GenericNodeResponse)
+async def create_generic_node(request: GenericNodeRequest) -> GenericNodeResponse:
+    """Crea un nodo generico collegato a un run esistente.
+
+    Endpoint generico per nodi custom (Metric, Artifact, Alert, ...)
+    senza necessità di un endpoint dedicato per tipo.
+    """
+    try:
+        node_id = str(uuid.uuid4())
+
+        # Funzioni SYNC (coerenti con neo4j_ops) — NO await
+        create_generic_graph_node(
+            node_id=node_id,
+            node_type=request.node_type,
+            payload=request.payload,
+        )
+        create_generic_edge(
+            parent_id=request.run_id,
+            child_id=node_id,
+            edge_type=request.edge_type,
+        )
+
+        logger.info(
+            "Generic node created: node_id=%s, type=%s, run_id=%s, edge=%s",
+            node_id, request.node_type, request.run_id, request.edge_type,
+        )
+
+        return GenericNodeResponse(node_id=node_id, acknowledged=True)
+
+    except Exception as e:
+        logger.error("Generic node server error: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+

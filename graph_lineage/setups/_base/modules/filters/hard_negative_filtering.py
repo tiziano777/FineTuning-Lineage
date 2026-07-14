@@ -622,11 +622,13 @@ class HardNegativeFilter:
         temperature: float | None = None,
         sample_metadata: dict | None = None,
     ) -> dict | list | None:
-        if not self.config.get("enabled", True):
+        if not self.config.get("enabled"):
             return candidates[0] if candidates else None
         if not candidates:
             return None
         if len(candidates) == 1:
+            if candidates[0].get("content") == gold_content:
+                return None
             return candidates[0]
 
         # Phase 1.a: partition degenerate
