@@ -1,20 +1,11 @@
-"""FastAPI application for the Lineage Server.
-
-Endpoints:
-    GET  /health       → Health check (DB connectivity)
-    POST /api/v1/pre   → PRE-execution lifecycle (handler dispatch)
-    POST /api/v1/post  → POST-execution lifecycle (update status + handler hook)
-    POST /api/v1/checkpoint → Mid-training checkpoint creation (wrapper su generic node)
-    POST /graph/nodes  → Creazione nodo generico collegato a un run
-
-Run with: uvicorn graph_lineage.server.app:app --host 0.0.0.0 --port 8000
+"""
+FastAPI application for the Lineage Server.
 """
 
 from __future__ import annotations
 
 import logging
 import sys
-import uuid
 import json
 from fastapi import FastAPI, HTTPException
 
@@ -23,20 +14,17 @@ from graph_lineage.diff.snapshot import CodebaseSnapshot
 from graph_lineage.lineage.generic_node_ops import create_generic_edge, create_generic_graph_node
 from graph_lineage.lineage.experiment_neo4j_ops import find_experiment_by_id, update_experiment_status
 
-from graph_lineage.server.handlers.registry import get_handler
+from graph_lineage.server.dispatch.registry import resolve_handler, get_handler
 from graph_lineage.server.handlers.training import ModelIdMismatchError, ModelDbMismatchError
 
 from .schemas import (
-    CheckpointRequest,
-    CheckpointResponse,
-    GenericNodeRequest,
-    GenericNodeResponse,
     HealthResponse,
-    PostRequest,
-    PostResponse,
-    PreRequest,
-    PreResponse,
+    PostRequest,PostResponse,
+    PreRequest,PreResponse,
+    GenericNodeRequest, GenericNodeResponse
 )
+
+from graph_lineage.neo4j_client.client import PersistentNeo4jClient
 
 # Configura logging base
 logging.basicConfig(
@@ -45,11 +33,9 @@ logging.basicConfig(
     handlers=[logging.StreamHandler(sys.stdout)],
 )
 
-# Silenzia TUTTO Uvicorn
 for logger_name in ["uvicorn", "uvicorn.access", "uvicorn.error", "uvicorn.asgi"]:
     logging.getLogger(logger_name).setLevel(logging.WARNING)
 
-# Silenzia httpx
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 
@@ -63,75 +49,57 @@ app = FastAPI(
     description="Receives experiment lifecycle events from remote GPU workers.",
 )
 
+client = PersistentNeo4jClient(auto_init=True).get_instance()
 
-# ─────────────────────────────────────────────────────────────────────────
-# STARTUP EVENT: Initialize and verify Neo4j schema
-# ─────────────────────────────────────────────────────────────────────────
+# ── STARTUP ───────────────────────────────────────────────────────────────
 @app.on_event("startup")
 async def startup_initialize_schema():
-    """Initialize and verify Neo4j schema on server startup."""
     try:
-        from graph_lineage.neo4j_client.client import Neo4jClient, get_driver
-
-        logger.info("[Startup] Initializing Neo4j schema and verification...")
-
-        # Get driver
-        driver = await get_driver()
-
-        # Create client and ensure schema is initialized and verified
-        client = Neo4jClient(driver=driver, auto_init=True)
         success = await client.ensure_initialized()
-
         if success:
-            logger.info("[Startup] ✓ Neo4j schema initialized and verified successfully")
+            logger.info("[Startup] ✓ Neo4j schema initialized")
         else:
-            logger.error("[Startup] ✗ Neo4j schema initialization or verification failed")
-            logger.error("[Startup] API will continue but may encounter issues")
-
+            logger.error("[Startup] ✗ Neo4j schema init failed")
+        _register_ai_serializers()
+        logger.info("[Startup] ✓ AI domain serializers registered")
     except Exception as e:
-        logger.error("[Startup] Unexpected error during schema initialization: %s", e)
-        logger.error("[Startup] API will continue but may encounter issues")
+        logger.error("[Startup] Error: %s", e)
 
+def _register_ai_serializers():
+    from graph_lineage.core.node_serializers import register_node_serializer
+    def checkpoint_serializer(payload: dict) -> dict:
+        return {
+            "name": payload.get("name", ""),
+            "derived_from": payload.get("derived_from", ""),
+            "epoch": payload.get("epoch", 0),
+            "run": payload.get("run", 0),
+            "uri": payload.get("uri", ""),
+            "metrics": payload.get("metrics", ""),
+            "is_merging": payload.get("is_merging", False),
+        }
+    register_node_serializer("Checkpoint", checkpoint_serializer)
 
-# ─────────────────────────────────────────────────────────────────────────
-# HEALTH
-# ─────────────────────────────────────────────────────────────────────────
+# ── HEALTH ────────────────────────────────────────────────────────────────
 @app.get("/health", response_model=HealthResponse)
 async def health() -> HealthResponse:
-    """Health check endpoint."""
     neo4j_ok = False
     try:
-        from graph_lineage.neo4j_client.client import get_driver
-
-        driver = await get_driver()
+        driver = await client.get_driver()
         async with driver.session() as session:
             await session.run("RETURN 1")
         neo4j_ok = True
     except Exception:
         pass
-
     return HealthResponse(
         status="ok" if neo4j_ok else "degraded",
         version=__version__,
         neo4j_connected=neo4j_ok,
     )
 
-
-# ─────────────────────────────────────────────────────────────────────────
-# PRE-EXECUTION
-# ─────────────────────────────────────────────────────────────────────────
+# ── PRE-EXECUTION ────────────────────────────
 @app.post("/api/v1/pre", response_model=PreResponse)
 async def pre_execution(request: PreRequest) -> PreResponse:
-    """PRE-execution endpoint: dispatch to run-type handler, detect strategy, create run node.
-
-    Flow:
-    1. Build CodebaseSnapshot from request codebase
-    2. Look up parent/current experiment (for response resolution)
-    3. Dispatch to RunTypeHandler.detect()
-    4. Create Experiment node via handler.create_nodes()
-    5. Resolve base_experiment_id for response
-    6. Return strategy + run_id
-    """
+    """PRE-execution endpoint: dispatch to domain + run-type handler, detect strategy, create run node."""
     try:
         logger.info("START PRE: %s", str(request.experiment_id))
         logger.info("run_type: %s", request.run_type)
@@ -163,8 +131,13 @@ async def pre_execution(request: PreRequest) -> PreResponse:
         else:
             logger.info("no current experiment found")
 
-        # 3. Dispatch to handler
-        handler = get_handler(request.run_type)
+        # 3. REFACTOR: Domain dispatch (2 livelli) invece di get_handler diretto
+        handler = resolve_handler(request)
+        logger.info("Resolved handler: domain=%s, run_type=%s, handler=%s",
+                    getattr(request, "domain", "auto-detected"),
+                    request.run_type,
+                    handler.__class__.__name__)
+
         try:
             result = await handler.detect(request)
         except (ModelIdMismatchError, ModelDbMismatchError) as e:
@@ -177,6 +150,8 @@ async def pre_execution(request: PreRequest) -> PreResponse:
 
         # 4. Create run node and edges
         run_id = handler.create_nodes(request, result)
+        if not run_id:
+            raise HTTPException(status_code=500, detail="handler.create_nodes() returned empty run_id")
 
         # 5. Resolve base_experiment_id for response
         response_base_exp_id = request.base_experiment_id
@@ -208,10 +183,7 @@ async def pre_execution(request: PreRequest) -> PreResponse:
         logger.error("PRE-execution server error: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
-
-# ─────────────────────────────────────────────────────────────────────────
-# POST-EXECUTION
-# ─────────────────────────────────────────────────────────────────────────
+# ── POST-EXECUTION  ───────────────────────────
 @app.post("/api/v1/post", response_model=PostResponse)
 async def post_execution(request: PostRequest) -> PostResponse:
     """POST-execution endpoint: update experiment status, then dispatch handler hook."""
@@ -233,7 +205,12 @@ async def post_execution(request: PostRequest) -> PostResponse:
                 detail=f"experiment_id '{request.experiment_id}' not found in DB",
             )
 
-        handler = get_handler(exp.experiment_type)
+        # REFACTOR: usa resolve_handler per coerenza, con fallback a get_handler
+        try:
+            handler = resolve_handler(exp)
+        except Exception:
+            handler = get_handler(exp.experiment_type)
+
         handler.on_post(request)
 
         logger.info(
@@ -253,85 +230,44 @@ async def post_execution(request: PostRequest) -> PostResponse:
         logger.error("POST-execution server error: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
-
-# ─────────────────────────────────────────────────────────────────────────
-# CHECKPOINT (backward compatibility — wrapper su generic node)
-# ─────────────────────────────────────────────────────────────────────────
-@app.post("/api/v1/checkpoint", response_model=CheckpointResponse)
-async def checkpoint_created(request: CheckpointRequest) -> CheckpointResponse:
-    """Checkpoint endpoint: create checkpoint node and link to experiment.
-
-    Implementato come caso specifico dell'endpoint generico /graph/nodes.
-    Ora crea nodi con label :Node:Checkpoint per essere trovati da
-    MATCH (n:Checkpoint) o MATCH (n:Node {type: "Checkpoint"}).
-    """
-    try:
-        ckp_id = str(uuid.uuid4())
-
-        # Funzioni SYNC (coerenti con neo4j_ops) — NO await
-        create_generic_graph_node(
-            node_id=ckp_id,
-            node_type="Checkpoint",
-            payload={
-                "name": request.name,
-                "derived_from": request.derived_from,
-                "epoch": request.epoch,
-                "run": request.run,
-                "uri": request.uri,
-                "metrics": request.metrics,
-                "is_merging": request.is_merging,
-            },
-        )
-        create_generic_edge(
-            parent_id=request.experiment_id,
-            child_id=ckp_id,
-            edge_type="PRODUCED",
-        )
-
-        logger.info(
-            "Checkpoint created: id=%s, name=%s, exp=%s",
-            ckp_id, request.name, request.experiment_id,
-        )
-
-        return CheckpointResponse(
-            checkpoint_id=ckp_id,
-            experiment_id=request.experiment_id,
-            acknowledged=True,
-        )
-
-    except Exception as e:
-        logger.error("Checkpoint server error: %s", e, exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# ─────────────────────────────────────────────────────────────────────────
-# GENERIC NODE
-# ─────────────────────────────────────────────────────────────────────────
+# ── GENERIC NODE (GenericNodeRequest.to_neo4j_params()) ──
 @app.post("/graph/nodes", response_model=GenericNodeResponse)
 async def create_generic_node(request: GenericNodeRequest) -> GenericNodeResponse:
     """Crea un nodo generico collegato a un run esistente.
 
-    Endpoint generico per nodi custom (Metric, Artifact, Alert, ...)
-    senza necessità di un endpoint dedicato per tipo.
+    REFACTOR: GenericNodeRequest.to_neo4j_params() serializza il payload in JSON string
+    prima di passarlo al layer Neo4j, evitando CypherTypeError.
     """
     try:
-        node_id = str(uuid.uuid4())
+        neo4j_params = request.to_neo4j_params()
+        node_id = neo4j_params["node_id"]
+        node_type = neo4j_params["node_type"]
+        payload_json = neo4j_params.get("payload_json")
 
-        # Funzioni SYNC (coerenti con neo4j_ops) — NO await
-        create_generic_graph_node(
-            node_id=node_id,
-            node_type=request.node_type,
-            payload=request.payload,
-        )
+        if payload_json is not None:
+            create_generic_graph_node(
+                node_id=node_id,
+                node_type=node_type,
+                payload_json=payload_json,
+            )
+        else:
+            from graph_lineage.core.node_serializers import serialize_node_payload
+            custom_props = serialize_node_payload(node_type, request.payload)
+            create_generic_graph_node(
+                node_id=node_id,
+                node_type=node_type,
+                **custom_props,
+            )
+
         create_generic_edge(
-            parent_id=request.run_id,
+            parent_id=neo4j_params["run_id"],
             child_id=node_id,
-            edge_type=request.edge_type,
+            edge_type=neo4j_params["edge_type"],
         )
 
         logger.info(
             "Generic node created: node_id=%s, type=%s, run_id=%s, edge=%s",
-            node_id, request.node_type, request.run_id, request.edge_type,
+            node_id, node_type, neo4j_params["run_id"], neo4j_params["edge_type"],
         )
 
         return GenericNodeResponse(node_id=node_id, acknowledged=True)

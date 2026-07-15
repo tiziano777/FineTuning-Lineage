@@ -11,7 +11,6 @@ import streamlit as st
 from graph_lineage.streamlit_ui.db.repository.component_repository import ComponentRepository
 from graph_lineage.streamlit_ui.utils.async_helpers import run_async
 from graph_lineage.streamlit_ui.utils.errors import UIError
-from graph_lineage.streamlit_ui.utils import get_neo4j_client
 from graph_lineage.data_classes.neo4j.nodes.component import Component
 
 logger = logging.getLogger(__name__)
@@ -33,7 +32,7 @@ async def create_component_async(
     **extra_fields: Any,
 ) -> Component:
     """Create component asynchronously. Returns Component dataclass."""
-    db_client = get_neo4j_client()
+    db_client = st.session_state.get("db_client")
     repo = ComponentRepository(db_client)
     return await repo.create_from_params(
         name=name,
@@ -48,13 +47,13 @@ async def create_component_async(
 
 async def list_components_async() -> list[Component]:
     """List components asynchronously. Returns list of Component dataclasses."""
-    db_client = get_neo4j_client()
+    db_client = st.session_state.get("db_client")
     repo = ComponentRepository(db_client)
     return await repo.list_components()
 
 async def get_component_async(comp_id: str) -> Component | None:
     """Get component asynchronously. Returns Component dataclass or None."""
-    db_client = get_neo4j_client()
+    db_client = st.session_state.get("db_client")
     repo = ComponentRepository(db_client)
     return await repo.get_component(comp_id)
 
@@ -67,7 +66,7 @@ async def update_component_async(
     **extra_fields: Any,
 ) -> Component:
     """Update component asynchronously. Returns updated Component dataclass."""
-    db_client = get_neo4j_client()
+    db_client = st.session_state.get("db_client")
     repo = ComponentRepository(db_client)
     return await repo.update_component(
         comp_id, name=name, uri=uri, docs_url=docs_url, description=description,
@@ -76,13 +75,13 @@ async def update_component_async(
 
 async def check_component_deps_async(comp_id: str) -> int:
     """Check component dependencies asynchronously."""
-    db_client = get_neo4j_client()
+    db_client = st.session_state.get("db_client")
     repo = ComponentRepository(db_client)
     return await repo.check_component_dependencies(comp_id)
 
 async def delete_component_async(comp_id: str) -> None:
     """Delete component asynchronously."""
-    db_client = get_neo4j_client()
+    db_client = st.session_state.get("db_client")
     repo = ComponentRepository(db_client)
     await repo.delete_component(comp_id)
 
@@ -408,7 +407,7 @@ def _render_delete() -> None:
             comp_id = comp_map[selected_comp]
 
             try:
-                db_client = get_neo4j_client()
+                db_client = st.session_state.get("db_client")
                 repo = ComponentRepository(db_client)
                 is_deletable = run_async(repo.is_deletable(comp_id))
 

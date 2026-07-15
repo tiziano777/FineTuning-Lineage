@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Set
 
 from graph_lineage.data_classes.neo4j.nodes.experiment import Experiment
-from graph_lineage.streamlit_ui.db.neo4j_async import AsyncNeo4jClient
+from graph_lineage.neo4j_client.client import StreamlitNeo4jClient
 from graph_lineage.streamlit_ui.utils.errors import UIError
 
 logger = logging.getLogger(__name__)
@@ -119,7 +119,7 @@ def _row_to_experiment(row: Dict[str, Any]) -> Experiment:
 class ExperimentRepository:
     """Data access layer for Experiment entity."""
 
-    def __init__(self, db_client: AsyncNeo4jClient):
+    def __init__(self, db_client: StreamlitNeo4jClient):
         self.db = db_client
 
     # ── CRUD: Create ──

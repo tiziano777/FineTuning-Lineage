@@ -3,7 +3,6 @@ import asyncio
 from typing import Dict, Any
 
 from graph_lineage.data_classes.neo4j.nodes.model import Model, ModelType
-from graph_lineage.streamlit_ui.utils import get_neo4j_client
 from graph_lineage.streamlit_ui.db.repository.model_repository import ModelRepository
 from graph_lineage.streamlit_ui.utils.async_helpers import run_async
 from graph_lineage.streamlit_ui.utils.errors import UIError
@@ -89,43 +88,43 @@ def display_model_card(model: Model):
 
 async def create_model_async(model: Model) -> Model:
     """Create model asynchronously. Returns Model dataclass."""
-    db_client = get_neo4j_client()
+    db_client = st.session_state.get("db_client")
     repo = ModelRepository(db_client)
     return await repo.create_model(model)
 
 async def list_models_async() -> list[Model]:
     """List models asynchronously. Returns list of Model dataclasses."""
-    db_client = get_neo4j_client()
+    db_client = st.session_state.get("db_client")
     repo = ModelRepository(db_client)
     return await repo.list_models()
 
 async def get_model_async(model_id: str) -> Model | None:
     """Get model asynchronously. Returns Model dataclass or None."""
-    db_client = get_neo4j_client()
+    db_client = st.session_state.get("db_client")
     repo = ModelRepository(db_client)
     return await repo.get_model(model_id)
 
 async def update_model_async(model: Model) -> Model:
     """Update model asynchronously. Returns updated Model dataclass."""
-    db_client = get_neo4j_client()
+    db_client = st.session_state.get("db_client")
     repo = ModelRepository(db_client)
     return await repo.update_model(model)
 
 async def upsert_model_async(model: Model) -> Model:
     """Upsert model by name asynchronously. Returns created/updated Model dataclass."""
-    db_client = get_neo4j_client()
+    db_client = st.session_state.get("db_client")
     repo = ModelRepository(db_client)
     return await repo.upsert_by_name(model)
 
 async def delete_model_async(model_id: str) -> None:
     """Delete model asynchronously."""
-    db_client = get_neo4j_client()
+    db_client = st.session_state.get("db_client")
     repo = ModelRepository(db_client)
     await repo.delete_model(model_id)
 
 async def check_model_deps_async(model_id: str) -> int:
     """Check model dependencies asynchronously."""
-    db_client = get_neo4j_client()
+    db_client = st.session_state.get("db_client")
     repo = ModelRepository(db_client)
     return await repo.check_model_dependencies(model_id)
 
@@ -399,7 +398,7 @@ def run() -> None:
                 model_id = selected_model.id
 
                 try:
-                    db_client = get_neo4j_client()
+                    db_client = st.session_state.get("db_client")
                     repo = ModelRepository(db_client)
                     is_deletable = run_async(repo.is_deletable(model_id))
 

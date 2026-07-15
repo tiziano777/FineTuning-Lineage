@@ -25,7 +25,7 @@ from graph_lineage.streamlit_ui.db.repository.recipe_repository import RecipeRep
 from graph_lineage.streamlit_ui.db.repository.recipe_repository import Recipe
 from typing import Optional
 
-from graph_lineage.streamlit_ui.utils import get_neo4j_client
+
 from graph_lineage.streamlit_ui.utils.async_helpers import run_async
 
 import logging  
@@ -88,19 +88,19 @@ async def _fetch_recipe_for_scaffold(
 
 async def _list_components_async() -> list[Component]:
     """List all components asynchronously. Returns list of Component dataclasses."""
-    db = get_neo4j_client()
+    db = st.session_state.db_client
     repo = ComponentRepository(db)
     return await repo.list_all()
  
 async def _list_models_async() -> list[Model]:
     """List all models asynchronously. Returns list of Model dataclasses."""
-    db = get_neo4j_client()
+    db = st.session_state.db_client
     repo = ModelRepository(db)
     return await repo.list_all()
  
 async def _list_recipes_async() -> list[dict]:
     """List all recipes asynchronously."""
-    db = get_neo4j_client()
+    db = st.session_state.db_client
     repo = RecipeRepository(db)
     return await repo.list_all()
  
@@ -501,7 +501,7 @@ def _render_create_form_training() -> None:
         recipe: Optional[Recipe] = None
         recipe_id: str | None = None
         recipe_name: str | None = None
-        recipe_repo = RecipeRepository(get_neo4j_client())
+        recipe_repo = RecipeRepository(st.session_state.db_client)
         if selected_recipe_name and selected_recipe_name != "None":
             recipe = run_async(_fetch_recipe_for_scaffold(selected_recipe_name, recipe_repo))
             if recipe is not None:
@@ -696,7 +696,7 @@ def _render_create_form_evaluation() -> None:
         recipe: Optional[Recipe] = None
         recipe_id: str | None = None
         recipe_name: str | None = None
-        recipe_repo = RecipeRepository(get_neo4j_client())
+        recipe_repo = RecipeRepository(st.session_state.db_client)
         if selected_recipe_name and selected_recipe_name != "None":
             recipe = run_async(_fetch_recipe_for_scaffold(selected_recipe_name, recipe_repo))
             if recipe is not None:
@@ -891,7 +891,7 @@ def _render_create_form_inference() -> None:
         recipe: Optional[Recipe] = None
         recipe_id: str | None = None
         recipe_name: str | None = None
-        recipe_repo = RecipeRepository(get_neo4j_client())
+        recipe_repo = RecipeRepository(st.session_state.db_client)
         if selected_recipe_name and selected_recipe_name != "None":
             recipe = run_async(_fetch_recipe_for_scaffold(selected_recipe_name, recipe_repo))
             if recipe is not None:

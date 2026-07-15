@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 from typing import Any, Optional
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from graph_lineage.data_classes.neo4j.nodes.experiment import RunType
+
+import json
+import uuid
 
 # ─── PRE-EXECUTION ─────────────────────────────────────────────────────────────
 
@@ -106,12 +109,52 @@ class CheckpointResponse(BaseModel):
 # ─── GENERIC NODE ─────────────────────────────────────────────────────────────
 
 class GenericNodeRequest(BaseModel):
-    """Payload for creating a generic node linked to a run."""
+    """Payload for creating a generic node linked to a run.
+
+    REFACTOR: payload viene automaticamente serializzato in JSON string
+    per evitare CypherTypeError (Neo4j non accetta Map come property value).
+    """
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+        json_schema_extra={
+            "example": {
+                "run_id": "exp-123",
+                "node_type": "Metric",
+                "payload": {"name": "final_loss", "value": 0.123},
+                "edge_type": "PRODUCED"
+            }
+        }
+    )
 
     run_id: str
     node_type: str
     payload: dict[str, Any]
-    edge_type: str = "produced"
+    edge_type: str = "PRODUCED"
+
+    @model_validator(mode='after')
+    def validate_payload_serializable(self):
+        """Verifica che il payload sia serializzabile in JSON."""
+        try:
+            json.dumps(self.payload)
+        except (TypeError, ValueError) as e:
+            raise ValueError(f"Payload must be JSON-serializable: {e}")
+        return self
+
+    def to_neo4j_params(self) -> dict[str, Any]:
+        """Converte il modello in parametri primitivi per Neo4j.
+
+        Returns:
+            dict con payload serializzato in JSON string e tutti i valori
+            come primitive (str, int, float, bool, None).
+        """
+        return {
+            "node_id": str(uuid.uuid4()),
+            "node_type": self.node_type,
+            "payload_json": json.dumps(self.payload),  # Neo4j-safe: String
+            "run_id": self.run_id,
+            "edge_type": self.edge_type.upper(),
+        }
 
 
 class GenericNodeResponse(BaseModel):
@@ -119,4 +162,3 @@ class GenericNodeResponse(BaseModel):
 
     node_id: str
     acknowledged: bool = True
-

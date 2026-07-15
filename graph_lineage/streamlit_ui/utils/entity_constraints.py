@@ -2,7 +2,7 @@
 
 import logging
 
-from graph_lineage.streamlit_ui.db.neo4j_async import AsyncNeo4jClient
+from graph_lineage.neo4j_client.client import StreamlitNeo4jClient
 from graph_lineage.streamlit_ui.utils.errors import UIError
 
 logger = logging.getLogger(__name__)
@@ -11,11 +11,11 @@ logger = logging.getLogger(__name__)
 class EntityConstraints:
     """Validates entity constraints (e.g., deletability) via Neo4j queries."""
 
-    def __init__(self, db_client: AsyncNeo4jClient):
+    def __init__(self, db_client: StreamlitNeo4jClient):
         """Initialize with Neo4j client.
 
         Args:
-            db_client: AsyncNeo4jClient for database queries.
+            db_client: StreamlitNeo4jClient for database queries.
         """
         self.db = db_client
 

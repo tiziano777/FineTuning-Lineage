@@ -13,15 +13,7 @@ from graph_lineage.history.models import (
     NavigationResult,
     RollbackPreview,
 )
-
-
-class Neo4jClient(Protocol):
-    """Protocol for async Neo4j client -- avoids direct import of neo4j_async."""
-
-    async def run(self, query: str, **kwargs: Any) -> Any: ...
-    async def run_single(self, query: str, **kwargs: Any) -> Optional[dict]: ...
-    async def run_list(self, query: str, **kwargs: Any) -> list[dict]: ...
-
+from graph_lineage.neo4j_client.client import Neo4jClient
 
 def _build_experiment_summary(record: dict[str, Any]) -> ExperimentSummary:
     """Build ExperimentSummary from a Neo4j record containing exp + ckps."""
@@ -55,7 +47,7 @@ def _build_experiment_summary(record: dict[str, Any]) -> ExperimentSummary:
 class ExperimentRepository:
     """History management operations on the experiment lineage graph.
 
-    All methods are async and delegate to AsyncNeo4jClient for Neo4j access.
+    All methods are async and delegate to Neo4jClient for Neo4j access.
     """
 
     def __init__(self, client: Neo4jClient) -> None:

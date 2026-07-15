@@ -10,7 +10,6 @@ from graph_lineage.data_classes.neo4j.nodes.recipe import Recipe, RecipeEntry
 from graph_lineage.streamlit_ui.db.repository.recipe_repository import RecipeRepository
 from graph_lineage.streamlit_ui.utils.async_helpers import run_async
 from graph_lineage.streamlit_ui.utils.errors import UIError, DuplicateRecipeError
-from graph_lineage.streamlit_ui.utils import get_neo4j_client
 from graph_lineage.streamlit_ui.utils.recipe_validation import validate_recipe_yaml
 from graph_lineage.streamlit_ui.utils.scope_enum import ScopeEnum
 from graph_lineage.streamlit_ui.utils.task_enum import TaskEnum
@@ -23,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 async def save_recipe_from_yaml_async(yaml_content: str, description: str = "", filename: str | None = None, overwrite: bool = False) -> Recipe:
     """Parsa e persiste una recipe da YAML (create, o upsert se overwrite=True)."""
-    db_client = get_neo4j_client()
+    db_client = st.session_state.db_client
     repo = RecipeRepository(db_client)
     return await repo.save_from_yaml(
         yaml_content=yaml_content,
@@ -43,7 +42,7 @@ async def create_recipe_from_form_async(
     recipe_custom_fields: dict | None = None,
 ) -> Recipe:
     """Costruisce un Recipe dai dati del form e lo crea."""
-    db_client = get_neo4j_client()
+    db_client = st.session_state.db_client
     repo = RecipeRepository(db_client)
 
     validated_entries = []
@@ -74,32 +73,32 @@ async def create_recipe_from_form_async(
 
 async def update_recipe_async(recipe: Recipe) -> Recipe:
     """Persiste le modifiche su una recipe esistente."""
-    db_client = get_neo4j_client()
+    db_client = st.session_state.db_client
     repo = RecipeRepository(db_client)
     return await repo.update(recipe)
 
 async def search_recipes_async(query: str) -> list[Recipe]:
-    db_client = get_neo4j_client()
+    db_client = st.session_state.db_client
     repo = RecipeRepository(db_client)
     return await repo.search(query)
 
 async def list_recipes_async(limit: int = 20) -> list[Recipe]:
-    db_client = get_neo4j_client()
+    db_client = st.session_state.db_client
     repo = RecipeRepository(db_client)
     return await repo.list_with_limit(limit=limit)
 
 async def delete_recipe_async(recipe_id: str) -> None:
-    db_client = get_neo4j_client()
+    db_client = st.session_state.db_client
     repo = RecipeRepository(db_client)
     await repo.delete(recipe_id=recipe_id)
 
 async def is_recipe_deletable_async(recipe_id: str) -> bool:
-    db_client = get_neo4j_client()
+    db_client = st.session_state.db_client
     repo = RecipeRepository(db_client)
     return await repo.is_deletable(recipe_id=recipe_id)
 
 async def get_recipe_by_id_async(recipe_id: str) -> Recipe | None:
-    db_client = get_neo4j_client()
+    db_client = st.session_state.db_client
     repo = RecipeRepository(db_client)
     return await repo.get_by_id(recipe_id)
 

@@ -8,7 +8,7 @@ from typing import Optional
 
 from graph_lineage.data_classes.neo4j.nodes.checkpoint import Checkpoint
 from graph_lineage.streamlit_ui.utils.errors import UIError
-from graph_lineage.streamlit_ui.db.neo4j_async import AsyncNeo4jClient
+from graph_lineage.neo4j_client.client import StreamlitNeo4jClient
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 class CheckpointRepository:
     """Data access layer for Checkpoint entity."""
 
-    def __init__(self, db_client: AsyncNeo4jClient):
+    def __init__(self, db_client: StreamlitNeo4jClient):
         """Initialize repository with Neo4j client."""
         self.db = db_client
 

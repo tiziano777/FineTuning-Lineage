@@ -1,8 +1,14 @@
-"""TrainingRunHandler: porta la logica verticale di training rule engine + endpoint."""
+"""TrainingRunHandler: logica verticale di training (dominio AI).
+
+Rifattorizzato per usare detect_branch_or_retry() dalla classe base,
+eliminando la duplicazione dei punti 3-4 e i 4 pop() hardcoded.
+
+Tutta la logica AI-specifica (RESUME, MERGE, model guards, CKP_DERIVED_FROM)
+resta invariata e closed-world in questo modulo.
+"""
 
 from __future__ import annotations
 
-import copy
 import json
 import logging
 import uuid
@@ -10,10 +16,9 @@ from dataclasses import replace
 from typing import Any
 
 from graph_lineage.config_file.data_classes.experiment_config import ExperimentConfig
+from graph_lineage.core.state_provider import GitOrExplicitCodebaseProvider
 from graph_lineage.data_classes.neo4j.nodes.experiment import Experiment, StatusType, StrategyType
 from graph_lineage.diff.description import generate_description
-from graph_lineage.diff.differ import compute_snapshot_diff
-from graph_lineage.diff.reconstructor import reconstruct_codebase
 from graph_lineage.diff.snapshot import CodebaseSnapshot
 from graph_lineage.lineage.experiment_neo4j_ops import (
     create_base_experiment_node_with_edges,
@@ -26,8 +31,9 @@ from graph_lineage.lineage.experiment_neo4j_ops import (
     retrieve_ckp_by_experiment_id,
     retrieve_ckp_id_by_ckp_uri,
 )
-from graph_lineage.server.schemas import PreRequest, PostRequest
-from .base import RunTypeHandler, RunTypeResult
+from graph_lineage.server.handlers.base import RunTypeHandler, RunTypeResult
+from graph_lineage.server.schemas import PostRequest, PreRequest
+
 logger = logging.getLogger(__name__)
 
 # Edge type mapping per strategy — Experiment→Experiment edges only.
@@ -37,6 +43,7 @@ _STRATEGY_EXP_EDGE_MAP: dict[str, str] = {
     "MERGE": "MERGED_FROM",
     "RESUME": "RESUMED_FROM",
 }
+
 
 class ModelIdMismatchError(Exception):
     """Raised when model_id changed between runs."""
@@ -49,6 +56,7 @@ class ModelIdMismatchError(Exception):
             f"If resuming from a checkpoint of the same model, restore model_id to '{expected_id}'. "
             f"Otherwise, create a new setup to train '{actual_id}'."
         )
+
 
 class ModelDbMismatchError(Exception):
     """Raised when model_db changed between runs."""
@@ -68,6 +76,7 @@ class ModelDbMismatchError(Exception):
             f"(URI: '{request_model_uri}')."
         )
 
+
 async def _reconstruct_full_codebase_from_experiment(experiment_id: str) -> CodebaseSnapshot:
     """Ricostruisce la codebase completa per un esperimento risalendo la catena."""
     chain = []
@@ -77,7 +86,7 @@ async def _reconstruct_full_codebase_from_experiment(experiment_id: str) -> Code
         exp = find_experiment_by_id(current_id)
         if not exp:
             raise ValueError(f"Experiment {current_id} not found")
-        
+
         chain.append({"id": exp.id, "codebase": exp.codebase, "base": exp.base})
 
         if exp.base:
@@ -89,24 +98,31 @@ async def _reconstruct_full_codebase_from_experiment(experiment_id: str) -> Code
         current_id = parent_id
 
     chain.reverse()
+    from graph_lineage.diff.reconstructor import reconstruct_codebase
     full_codebase = reconstruct_codebase(chain)
     return CodebaseSnapshot(files=full_codebase)
 
 
 class TrainingRunHandler(RunTypeHandler):
-    """Handler per run di tipo training: rileva strategia, crea nodi Experiment/Checkpoint,
-    gestisce CKP_DERIVED_FROM a POST-time per RESUME.
+    """Handler per run di tipo training.
+
+    Usa detect_branch_or_retry() dalla classe base per i casi RETRY/BRANCH,
+    eliminando la duplicazione e gli ignore pattern hardcoded.
     """
 
     run_type = "training"
 
+    def __init__(self):
+        # Usa il default StateProvider (ignora .lineage/*.yml automaticamente)
+        super().__init__(state_provider=GitOrExplicitCodebaseProvider())
+
     async def detect(self, request: PreRequest) -> RunTypeResult:
         """Detect the run type strategy based on PreRequest.
 
-        Logica portata 1:1 da detect_training_run_type.
+        Logica AI-specifica (punti 0-2) invariata.
+        Punti 3-4 (RETRY vs BRANCH) delegati a detect_branch_or_retry().
         """
         snapshot = CodebaseSnapshot(files=json.loads(request.codebase))
-        current_hashes = snapshot.hashes()
 
         exp = ExperimentConfig(
             name=request.experiment_name,
@@ -162,12 +178,7 @@ class TrainingRunHandler(RunTypeHandler):
                         "checkpoint_resume_from explicitly set and found in previous experiment, treating as RESUME"
                     )
                     parent_snapshot = await _reconstruct_full_codebase_from_experiment(exp.id)
-                    parent_hashes = parent_snapshot.hashes()
-                    no_lineage_parent_hashes = copy.deepcopy(parent_hashes)
-                    no_lineage_parent_hashes.pop(".lineage/experiment.yml", None)
-                    no_lineage_current_hashes = copy.deepcopy(current_hashes)
-                    no_lineage_current_hashes.pop(".lineage/experiment.yml", None)
-                    diff_patch = compute_snapshot_diff(old_snapshot=parent_snapshot, new_snapshot=snapshot)
+                    diff_patch = self.state_provider.diff(parent_snapshot, snapshot)
                     return RunTypeResult(
                         strategy="RESUME",
                         parent_run_id=exp.id,
@@ -178,14 +189,11 @@ class TrainingRunHandler(RunTypeHandler):
 
             # 2.b) RESUME_v2: checkpoint_resume_from is set but not found in previous experiment,
             # find other ckp in the chain
-            new_current_experiment = find_experiment_from_chain(exp.base_experiment_id, request.checkpoint_resume_from)
+            new_current_experiment = find_experiment_from_chain(
+                exp.base_experiment_id, request.checkpoint_resume_from
+            )
             parent_snapshot = await _reconstruct_full_codebase_from_experiment(new_current_experiment.id)
-            parent_hashes = parent_snapshot.hashes()
-            no_lineage_parent_hashes = copy.deepcopy(parent_hashes)
-            no_lineage_parent_hashes.pop(".lineage/experiment.yml", None)
-            no_lineage_current_hashes = copy.deepcopy(current_hashes)
-            no_lineage_current_hashes.pop(".lineage/experiment.yml", None)
-            diff_patch = compute_snapshot_diff(old_snapshot=parent_snapshot, new_snapshot=snapshot)
+            diff_patch = self.state_provider.diff(parent_snapshot, snapshot)
             return RunTypeResult(
                 strategy="RESUME",
                 parent_run_id=new_current_experiment.id,
@@ -194,64 +202,28 @@ class TrainingRunHandler(RunTypeHandler):
                 changed_files=sorted(diff_patch.keys()),
             )
 
-        # 3. experiment is the BASE: RETRY vs BRANCH
-        no_lineage_current_hashes = copy.deepcopy(current_hashes)
-        no_lineage_current_hashes.pop(".lineage/experiment.yml", None)
-
+        # 3. experiment is the BASE: RETRY vs BRANCH (delegato a metodo condiviso)
         if exp.base_experiment_id == exp.id:
             base = find_experiment_by_id(exp.base_experiment_id)
             previous_codebase_snapshot = CodebaseSnapshot(files=base.codebase)
-            previous_codebase_hashes = previous_codebase_snapshot.hashes()
-            no_lineage_previous_hashes = copy.deepcopy(previous_codebase_hashes)
-            no_lineage_previous_hashes.pop(".lineage/experiment.yml", None)
-
-            if no_lineage_current_hashes == no_lineage_previous_hashes:
-                logger.info("Codebase matches previous run, treating as RETRY")
-                diff_patch = compute_snapshot_diff(previous_codebase_snapshot, snapshot)
-                return RunTypeResult(
-                    strategy="RETRY",
-                    parent_run_id=exp.id,
-                    diff_patch=diff_patch,
-                    changed_files=sorted(diff_patch.keys()),
-                )
-            else:
-                logger.info("Codebase differs from previous run, treating as BRANCH")
-                diff_patch = compute_snapshot_diff(previous_codebase_snapshot, snapshot)
-                return RunTypeResult(
-                    strategy="BRANCH",
-                    parent_run_id=exp.id,
-                    diff_patch=diff_patch,
-                    changed_files=sorted(diff_patch.keys()),
-                )
-
-        # 4. EXPERIMENT IS NOT BASE: RETRY vs BRANCH
-        parent_snapshot = await _reconstruct_full_codebase_from_experiment(exp.id)
-        parent_hashes = parent_snapshot.hashes()
-        no_lineage_parent_hashes = copy.deepcopy(parent_hashes)
-        no_lineage_parent_hashes.pop(".lineage/experiment.yml", None)
-        no_lineage_current_hashes = copy.deepcopy(current_hashes)
-        no_lineage_current_hashes.pop(".lineage/experiment.yml", None)
-
-        diff_patch = compute_snapshot_diff(old_snapshot=parent_snapshot, new_snapshot=snapshot)
-        logger.info(
-            "file changes: %s",
-            set(sorted(no_lineage_current_hashes.keys())) - set(sorted(no_lineage_parent_hashes.keys())),
-        )
-
-        if no_lineage_current_hashes == no_lineage_parent_hashes:
-            return RunTypeResult(
-                strategy="RETRY",
+            return self.detect_branch_or_retry(
+                current_snapshot=snapshot,
+                parent_snapshot=previous_codebase_snapshot,
                 parent_run_id=exp.id,
-                diff_patch=diff_patch,
-                changed_files=sorted(diff_patch.keys()),
             )
 
-        return RunTypeResult(
-            strategy="BRANCH",
+        # 4. EXPERIMENT IS NOT BASE: RETRY vs BRANCH (delegato a metodo condiviso)
+        parent_snapshot = await _reconstruct_full_codebase_from_experiment(exp.id)
+        result = self.detect_branch_or_retry(
+            current_snapshot=snapshot,
+            parent_snapshot=parent_snapshot,
             parent_run_id=exp.id,
-            diff_patch=diff_patch,
-            changed_files=sorted(diff_patch.keys()),
         )
+        logger.info(
+            "file changes: %s",
+            set(result.changed_files or []),
+        )
+        return result
 
     def create_nodes(self, request: PreRequest, result: RunTypeResult) -> str:
         """Crea nodo Experiment e relativi edge nel grafo."""
@@ -340,4 +312,3 @@ class TrainingRunHandler(RunTypeHandler):
                         old_checkpoint, first_ckp.id,
                     )
                     create_ckp_derived_from_edge(base_ckp_id=old_checkpoint, new_ckp_id=first_ckp.id)
-

@@ -9,7 +9,7 @@ from typing import Optional, Any
 from graph_lineage.data_classes.neo4j.nodes.component import Component
 from graph_lineage.streamlit_ui.utils.errors import UIError
 from graph_lineage.streamlit_ui.utils.entity_constraints import EntityConstraints
-from graph_lineage.streamlit_ui.db.neo4j_async import AsyncNeo4jClient
+from graph_lineage.neo4j_client.client import StreamlitNeo4jClient
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +32,7 @@ class ComponentRepository:
     by Pydantic which merges them at the top level automatically.
     """
 
-    def __init__(self, db_client: AsyncNeo4jClient):
+    def __init__(self, db_client: StreamlitNeo4jClient):
         """Initialize repository with Neo4j client."""
         self.db = db_client
         self.constraints = EntityConstraints(db_client)

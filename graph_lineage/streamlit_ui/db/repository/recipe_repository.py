@@ -12,7 +12,7 @@ from pydantic import ValidationError
 from graph_lineage.data_classes.neo4j.nodes.recipe import Recipe
 from graph_lineage.streamlit_ui.utils.errors import UIError, DuplicateRecipeError
 from graph_lineage.streamlit_ui.utils.entity_constraints import EntityConstraints
-from graph_lineage.streamlit_ui.db.neo4j_async import AsyncNeo4jClient
+from graph_lineage.neo4j_client.client import StreamlitNeo4jClient
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +29,7 @@ class RecipeRepository:
       di campi hardcoded: i campi custom non vengono mai persi in lettura.
     """
 
-    def __init__(self, db_client: AsyncNeo4jClient):
+    def __init__(self, db_client: StreamlitNeo4jClient):
         self.db = db_client
         self.constraints = EntityConstraints(db_client)
 

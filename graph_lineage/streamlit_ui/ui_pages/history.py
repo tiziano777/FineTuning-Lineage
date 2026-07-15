@@ -1,13 +1,11 @@
 """History page -- navigate, rollback, and squash experiment chains."""
 
 from __future__ import annotations
-
 import logging
 
 import streamlit as st
 
 from graph_lineage.history.repository import ExperimentRepository as HistoryRepository
-from graph_lineage.streamlit_ui.utils import get_neo4j_client
 from graph_lineage.streamlit_ui.utils.async_helpers import run_async
 
 logger = logging.getLogger(__name__)
@@ -188,7 +186,7 @@ def run() -> None:
     """Run history page."""
     st.title("History")
 
-    db_client = get_neo4j_client()
+    db_client = st.session_state.get("db_client")
     history_repo = HistoryRepository(db_client)
 
     try:

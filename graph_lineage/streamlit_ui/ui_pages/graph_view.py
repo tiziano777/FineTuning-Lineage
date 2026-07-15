@@ -7,7 +7,6 @@ import logging
 import streamlit as st
 from streamlit_agraph import agraph, Node, Edge, Config
 
-from graph_lineage.streamlit_ui.utils import get_neo4j_client
 from graph_lineage.streamlit_ui.utils.async_helpers import run_async
 from graph_lineage.streamlit_ui.utils.errors import UIError
 
@@ -141,7 +140,7 @@ def run() -> None:
     """Run graph visualization page."""
     st.title("Graph View")
 
-    db_client = get_neo4j_client()
+    db_client = st.session_state.get("db_client")
 
     try:
         experiment_ids = run_async(_get_experiment_ids(db_client))

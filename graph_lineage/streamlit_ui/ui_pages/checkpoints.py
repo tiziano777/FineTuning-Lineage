@@ -10,8 +10,6 @@ from graph_lineage.streamlit_ui.db.repository.checkpoint_repository import Check
 from graph_lineage.streamlit_ui.db.repository.experiment_repository import ExperimentRepository
 from graph_lineage.streamlit_ui.utils.async_helpers import run_async
 from graph_lineage.streamlit_ui.utils.errors import UIError
-from graph_lineage.streamlit_ui.utils import get_neo4j_client
-
 logger = logging.getLogger(__name__)
 
 
@@ -20,35 +18,35 @@ async def list_checkpoints_async(
     experiment_id: str | None = None, usable_only: bool = False
 ) -> list[dict]:
     """List checkpoints with parent experiment and used_by info."""
-    db_client = get_neo4j_client()
+    db_client = st.session_state.get("db_client")
     repo = CheckpointRepository(db_client)
     return await repo.list_all(experiment_id=experiment_id, usable_only=usable_only)
 
 
 async def list_experiments_async() -> list[dict]:
     """List experiments for filter dropdown."""
-    db_client = get_neo4j_client()
+    db_client = st.session_state.get("db_client")
     repo = ExperimentRepository(db_client)
     return await repo.list_all()
 
 
 async def update_uri_async(ckp_id: str, new_uri: str) -> dict:
     """Update checkpoint URI."""
-    db_client = get_neo4j_client()
+    db_client = st.session_state.get("db_client")
     repo = CheckpointRepository(db_client)
     return await repo.update_uri(ckp_id=ckp_id, new_uri=new_uri)
 
 
 async def set_usable_async(ckp_id: str, is_usable: bool) -> dict:
     """Toggle checkpoint usability."""
-    db_client = get_neo4j_client()
+    db_client = st.session_state.get("db_client")
     repo = CheckpointRepository(db_client)
     return await repo.set_usable(ckp_id=ckp_id, is_usable=is_usable)
 
 
 async def get_dependencies_async(ckp_id: str) -> list[dict]:
     """Get experiments that started from this checkpoint."""
-    db_client = get_neo4j_client()
+    db_client = st.session_state.get("db_client")
     repo = CheckpointRepository(db_client)
     return await repo.get_dependencies(ckp_id=ckp_id)
 

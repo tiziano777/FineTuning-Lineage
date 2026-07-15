@@ -25,3 +25,4 @@ class BaseEntity(BaseModel):
     def custom_fields(self) -> Dict[str, Any]:
         """Estrae i campi extra non definiti nel modello usando le feature native di Pydantic v2."""
         return self.model_extra or {}
+

@@ -6,7 +6,6 @@ import logging
 
 import streamlit as st
 
-from graph_lineage.streamlit_ui.utils import get_neo4j_client
 from graph_lineage.streamlit_ui.utils.async_helpers import run_async
 
 logger = logging.getLogger(__name__)
@@ -63,7 +62,7 @@ def run() -> None:
     st.title("Admin Console")
 
     if st.button("Run Check", type="primary"):
-        db_client = get_neo4j_client()
+        db_client = st.session_state.get("db_client")
         all_passed = True
 
         for check_name, cypher in _CHECKS:

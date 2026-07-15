@@ -8,8 +8,14 @@ import os
 from pathlib import Path
 
 import streamlit as st
+from graph_lineage.neo4j_client.client import StreamlitNeo4jClient
+from graph_lineage.streamlit_ui.utils import get_api_client, get_config
 
-from graph_lineage.streamlit_ui.utils import get_api_client, get_config, get_neo4j_client
+
+@st.cache_resource
+def get_streamlit_neo4j_client():
+    # Streamlit gestirà questo client memorizzandolo nella cache dell'applicazione
+    return StreamlitNeo4jClient(os.getenv("NEO4J_URI"), os.getenv("NEO4J_USER"), os.getenv("NEO4J_PASSWORD"))
 
 
 async def ensure_schema_initialized() -> None:
@@ -23,8 +29,7 @@ async def ensure_schema_initialized() -> None:
     Uses CREATE ... IF NOT EXISTS patterns for idempotency.
     """
     try:
-        db_client = get_neo4j_client()
-
+        db_client = get_streamlit_neo4j_client()
         # Schema files to load in order
         schema_files = [
             "01-schema.cypher",
@@ -62,7 +67,6 @@ async def ensure_schema_initialized() -> None:
     except Exception as e:
         st.warning(f"Schema initialization warning (non-fatal): {e}")
 
-
 def main() -> None:
     """Main Streamlit app entry point."""
     st.set_page_config(
@@ -70,6 +74,9 @@ def main() -> None:
         layout="wide",
         initial_sidebar_state="expanded",
     )
+
+    if st.session_state.get("db_client") is None:
+        st.session_state.db_client = get_streamlit_neo4j_client()
 
     # Register cleanup handler once per session
     if "cleanup_registered" not in st.session_state:
@@ -142,7 +149,7 @@ def cleanup_resources() -> None:
     """
     try:
         api_client = get_api_client()
-        db_client = get_neo4j_client()
+        db_client = st.session_state.get("db_client")
 
         # Create a temporary event loop for cleanup (we're in shutdown phase)
         loop = asyncio.new_event_loop()

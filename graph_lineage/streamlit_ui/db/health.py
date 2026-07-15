@@ -4,14 +4,14 @@ from __future__ import annotations
 
 import httpx
 
-from graph_lineage.streamlit_ui.db.neo4j_async import AsyncNeo4jClient
+from graph_lineage.neo4j_client.client import StreamlitNeo4jClient
 
 
-async def check_neo4j_health(client: AsyncNeo4jClient) -> bool:
+async def check_neo4j_health(client: StreamlitNeo4jClient) -> bool:
     """Check Neo4j connection health.
 
     Args:
-        client: AsyncNeo4jClient instance.
+        client: StreamlitNeo4jClient instance.
 
     Returns:
         True if healthy, False otherwise.

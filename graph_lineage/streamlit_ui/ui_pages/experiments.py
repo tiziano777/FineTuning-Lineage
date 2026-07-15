@@ -17,7 +17,6 @@ from graph_lineage.streamlit_ui.db.repository.experiment_repository import (
 )
 from graph_lineage.streamlit_ui.utils.async_helpers import run_async
 from graph_lineage.streamlit_ui.utils.errors import UIError
-from graph_lineage.streamlit_ui.utils import get_neo4j_client
 
 logger = logging.getLogger(__name__)
 
@@ -55,18 +54,11 @@ _KNOWN_CORE_FIELDS = {
 # SESSION STATE HELPERS
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def _init_session_state(key: str, default: Any) -> Any:
-    if key not in st.session_state:
-        st.session_state[key] = default
-    return st.session_state[key]
-
-
 def _clear_session_prefix(prefix: str) -> None:
     """Remove all session state keys starting with prefix."""
     for k in list(st.session_state.keys()):
         if k.startswith(prefix):
             del st.session_state[k]
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # UI HELPERS
@@ -84,7 +76,6 @@ def _status_badge(status: Any, usable: Optional[bool]) -> str:
         return ":red[FAILED]"
     return f":blue[{status_str or 'UNKNOWN'}]"
 
-
 def _selectbox_with_none(
     label: str,
     options: List[str],
@@ -97,7 +88,6 @@ def _selectbox_with_none(
         idx = options.index(current) + 1
     chosen = st.selectbox(label, display, index=idx, key=key)
     return None if chosen == "— not set —" else chosen
-
 
 def _float_or_none(
     label: str,
@@ -117,7 +107,6 @@ def _float_or_none(
         label, min_value=min_v, max_value=max_v, value=default, step=step, key=key
     )
 
-
 def _parse_json_textarea(raw: str, field_name: str) -> tuple[Optional[Any], Optional[str]]:
     raw = raw.strip()
     if not raw:
@@ -127,14 +116,12 @@ def _parse_json_textarea(raw: str, field_name: str) -> tuple[Optional[Any], Opti
     except json.JSONDecodeError as exc:
         return None, f"JSON non valido in {field_name}: {exc}"
 
-
 def _to_json_pretty(value: Any) -> str:
     if value is None:
         return ""
     return json.dumps(value, indent=2, ensure_ascii=False, default=str)
 
-
-# ═══════════════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════════════=
 # MULTI-ITEM LIST EDITOR
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -361,7 +348,7 @@ async def _list_with_lineage(
     status_filter: Optional[str] = None,
     search: Optional[str] = None,
 ) -> List[Experiment]:
-    repo = ExperimentRepository(get_neo4j_client())
+    repo = ExperimentRepository(st.session_state.db_client)
     return await repo.list_with_lineage(status_filter=status_filter, search=search)
 
 
@@ -371,17 +358,17 @@ async def _update_metadata(
     notes: Optional[str],
     **extra: Any,
 ) -> Experiment:
-    repo = ExperimentRepository(get_neo4j_client())
+    repo = ExperimentRepository(st.session_state.db_client)
     return await repo.update_metadata(id=id, description=description, notes=notes, **extra)
 
 
 async def _get_agentic(id: str) -> Dict[str, Any]:
-    repo = ExperimentRepository(get_neo4j_client())
+    repo = ExperimentRepository(st.session_state.db_client)
     return await repo.get_agentic_metadata(id)
 
 
 async def _update_agentic(id: str, agentic_metadata: Dict[str, Any]) -> Experiment:
-    repo = ExperimentRepository(get_neo4j_client())
+    repo = ExperimentRepository(st.session_state.db_client)
     return await repo.update_agentic_metadata(id, agentic_metadata=agentic_metadata)
 
 
