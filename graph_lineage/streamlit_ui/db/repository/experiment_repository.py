@@ -7,7 +7,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Set
 
-from graph_lineage.data_classes.neo4j.nodes.experiment import Experiment
+from graph_lineage.data_classes.neo4j.nodes.code.training.experiment import Experiment
 from graph_lineage.neo4j_client.client import StreamlitNeo4jClient
 from graph_lineage.streamlit_ui.utils.errors import UIError
 

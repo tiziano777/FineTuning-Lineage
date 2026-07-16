@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 from pydantic import BaseModel, ConfigDict, Field, model_validator
-from graph_lineage.data_classes.neo4j.nodes.experiment import RunType
+from graph_lineage.data_classes.neo4j.nodes.code.enum.run_type import RunType
 
 import json
 import uuid
@@ -108,7 +108,7 @@ class CheckpointResponse(BaseModel):
 
 # ─── GENERIC NODE ─────────────────────────────────────────────────────────────
 
-class GenericNodeRequest(BaseModel):
+class EventNodeRequest(BaseModel):
     """Payload for creating a generic node linked to a run.
 
     REFACTOR: payload viene automaticamente serializzato in JSON string
@@ -157,7 +157,7 @@ class GenericNodeRequest(BaseModel):
         }
 
 
-class GenericNodeResponse(BaseModel):
+class EventNodeResponse(BaseModel):
     """Server acknowledgement of generic node creation."""
 
     node_id: str

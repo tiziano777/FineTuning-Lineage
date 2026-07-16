@@ -6,7 +6,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional, Any
 
-from graph_lineage.data_classes.neo4j.nodes.component import Component
+from graph_lineage.data_classes.neo4j.nodes.code.training.component import Component
 from graph_lineage.streamlit_ui.utils.errors import UIError
 from graph_lineage.streamlit_ui.utils.entity_constraints import EntityConstraints
 from graph_lineage.neo4j_client.client import StreamlitNeo4jClient

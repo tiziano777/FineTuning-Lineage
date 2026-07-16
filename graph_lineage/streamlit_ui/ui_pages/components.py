@@ -11,7 +11,7 @@ import streamlit as st
 from graph_lineage.streamlit_ui.db.repository.component_repository import ComponentRepository
 from graph_lineage.streamlit_ui.utils.async_helpers import run_async
 from graph_lineage.streamlit_ui.utils.errors import UIError
-from graph_lineage.data_classes.neo4j.nodes.component import Component
+from graph_lineage.data_classes.neo4j.nodes.code.training.component import Component
 
 logger = logging.getLogger(__name__)
 

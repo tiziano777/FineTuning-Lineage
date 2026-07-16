@@ -16,9 +16,9 @@ from pathlib import Path
 import streamlit as st
 import yaml
 
-from graph_lineage.data_classes.neo4j.nodes.experiment import RunType
-from graph_lineage.data_classes.neo4j.nodes.component import Component
-from graph_lineage.data_classes.neo4j.nodes.model import Model
+from graph_lineage.data_classes.neo4j.nodes.code.enum.run_type import RunType
+from graph_lineage.data_classes.neo4j.nodes.code.training.component import Component
+from graph_lineage.data_classes.neo4j.nodes.code.training.model import Model
 from graph_lineage.streamlit_ui.db.repository.component_repository import ComponentRepository
 from graph_lineage.streamlit_ui.db.repository.model_repository import ModelRepository
 from graph_lineage.streamlit_ui.db.repository.recipe_repository import RecipeRepository

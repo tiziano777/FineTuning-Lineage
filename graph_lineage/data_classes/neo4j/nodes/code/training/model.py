@@ -3,7 +3,7 @@
 from __future__ import annotations
 from typing import Optional
 from pydantic import Field
-from .base import BaseEntity
+from ..generic.run_setup import Setup 
 from enum import Enum
 
 class ModelType(Enum):
@@ -34,7 +34,7 @@ class ModelType(Enum):
     # Altri
     UNKNOWN = "unknown"
 
-class Model(BaseEntity):
+class Model(Setup):
     """Model entity -- base model for fine-tuning."""
 
     model_name: str = Field(..., min_length=1, description="Unique model name")

@@ -17,7 +17,7 @@ from typing import Any
 
 from graph_lineage.config_file.data_classes.experiment_config import ExperimentConfig
 from graph_lineage.core.state_provider import GitOrExplicitCodebaseProvider
-from graph_lineage.data_classes.neo4j.nodes.experiment import Experiment, StatusType, StrategyType
+from graph_lineage.data_classes.neo4j.nodes.code.training.experiment import Experiment, StatusType, StrategyType
 from graph_lineage.diff.description import generate_description
 from graph_lineage.diff.snapshot import CodebaseSnapshot
 from graph_lineage.lineage.experiment_neo4j_ops import (

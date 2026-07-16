@@ -6,7 +6,7 @@ import logging
 from datetime import datetime
 from typing import Optional
 
-from graph_lineage.data_classes.neo4j.nodes.checkpoint import Checkpoint
+from graph_lineage.data_classes.neo4j.nodes.code.training.checkpoint import Checkpoint
 from graph_lineage.streamlit_ui.utils.errors import UIError
 from graph_lineage.neo4j_client.client import StreamlitNeo4jClient
 

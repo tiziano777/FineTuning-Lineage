@@ -3,10 +3,10 @@
 from __future__ import annotations
 from typing import Optional
 from pydantic import Field
-from .base import BaseEntity
+from ..generic.run_setup import Setup 
 
 
-class Component(BaseEntity):
+class Component(Setup):
     """Component entity -- (technique, framework) pair from capability matrix.
 
     A Component represents a validated combination of technique + framework.

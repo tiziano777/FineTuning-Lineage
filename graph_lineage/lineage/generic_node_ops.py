@@ -1,7 +1,7 @@
 """Generic node/edge operations for lineage graph (endpoint /graph/nodes).
 
 REFACTOR: Il payload viene serializzato in JSON string dal modello Pydantic
-(GenericNodeRequest.to_neo4j_params()) PRIMA di arrivare qui.
+(EventNodeRequest.to_neo4j_params()) PRIMA di arrivare qui.
 Questo modulo riceve solo parametri primitivi (str, int, float, bool, None).
 """
 

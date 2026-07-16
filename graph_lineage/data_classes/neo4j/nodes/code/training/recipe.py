@@ -4,8 +4,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from pydantic import BaseModel, Field, model_validator, field_validator, ConfigDict
-from .base import BaseEntity
 from typing import Optional, Dict, Any, List
+from ..generic.run_setup import Setup
 
 class RecipeEntry(BaseModel):
     """Metadata for a single distribution/dataset entry in a recipe."""
@@ -34,8 +34,8 @@ class RecipeEntry(BaseModel):
             if k not in self.__class__.model_fields
         }
 
-class Recipe(BaseEntity):
-    """Configuration for recipe/distribution metadata.
+class Recipe(Setup):
+    """Configuration for recipe/distribution Setup.
 
     Maps dataset paths to their metadata entries with optional scope, tasks, tags, and derived_from.
     """

@@ -8,7 +8,7 @@ import yaml
 from pydantic import ValidationError
 import logging
 
-from graph_lineage.data_classes.neo4j.nodes.recipe import Recipe
+from graph_lineage.data_classes.neo4j.nodes.code.training.recipe import Recipe
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +49,7 @@ def validate_recipe_yaml(yaml_str: str) -> tuple[bool, Optional[Recipe], list[st
         yaml_derived_from = data.get("derived_from")
 
         # Create Recipe entity to validate entries structure
-        # Note: Don't pass id if None — let BaseEntity default_factory generate UUID
+        # Note: Don't pass id if None — let BaseNode default_factory generate UUID
         recipe_kwargs = {
             "name": yaml_name,
             "description": yaml_description,

@@ -2,7 +2,7 @@ import streamlit as st
 import asyncio
 from typing import Dict, Any
 
-from graph_lineage.data_classes.neo4j.nodes.model import Model, ModelType
+from graph_lineage.data_classes.neo4j.nodes.code.training.model import Model, ModelType
 from graph_lineage.streamlit_ui.db.repository.model_repository import ModelRepository
 from graph_lineage.streamlit_ui.utils.async_helpers import run_async
 from graph_lineage.streamlit_ui.utils.errors import UIError

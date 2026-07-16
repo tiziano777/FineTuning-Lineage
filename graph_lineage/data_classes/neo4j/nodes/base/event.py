@@ -1,23 +1,18 @@
-from datetime import datetime, timezone
-from pydantic import BaseModel, Field, ConfigDict, field_validator
+# generic node that extends BaseNode and can be used as extension for event Nodes.
+from pydantic import Field, field_validator
 from typing import Any
 import json
+from .base import BaseNode
 
-class GenericNode(BaseModel):
+# Useful to extend custom node with event emit fn, of custom nodes
+class Event(BaseNode):
     """Modello per leggere un nodo generico da Neo4j.
 
     Deserializza automaticamente il payload JSON string in dict.
     """
 
-    model_config = ConfigDict(
-        populate_by_name=True,
-        extra='allow',  # Permette campi extra dal nodo Neo4j
-    )
-
-    id: str
     type: str
     payload_json: str = Field(alias="payload")  # Neo4j ha il campo "payload" (JSON string)
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     @field_validator('payload_json', mode='before')
     @classmethod
@@ -39,11 +34,3 @@ class GenericNode(BaseModel):
     def payload(self) -> dict[str, Any]:
         """Ritorna il payload come dict Python (deserializzato)."""
         return json.loads(self.payload_json)
-
-    @field_validator('created_at', mode='before')
-    @classmethod
-    def convert_neo4j_datetime(cls, v):
-        """Convert neo4j.time.DateTime to Python datetime."""
-        if hasattr(v, 'to_native') and callable(v.to_native):
-            return v.to_native()
-        return v

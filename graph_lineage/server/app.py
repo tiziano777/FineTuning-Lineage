@@ -9,7 +9,7 @@ import sys
 import json
 from fastapi import FastAPI, HTTPException
 
-from graph_lineage.data_classes.neo4j.nodes.experiment import StatusType, StrategyType
+from graph_lineage.data_classes.neo4j.nodes.code.training.experiment import StatusType, StrategyType
 from graph_lineage.diff.snapshot import CodebaseSnapshot
 from graph_lineage.lineage.generic_node_ops import create_generic_edge, create_generic_graph_node
 from graph_lineage.lineage.experiment_neo4j_ops import find_experiment_by_id, update_experiment_status
@@ -21,7 +21,7 @@ from .schemas import (
     HealthResponse,
     PostRequest,PostResponse,
     PreRequest,PreResponse,
-    GenericNodeRequest, GenericNodeResponse
+    EventNodeRequest, EventNodeResponse
 )
 
 from graph_lineage.neo4j_client.client import PersistentNeo4jClient
@@ -230,12 +230,12 @@ async def post_execution(request: PostRequest) -> PostResponse:
         logger.error("POST-execution server error: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
-# ── GENERIC NODE (GenericNodeRequest.to_neo4j_params()) ──
-@app.post("/graph/nodes", response_model=GenericNodeResponse)
-async def create_generic_node(request: GenericNodeRequest) -> GenericNodeResponse:
+# ── GENERIC NODE (EventNodeRequest.to_neo4j_params()) ──
+@app.post("/graph/nodes", response_model=EventNodeResponse)
+async def create_event_node(request: EventNodeRequest) -> EventNodeResponse:
     """Crea un nodo generico collegato a un run esistente.
 
-    REFACTOR: GenericNodeRequest.to_neo4j_params() serializza il payload in JSON string
+    REFACTOR: EventNodeRequest.to_neo4j_params() serializza il payload in JSON string
     prima di passarlo al layer Neo4j, evitando CypherTypeError.
     """
     try:
@@ -270,7 +270,7 @@ async def create_generic_node(request: GenericNodeRequest) -> GenericNodeRespons
             node_id, node_type, neo4j_params["run_id"], neo4j_params["edge_type"],
         )
 
-        return GenericNodeResponse(node_id=node_id, acknowledged=True)
+        return EventNodeResponse(node_id=node_id, acknowledged=True)
 
     except Exception as e:
         logger.error("Generic node server error: %s", e, exc_info=True)

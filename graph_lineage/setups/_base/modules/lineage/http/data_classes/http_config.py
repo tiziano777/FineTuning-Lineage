@@ -5,12 +5,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Optional
 from pydantic import BaseModel, Field
-
-class ExperimentType(str, Enum):
-    TRAINING = "training"
-    EVALUATION = "evaluation"
-    INFERENCE = "inference"
-    MERGING = "merging"
+from graph_lineage.data_classes.neo4j.nodes.code.enum.run_type import RunType
 
 
 # ─── PRE-EXECUTION ─────────────────────────────────────────────────────────────
@@ -29,7 +24,7 @@ class PreRequest(BaseModel):
     base_experiment_id: Optional[str] = None
     previous_experiment_id: Optional[str] = None
     description: Optional[str] = None
-    experiment_type: ExperimentType
+    experiment_type: RunType
 
     merging: bool = False
     codebase: str # JSON string of {relative_path: content}

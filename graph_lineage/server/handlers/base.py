@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from graph_lineage.core.state_provider import GitOrExplicitCodebaseProvider, StateProvider
-from graph_lineage.data_classes.neo4j.nodes.experiment import StrategyType
+from graph_lineage.data_classes.neo4j.nodes.code.training.experiment import StrategyType
 from graph_lineage.diff.snapshot import CodebaseSnapshot
 from graph_lineage.server.schemas import PreRequest, PostRequest
 

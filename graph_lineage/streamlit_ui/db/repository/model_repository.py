@@ -7,7 +7,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional, Any, Dict
 
-from graph_lineage.data_classes.neo4j.nodes.model import Model, ModelType
+from graph_lineage.data_classes.neo4j.nodes.code.training.model import Model, ModelType
 from graph_lineage.streamlit_ui.utils.errors import UIError
 from graph_lineage.streamlit_ui.utils.entity_constraints import EntityConstraints
 from graph_lineage.neo4j_client.client import StreamlitNeo4jClient
@@ -18,7 +18,7 @@ class ModelRepository:
     """Data access layer for Model entity.
 
     Works directly with Model pydantic instances, preserving extra fields
-    via the ConfigDict(extra='allow') configuration on BaseEntity.
+    via the ConfigDict(extra='allow') configuration on BaseNode.
     """
 
     def __init__(self, db_client: StreamlitNeo4jClient):

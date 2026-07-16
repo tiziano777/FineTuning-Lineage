@@ -13,9 +13,9 @@ from typing import Any
 import traceback
 import nest_asyncio
 
-from graph_lineage.data_classes.neo4j.nodes.checkpoint import Checkpoint
-from graph_lineage.data_classes.neo4j.nodes.experiment import Experiment
-from graph_lineage.data_classes.neo4j.nodes.model import Model
+from graph_lineage.data_classes.neo4j.nodes.code.training.checkpoint import Checkpoint
+from graph_lineage.data_classes.neo4j.nodes.code.training.experiment import Experiment
+from graph_lineage.data_classes.neo4j.nodes.code.training.model import Model
 from graph_lineage.neo4j_client.client import PersistentNeo4jClient
 
 logger = logging.getLogger(__name__)

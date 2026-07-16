@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import streamlit as st
 import uuid
-from graph_lineage.data_classes.neo4j.nodes.recipe import Recipe, RecipeEntry
+from graph_lineage.data_classes.neo4j.nodes.code.training.recipe import Recipe, RecipeEntry
 
 from graph_lineage.streamlit_ui.db.repository.recipe_repository import RecipeRepository
 from graph_lineage.streamlit_ui.utils.async_helpers import run_async

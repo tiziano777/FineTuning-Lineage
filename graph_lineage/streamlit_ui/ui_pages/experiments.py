@@ -7,7 +7,7 @@ import logging
 from typing import Any, Dict, List, Optional
 import streamlit as st
 
-from graph_lineage.data_classes.neo4j.nodes.experiment import Experiment
+from graph_lineage.data_classes.neo4j.nodes.code.training.experiment import Experiment
 from graph_lineage.streamlit_ui.db.repository.experiment_repository import (
     CONCLUSION_TYPE_OPTIONS,
     RETRY_POLICY_OPTIONS,

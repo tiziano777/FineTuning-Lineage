@@ -3,7 +3,7 @@
 Permette ai plugin di dominio di registrare logica custom di serializzazione
 per tipi di nodo specifici, senza contaminare il core.
 
-Sostituisce l'`if node_type == "Checkpoint"` hardcoded in generic_node_ops.py.
+Sostituisce l'`if node_type == "Checkpoint"` hardcoded in event_node_ops.py.
 """
 
 from __future__ import annotations

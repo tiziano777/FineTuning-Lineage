@@ -3,9 +3,9 @@
 from __future__ import annotations
 from pydantic import Field
 from typing import Optional
-from .base import BaseEntity
+from ..generic.run_event import RunEvent
 
-class Checkpoint(BaseEntity):
+class Checkpoint(RunEvent):
     """Checkpoint entity -- core tracking entity for a training run."""
 
     name: str = Field("", description="Checkpoint name")

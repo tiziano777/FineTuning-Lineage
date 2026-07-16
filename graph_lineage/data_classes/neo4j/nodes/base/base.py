@@ -3,7 +3,7 @@ import uuid
 from pydantic import BaseModel, Field, ConfigDict, field_validator
 from typing import Dict, Any
 
-class BaseEntity(BaseModel):
+class BaseNode(BaseModel):
     """Base for all Neo4j node types with shared fields."""
 
     # Abilita il framework ad accettare campi extra non definiti

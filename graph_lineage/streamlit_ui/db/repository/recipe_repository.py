@@ -9,7 +9,7 @@ from typing import Optional
 import yaml
 from pydantic import ValidationError
 
-from graph_lineage.data_classes.neo4j.nodes.recipe import Recipe
+from graph_lineage.data_classes.neo4j.nodes.code.training.recipe import Recipe
 from graph_lineage.streamlit_ui.utils.errors import UIError, DuplicateRecipeError
 from graph_lineage.streamlit_ui.utils.entity_constraints import EntityConstraints
 from graph_lineage.neo4j_client.client import StreamlitNeo4jClient

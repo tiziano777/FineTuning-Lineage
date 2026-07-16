@@ -1,49 +1,32 @@
-"""Pydantic models for Experiment entity."""
+"""Pydantic models for CodeRun entity."""
 
 from __future__ import annotations
 from typing import Optional, List
 from enum import Enum
 from pydantic import Field, model_serializer, field_validator
 import json
-from .base import BaseEntity
+from ...base.case import Case
 from typing import Dict, Any
+from ...base.enum.status_type import StatusType
+from ..enum.strategy_type import StrategyType
+from ..enum.run_type import RunType
 
-class StatusType(str, Enum):
-    RUNNING = "RUNNING"
-    COMPLETED = "COMPLETED"
-    FAILED = "FAILED"
+class CodeRun(Case):
+    """CodeRun entity -- core tracking entity for a training run."""
 
-class StrategyType(str, Enum):
-    NEW = "NEW"
-    RESUME = "RESUME"
-    BRANCH = "BRANCH"
-    RETRY = "RETRY"
-
-class RunType(str, Enum):
-    """Tipo di run lineage — generalizza il precedente ExperimentType."""
-
-    TRAINING = "training"
-    EVALUATION = "evaluation"
-    INFERENCE = "inference"
-    MERGING = "merging"
-
-class Experiment(BaseEntity):
-    """Experiment entity -- core tracking entity for a training run."""
-
-    description: Optional[str] = Field("", description="Experiment description")
     uri: str = Field(..., description="Path scaffold on worker")
     base: bool = Field(True, description="True for base experiment, False for derived")
     name: str = Field("", description="Experiment name, equal between experiments in the chain")
-    chain_id: int = Field(0, description="Chain ID for derived experiments in the chain (0 for base)")
+    chain_id: int = Field(0, ge=0, description="Chain ID for derived experiments in the chain (0 for base)")
+    strategy: StrategyType = Field(..., description="NEW | RESUME | BRANCH | RETRY")
+    run_type: RunType = Field("code", description="type of execution, only general code exec for now")
 
+
+    description: Optional[str] = Field("", description="Experiment description")
     status: StatusType = Field("RUNNING", description="RUNNING | COMPLETED | FAILED")
     exit_status: Optional[str] = None
     exit_msg: Optional[str] = None
-    strategy: StrategyType = Field(..., description="NEW | RESUME | BRANCH | RETRY")
-    experiment_type: RunType = Field("training", description="training | evaluation | inference | merging")
 
-    model_id: Optional[str] = Field(None, description="model_id used for entire lineage experimentations")
-    model_uri: Optional[str] = Field(None, description="model_uri used for entire lineage experimentations")
     recipe_id: Optional[str] = Field(None, description="recipe_id used for entire lineage experimentations")
     component_id: Optional[str] = Field(None, description="component_id used for entire lineage experimentations")
 
@@ -53,21 +36,58 @@ class Experiment(BaseEntity):
     usable: bool = Field(True, description="Is experiment usable")
     manual_save: bool = Field(False, description="Manually saved")
 
-    metrics_uri: Optional[str] = Field( None, description="Pointer to unified training + HW metrics")
+    logs_uri: Optional[str] = Field( None, description="Pointer to unified training + HW metrics")
 
     agentic_metadata: Optional[Dict[str, Any]] = Field(
         default_factory=dict, 
         description="Contenitore libero per metadati generati dagli agenti o dalla UI"
     )
 
+    # Validatori specifici per CodeRun
+    @field_validator('run_type', mode='before')
+    @classmethod
+    def validate_run_type(cls, v):
+        """Valida che run_type sia sempre CODE per CodeRun."""
+
+        VALID_RUN_TYPE = {"code"}
+        
+        if isinstance(v, Enum):
+            v_str = v.value
+        else:
+            v_str = v
+        
+        # CodeRun accetta solo CODE
+        if v_str not in VALID_RUN_TYPE:
+            raise ValueError(
+                f"CodeRun can only have run_type='code', got '{v_str}'"
+            )
+        return v
+
+    @field_validator('strategy', mode='before')
+    @classmethod
+    def validate_strategy(cls, v):
+        """Valida che strategy sia valida per CodeRun."""
+        valid_strategies = {"NEW", "BRANCH", "RETRY"}
+        
+        if isinstance(v, Enum):
+            v_str = v.value
+        else:
+            v_str = v
+        
+        if v_str not in valid_strategies:
+            raise ValueError(
+                f"CodeRun strategy must be one of {valid_strategies}, got '{v_str}'"
+            )
+        return v
+
     # PROPRIETÀ DINAMICA PER LE ETICHETTE SU NEO4J
     @property
     def __labels__(self) ->  List[str]:
-        """Genera le etichette per Neo4j. Es: ['Experiment', 'Training']"""
-        labels = ["Experiment"]
-        if self.experiment_type:
-            # Capitalizza per convenzione Neo4j (training -> Training)
-            labels.append(self.experiment_type.capitalize())
+        """Genera le etichette per Neo4j. Es: ['Run', 'Base']"""
+        labels = ["Run"]
+        if self.run_type:
+            # Capitalizza per convenzione Neo4j
+            labels.append(self.run_type.capitalize())
         if self.base:
             labels.append("Base")
         
