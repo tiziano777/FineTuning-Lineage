@@ -4,14 +4,12 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Literal
-
 import yaml
 from pydantic import BaseModel, Field
 
 _DEFAULT_TIMEOUT: int = 30
 _DEFAULT_RETRIES: int = 3
 _CONFIG_FILENAME: str = "server.yml"
-
 
 class ServerConfig(BaseModel):
     """Connection configuration for the lineage server.
@@ -25,10 +23,8 @@ class ServerConfig(BaseModel):
     retries: int = Field(default=_DEFAULT_RETRIES, ge=0)
     blocking: bool = True
 
-
 class ServerConfigError(Exception):
     """Raised when .lineage/server.yml is missing or invalid."""
-
 
 def load_server_config(project_root: Path) -> ServerConfig:
     """Load server config from .lineage/server.yml.

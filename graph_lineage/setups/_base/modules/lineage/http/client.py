@@ -1,9 +1,4 @@
-"""LineageClient: main entry point for client-server lineage communication.
-
-REFACTOR: emit_node() ora usa il registry dei serializzatori server-side
-invece di hardcodare la logica Checkpoint. Il client non deve più sapere
-che "Checkpoint" è un caso speciale — lo decide il server.
-"""
+"""LineageClient: main entry point for client-server lineage communication."""
 
 from __future__ import annotations
 
@@ -11,7 +6,8 @@ import logging
 import sys
 import json
 import time
-from dataclasses import dataclass, field
+import urllib.request
+from urllib.error import URLError
 from pathlib import Path
 from typing import Any, Optional
 
@@ -21,6 +17,7 @@ from .data_classes.server_config import ServerConfig, ServerConfigError, load_se
 from .base.connector import Connector, ConnectorFactory, ServerError
 from .data_classes.http_config import PostRequest, PreRequest, PreResponse
 from ..utils.snapshot import FileTooLargeError, capture_codebase
+from .data_classes.execution_context import ExecutionContext
 
 logger = logging.getLogger(__name__)
 
@@ -28,26 +25,8 @@ logger = logging.getLogger(__name__)
 _MODEL_ID_MISMATCH_STATUS = 409  # ModelIdMismatchError → exit 7
 _BASE_EXP_NOT_FOUND_STATUS = 422  # base_experiment_id not found → exit 6
 
-
 class LineageClientError(Exception):
     """Raised on unrecoverable client errors."""
-
-
-@dataclass
-class ExecutionContext:
-    """State passed from PRE to POST execution within a single run."""
-
-    experiment_id: str
-    strategy: str
-    project_root: Path
-    server_config: ServerConfig
-    extra: dict[str, Any] = field(default_factory=dict)
-
-    @property
-    def run_id(self) -> str:
-        """Alias concettuale per experiment_id (preparazione al dominio generico 'Run')."""
-        return self.experiment_id
-
 
 def _find_project_root(start: Path) -> Path:
     """Walk up from start to find directory containing .lineage/."""
@@ -60,7 +39,6 @@ def _find_project_root(start: Path) -> Path:
         f"No .lineage/ directory found walking up from '{start}'. "
         f"Ensure .lineage/server.yml and .lineage/experiment.yml exist."
     )
-
 
 def _load_experiment_data(project_root: Path, config_path: Optional[str] = None) -> dict[str, Any]:
     """Load experiment data with priority: config.yml > .lineage/experiment.yml.
@@ -94,13 +72,11 @@ def _load_experiment_data(project_root: Path, config_path: Optional[str] = None)
 
     return exp_data
 
-
 def _save_experiment_yml(project_root: Path, experiment_data: dict[str, Any]) -> None:
     """Save updated experiment data back to .lineage/experiment.yml."""
     exp_path = project_root / ".lineage" / "experiment.yml"
     with open(exp_path, "w") as f:
         yaml.dump({"experiment": experiment_data}, f, default_flow_style=False, sort_keys=False)
-
 
 class LineageClient:
     """Client for lineage tracking communication with the server."""
@@ -110,6 +86,7 @@ class LineageClient:
         project_root: Optional[Path] = None,
         config_dict: Optional[dict] = None,
         config_path: Optional[str] = None,
+        blocking: Optional[bool] = None,
     ):
         # 1. Risoluzione della project_root
         if project_root is not None:
@@ -125,6 +102,7 @@ class LineageClient:
 
         self._server_config: Optional[ServerConfig] = None
         self._connector: Optional[Connector] = None
+        self._blocking: bool = blocking if blocking is not None else False
 
     @property
     def project_root(self) -> Path:
@@ -197,12 +175,13 @@ class LineageClient:
                 base_experiment_id=exp_data.get("base_experiment_id"),
                 previous_experiment_id=exp_data.get("previous_experiment_id"),
                 description=exp_data.get("description"),
-                experiment_type=exp_data.get("experiment_type"),
+                run_type=exp_data.get("experiment_type"),
                 model_uri=self._config_dict.get("model", {}).get("model_uri"),
                 model_id=self._config_dict.get("experiment", {}).get("model"),
                 recipe_id=self._config_dict.get("experiment", {}).get("recipe"),
                 component_id=self._config_dict.get("experiment", {}).get("component"),
-                codebase=codebase
+                codebase=codebase,
+                blocking=blocking,
             )
 
             logger.info(
@@ -323,31 +302,34 @@ class LineageClient:
         payload: dict[str, Any],
         edge_type: str = "produced",
     ) -> None:
-        """Crea un nodo generico collegato al run corrente sul grafo.
+        """Emissione di un nodo generico collegato al run corrente sul grafo.
 
-        REFACTOR: Non hardcodare più la logica Checkpoint. Usa sempre
-        l'endpoint generico /graph/nodes. Il server decide come serializzare
-        il payload tramite il NodeSerializerRegistry.
+        Unico metodo pubblico per il tracking di eventi arbitrari durante l'esecuzione.
+        Il server gestisce la serializzazione e la persistenza del nodo.
         """
         if ctx is None:
             logger.warning("emit_node called with None context, skipping")
             return
 
+        if not node_type or not isinstance(node_type, str):
+            logger.warning("emit_node requires a valid node_type string, skipping")
+            return
+
+        if not isinstance(payload, dict):
+            logger.warning("emit_node payload must be a dict, got %s, skipping", type(payload).__name__)
+            return
+
+        base_url = getattr(
+            self.server_config, "url", getattr(self.server_config, "base_url", None)
+        )
+        if not base_url:
+            logger.warning("Cannot determine server URL for node emission")
+            return
+
+        url = f"{base_url.rstrip('/')}/graph/nodes"
+        timeout = getattr(self.server_config, "timeout", 30)
+
         def _emit():
-            # REFACTOR: Unico path — endpoint generico per TUTTI i tipi
-            # Il server gestisce la serializzazione custom via registry
-            import json
-            import urllib.request
-            from urllib.error import URLError
-
-            base_url = getattr(
-                self.server_config, "url", getattr(self.server_config, "base_url", None)
-            )
-            if not base_url:
-                logger.warning("Cannot determine server URL for generic node emission")
-                return
-
-            url = f"{base_url.rstrip('/')}/graph/nodes"
             data = json.dumps({
                 "run_id": ctx.run_id,
                 "node_type": node_type,
@@ -362,11 +344,10 @@ class LineageClient:
                 method="POST",
             )
             try:
-                timeout = getattr(self.server_config, "timeout", 30)
                 with urllib.request.urlopen(req, timeout=timeout) as resp:
                     resp.read()
             except URLError as e:
-                raise ConnectionError(f"Failed to emit generic node: {e}") from e
+                raise ConnectionError(f"Failed to emit node: {e}") from e
 
         try:
             self._retry(_emit)
@@ -379,4 +360,3 @@ class LineageClient:
         if self._connector is not None:
             self._connector.close()
             self._connector = None
-

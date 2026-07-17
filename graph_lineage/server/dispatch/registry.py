@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from graph_lineage.server.dispatch.domain_dispatcher import DomainDispatcher
 from graph_lineage.server.handlers.base import RunTypeHandler
-from graph_lineage.server.handlers.training import TrainingRunHandler
+from graph_lineage.server.handlers.training_run_handler import TrainingRunHandler
 
 # ── Backward-compat: registry singolo-livello (AI domain) ───────────────
 

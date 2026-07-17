@@ -13,15 +13,18 @@ from graph_lineage.data_classes.neo4j.nodes.base.enum.status_type import StatusT
 from graph_lineage.data_classes.neo4j.nodes.code.enum.strategy_type import StrategyType
 from graph_lineage.diff.snapshot import CodebaseSnapshot
 from graph_lineage.lineage.generic_node_ops import create_generic_edge, create_generic_graph_node
-from graph_lineage.lineage.experiment_neo4j_ops import find_experiment_by_id, update_experiment_status
+from graph_lineage.lineage.experiment_neo4j_ops import (
+    find_experiment_by_id,
+    update_experiment_status,
+)
 
 from graph_lineage.server.dispatch.registry import resolve_handler, get_handler
-from graph_lineage.server.handlers.training import ModelIdMismatchError, ModelDbMismatchError
+from graph_lineage.server.handlers.training_run_handler import ModelIdMismatchError, ModelDbMismatchError
 
 from .schemas import (
     HealthResponse,
-    PostRequest,PostResponse,
-    PreRequest,PreResponse,
+    PostRequest, PostResponse,
+    PreRequest, PreResponse,
     EventNodeRequest, EventNodeResponse
 )
 
@@ -61,24 +64,8 @@ async def startup_initialize_schema():
             logger.info("[Startup] ✓ Neo4j schema initialized")
         else:
             logger.error("[Startup] ✗ Neo4j schema init failed")
-        _register_ai_serializers()
-        logger.info("[Startup] ✓ AI domain serializers registered")
     except Exception as e:
         logger.error("[Startup] Error: %s", e)
-
-def _register_ai_serializers():
-    from graph_lineage.core.node_serializers import register_node_serializer
-    def checkpoint_serializer(payload: dict) -> dict:
-        return {
-            "name": payload.get("name", ""),
-            "derived_from": payload.get("derived_from", ""),
-            "epoch": payload.get("epoch", 0),
-            "run": payload.get("run", 0),
-            "uri": payload.get("uri", ""),
-            "metrics": payload.get("metrics", ""),
-            "is_merging": payload.get("is_merging", False),
-        }
-    register_node_serializer("Checkpoint", checkpoint_serializer)
 
 # ── HEALTH ────────────────────────────────────────────────────────────────
 @app.get("/health", response_model=HealthResponse)
@@ -100,53 +87,36 @@ async def health() -> HealthResponse:
 # ── PRE-EXECUTION ────────────────────────────
 @app.post("/api/v1/pre", response_model=PreResponse)
 async def pre_execution(request: PreRequest) -> PreResponse:
-    """PRE-execution endpoint: dispatch to domain + run-type handler, detect strategy, create run node."""
+    """PRE-execution endpoint: thin dispatcher.
+
+    Delega detect() e create_nodes() all'handler risolto.
+    Il model constraint check e il model switch sono gestiti internamente
+    dal TrainingRunHandler.
+    """
     try:
         logger.info("START PRE: %s", str(request.experiment_id))
         logger.info("run_type: %s", request.run_type)
 
-        # 1. Build snapshot from client codebase content
+        # 1. Build snapshot
         snapshot = CodebaseSnapshot(files=json.loads(request.codebase))
         logger.info("snapshot files: %d", len(snapshot.files))
 
-        # 2.a Find parent experiment if exists (by previous_experiment_id)
-        parent = None
-        if request.previous_experiment_id:
-            parent = find_experiment_by_id(request.previous_experiment_id)
-            if parent is None:
-                raise HTTPException(
-                    status_code=422,
-                    detail=f"previous_experiment_id '{request.previous_experiment_id}' not found in DB",
-                )
-        else:
-            logger.info("no parent experiment found")
-
-        # 2.b Find current experiment if exists (by experiment_id)
-        if request.experiment_id:
-            t_exp = find_experiment_by_id(request.experiment_id)
-            if t_exp is None:
-                raise HTTPException(
-                    status_code=422,
-                    detail=f"experiment_id '{request.experiment_id}' not found in DB",
-                )
-        else:
-            logger.info("no current experiment found")
-
-        # 3. REFACTOR: Domain dispatch (2 livelli) invece di get_handler diretto
+        # 2. Resolve domain handler
         handler = resolve_handler(request)
         logger.info("Resolved handler: domain=%s, run_type=%s, handler=%s",
                     getattr(request, "domain", "auto-detected"),
                     request.run_type,
                     handler.__class__.__name__)
 
+        # 3. Detect strategy (include model constraint check + model switch)
         try:
             result = await handler.detect(request)
         except (ModelIdMismatchError, ModelDbMismatchError) as e:
             raise HTTPException(status_code=409, detail=str(e))
 
         logger.info(
-            "run type detected: strategy=%s, parent_run_id=%s, parent_ckp_id=%s",
-            result.strategy, result.parent_run_id, result.parent_ckp_id,
+            "run type detected: strategy=%s, parent_run_id=%s",
+            result.strategy, result.parent_run_id,
         )
 
         # 4. Create run node and edges
@@ -155,27 +125,34 @@ async def pre_execution(request: PreRequest) -> PreResponse:
             raise HTTPException(status_code=500, detail="handler.create_nodes() returned empty run_id")
 
         # 5. Resolve base_experiment_id for response
+        parent = None
+        if request.previous_experiment_id:
+            parent = find_experiment_by_id(request.previous_experiment_id)
+
         response_base_exp_id = request.base_experiment_id
-        if result.strategy == StrategyType.NEW:
+        if result.strategy in (StrategyType.NEW.value, StrategyType.RESUME.value):
             response_base_exp_id = run_id
-        elif not response_base_exp_id and result.strategy != StrategyType.NEW:
+        elif not response_base_exp_id:
             if parent and parent.base:
                 response_base_exp_id = parent.id
             elif request.previous_experiment_id:
                 response_base_exp_id = request.previous_experiment_id
 
+        is_base = result.strategy in (StrategyType.NEW.value, StrategyType.RESUME.value)
+
         logger.info(
-            "PRE complete: strategy=%s, run_id=%s, base_exp_id=%s, previous_experiment_id=%s",
-            result.strategy, run_id, response_base_exp_id, request.experiment_id,
+            "PRE complete: strategy=%s, run_id=%s, base_exp_id=%s, is_base=%s",
+            result.strategy, run_id, response_base_exp_id, is_base,
         )
 
         return PreResponse(
             experiment_id=run_id,
             strategy=StrategyType(result.strategy),
-            base=result.strategy == StrategyType.NEW,
+            base=is_base,
             description=result.extra.get("description", "") if result.extra else "",
             base_experiment_id=response_base_exp_id,
             previous_experiment_id=request.experiment_id,
+            resumed_from=result.extra.get("resumed_from") if result.extra else None,
         )
 
     except HTTPException:
@@ -206,7 +183,6 @@ async def post_execution(request: PostRequest) -> PostResponse:
                 detail=f"experiment_id '{request.experiment_id}' not found in DB",
             )
 
-        # REFACTOR: usa resolve_handler per coerenza, con fallback a get_handler
         try:
             handler = resolve_handler(exp)
         except Exception:
@@ -231,34 +207,21 @@ async def post_execution(request: PostRequest) -> PostResponse:
         logger.error("POST-execution server error: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
-# ── GENERIC NODE (EventNodeRequest.to_neo4j_params()) ──
+# ── GENERIC NODE ──
 @app.post("/graph/nodes", response_model=EventNodeResponse)
 async def create_event_node(request: EventNodeRequest) -> EventNodeResponse:
-    """Crea un nodo generico collegato a un run esistente.
-
-    REFACTOR: EventNodeRequest.to_neo4j_params() serializza il payload in JSON string
-    prima di passarlo al layer Neo4j, evitando CypherTypeError.
-    """
+    """Crea un nodo generico collegato a un run esistente."""
     try:
         neo4j_params = request.to_neo4j_params()
         node_id = neo4j_params["node_id"]
         node_type = neo4j_params["node_type"]
-        payload_json = neo4j_params.get("payload_json")
+        payload_json = neo4j_params["payload_json"]
 
-        if payload_json is not None:
-            create_generic_graph_node(
-                node_id=node_id,
-                node_type=node_type,
-                payload_json=payload_json,
-            )
-        else:
-            from graph_lineage.core.node_serializers import serialize_node_payload
-            custom_props = serialize_node_payload(node_type, request.payload)
-            create_generic_graph_node(
-                node_id=node_id,
-                node_type=node_type,
-                **custom_props,
-            )
+        create_generic_graph_node(
+            node_id=node_id,
+            node_type=node_type,
+            payload_json=payload_json,
+        )
 
         create_generic_edge(
             parent_id=neo4j_params["run_id"],
@@ -276,4 +239,3 @@ async def create_event_node(request: EventNodeRequest) -> EventNodeResponse:
     except Exception as e:
         logger.error("Generic node server error: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
-

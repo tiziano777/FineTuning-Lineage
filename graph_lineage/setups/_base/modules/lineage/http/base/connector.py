@@ -10,8 +10,6 @@ from typing import Protocol
 
 from ..data_classes.server_config import ServerConfig
 from ..data_classes.http_config import (
-    CheckpointRequest,
-    CheckpointResponse,
     HealthResponse,
     PostRequest,
     PostResponse,
@@ -62,21 +60,6 @@ class Connector(Protocol):
 
         Returns:
             PostResponse acknowledgement.
-
-        Raises:
-            ConnectionError: If server is unreachable.
-            ServerError: If server returns an error response.
-        """
-        ...
-
-    def send_checkpoint(self, request: CheckpointRequest) -> CheckpointResponse:
-        """Send checkpoint creation payload to server.
-
-        Args:
-            request: CheckpointRequest with checkpoint data.
-
-        Returns:
-            CheckpointResponse with assigned checkpoint_id.
 
         Raises:
             ConnectionError: If server is unreachable.

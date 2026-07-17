@@ -15,18 +15,21 @@ class Experiment(CodeRun):
     recipe_id: Optional[str] = Field(None, description="recipe_id used for entire lineage experimentations")
     metrics_uri: Optional[str] = Field(None, description="Pointer to unified training + HW metrics")
 
+    # REFACTOR: traccia il nome dell'esperimento precedente che ha triggerato un model switch
+    resumed_from: Optional[str] = Field(None, description="Name of the previous experiment that triggered a model switch")
+
     # Validatori specifici per Experiment
     @field_validator('run_type', mode='before')
     @classmethod
     def validate_run_type(cls, v):
         """Valida run_type specifico per Experiment."""
         valid_types = {"training", "evaluation", "inference", "merging"}
-        
+
         if isinstance(v, Enum):
             v_str = v.value
         else:
             v_str = v
-        
+
         if v_str not in valid_types:
             raise ValueError(
                 f"Experiment run_type must be one of {valid_types}, got '{v_str}'"
@@ -37,13 +40,13 @@ class Experiment(CodeRun):
     @classmethod
     def validate_strategy(cls, v):
         """Valida strategy specifica per Experiment."""
-        valid_strategies = {"NEW", "BRANCH", "RETRY"}
-        
+        valid_strategies = {"NEW", "BRANCH", "RETRY", "RESUME", "MERGE"}
+
         if isinstance(v, Enum):
             v_str = v.value
         else:
             v_str = v
-        
+
         if v_str not in valid_strategies:
             raise ValueError(
                 f"Experiment strategy must be one of {valid_strategies}, got '{v_str}'"
@@ -60,5 +63,5 @@ class Experiment(CodeRun):
             labels.append(self.run_type.capitalize())
         if self.base:
             labels.append("Base")
-        
+
         return labels

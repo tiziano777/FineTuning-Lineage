@@ -13,8 +13,6 @@ import httpx
 from .data_classes.server_config import ServerConfig
 from .base.connector import ConnectorFactory, ServerError
 from .data_classes.http_config import (
-    CheckpointRequest,
-    CheckpointResponse,
     HealthResponse,
     PostRequest,
     PostResponse,
@@ -106,33 +104,6 @@ class HttpConnector:
             raise ServerError(resp.status_code, str(detail))
 
         return PostResponse.model_validate(resp.json())
-
-    def send_checkpoint(self, request: CheckpointRequest) -> CheckpointResponse:
-        """Send checkpoint creation payload to server."""
-        try:
-            resp = self._client.post(
-                "/api/v1/checkpoint",
-                content=request.model_dump_json(),
-                headers={"Content-Type": "application/json"},
-            )
-        except httpx.ConnectError as e:
-            raise ConnectionError(
-                f"Cannot reach server at {self._base_url}/api/v1/checkpoint: {e}"
-            ) from e
-        except httpx.TimeoutException as e:
-            raise ConnectionError(
-                f"Server timeout at {self._base_url}/api/v1/checkpoint: {e}"
-            ) from e
-
-        if resp.status_code >= 400:
-            detail = resp.text
-            try:
-                detail = resp.json().get("detail", resp.text)
-            except Exception:
-                pass
-            raise ServerError(resp.status_code, str(detail))
-
-        return CheckpointResponse.model_validate(resp.json())
 
     def close(self) -> None:
         """Close the HTTP client."""

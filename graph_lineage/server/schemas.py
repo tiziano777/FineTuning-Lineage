@@ -37,6 +37,10 @@ class PreRequest(BaseModel):
     component_id: Optional[str] = None
     recipe_id: Optional[str] = None
 
+    # Flag per decidere il comportamento in caso di model mismatch
+    blocking: bool = False
+
+
 class PreResponse(BaseModel):
     """Server response after PRE-execution processing.
 
@@ -50,6 +54,8 @@ class PreResponse(BaseModel):
     description: str
     base_experiment_id: Optional[str] = None
     previous_experiment_id: Optional[str] = None
+    resumed_from: Optional[str] = None
+
 
 # ─── POST-EXECUTION ───────────────────────────────────────────────────────────
 
@@ -81,34 +87,12 @@ class HealthResponse(BaseModel):
     version: str = ""
     neo4j_connected: bool = False
 
-# ─── CHECKPOINT ────────────────────────────────────────────────────────────────
-
-class CheckpointRequest(BaseModel):
-    """Payload received from client when a checkpoint is saved."""
-
-    experiment_id: str
-    name: str
-    epoch: int
-    run: int
-    uri: str
-    metrics: str = Field(default_factory=str)
-    derived_from: str = ""
-    is_merging: bool = False
-
-
-class CheckpointResponse(BaseModel):
-    """Server acknowledgement of checkpoint creation."""
-
-    checkpoint_id: str
-    experiment_id: str
-    acknowledged: bool = True
-
 # ─── GENERIC NODE ─────────────────────────────────────────────────────────────
 
 class EventNodeRequest(BaseModel):
     """Payload for creating a generic node linked to a run.
 
-    REFACTOR: payload viene automaticamente serializzato in JSON string
+    Il payload viene automaticamente serializzato in JSON string
     per evitare CypherTypeError (Neo4j non accetta Map come property value).
     """
 
@@ -152,7 +136,6 @@ class EventNodeRequest(BaseModel):
             "run_id": self.run_id,
             "edge_type": self.edge_type.upper(),
         }
-
 
 class EventNodeResponse(BaseModel):
     """Server acknowledgement of generic node creation."""

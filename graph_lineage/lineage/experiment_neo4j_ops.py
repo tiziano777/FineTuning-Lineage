@@ -23,14 +23,8 @@ _nest_asyncio_applied = False
 client = PersistentNeo4jClient(auto_init=True).get_instance()
 
 def _run_sync(coro) -> Any:
-    """Run an async coroutine from sync context, compatible with existing event loops.
-
-    If an event loop is already running (Jupyter, Streamlit, FastAPI),
-    patches it with nest_asyncio and uses run_until_complete.
-    Otherwise, uses standard asyncio.run().
-    """
+    """Run an async coroutine from sync context, compatible with existing event loops."""
     global _nest_asyncio_applied
-
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
@@ -44,12 +38,11 @@ def _run_sync(coro) -> Any:
     else:
         return asyncio.run(coro)
 
-# ── Experiment(Run) operations ─────────────────────────────────────────────────
+# ── Experiment operations ─────────────────────────────────────────────────
 
 def find_experiment_by_id(experiment_id: str) -> Experiment | None:
     """Find an experiment by its unique ID."""
-    async def _find_experiment_by_id_async(experiment_id: str) -> Experiment | None:
-        """Query Neo4j for an experiment by its unique ID."""
+    async def _async(experiment_id: str) -> Experiment | None:
         driver = await client.get_driver()
         query = "MATCH (e:Experiment {id: $exp_id}) RETURN e LIMIT 1"
         async with driver.session() as session:
@@ -59,15 +52,14 @@ def find_experiment_by_id(experiment_id: str) -> Experiment | None:
                 return None
             return Experiment.model_validate(record["e"])
 
-    data = _run_sync(_find_experiment_by_id_async(experiment_id))
+    data = _run_sync(_async(experiment_id))
     if data is None:
         return None
     return Experiment.model_validate(data)
 
 def find_parent_experiment_id(experiment_id: str) -> str | None:
     """Find the parent experiment ID of a given experiment."""
-    async def _find_parent_experiment_id_async(experiment_id: str) -> str | None:
-        """Query Neo4j for the parent experiment ID."""
+    async def _async(experiment_id: str) -> str | None:
         driver = await client.get_driver()
         query = """
         MATCH (child:Experiment {id: $exp_id})-[:DERIVED_FROM|RETRY_FROM|RESUMED_FROM]->(parent:Experiment)
@@ -81,38 +73,26 @@ def find_parent_experiment_id(experiment_id: str) -> str | None:
                 return None
             return record["parent_id"]
 
-    return _run_sync(_find_parent_experiment_id_async(experiment_id))
+    return _run_sync(_async(experiment_id))
 
 def create_base_experiment_node_with_edges(
     exp: Experiment,
     recipe_name: str,
     component_name: str,
     model_name: str,
+    resumed_from: str | None = None,
 ) -> str:
-    """Create a base Experiment node and connect to Recipe, Component, Model in single atomic transaction.
+    """Create a base Experiment node and connect to Recipe, Component, Model atomically.
 
-    This ensures atomicity: if any resource doesn't exist or the connections fail,
-    the experiment node is not created, preventing orphaned base experiments.
-
-    Args:
-        exp: The Experiment node to create (should have base=True).
-        recipe_name: Name of the Recipe to connect via USES_RECIPE edge.
-        component_name: Name of the Component to connect via USES_COMPONENT edge.
-        model_name: Name of the Model to connect via USES_MODEL edge.
-
-    Returns:
-        The experiment ID.
-
-    Raises:
-        Exception: If any resource doesn't exist or database error occurs.
+    REFACTOR: supports resumed_from for model-switch base experiments.
     """
-    async def _create_base_experiment_node_with_edges_async(
+    async def _async(
         exp: Experiment,
         recipe_name: str,
         component_name: str,
         model_name: str,
+        resumed_from: str | None = None,
     ) -> str:
-        """Create base experiment with all resource edges in atomic transaction."""
         driver = await client.get_driver()
         props = exp.model_dump(mode="python")
         for key in ("created_at", "updated_at"):
@@ -123,7 +103,9 @@ def create_base_experiment_node_with_edges(
         props.pop("base", None)
         props.pop("experiment_type", None)
 
-        # Atomic transaction: create node + all resource edges
+        if resumed_from is not None:
+            props["resumed_from"] = resumed_from
+
         query = f"""
         MATCH (r:Recipe {{name: $recipe_name}})
         MATCH (c:Component {{name: $component_name}})
@@ -152,43 +134,24 @@ def create_base_experiment_node_with_edges(
                 )
             return record["id"]
 
-    return _run_sync(_create_base_experiment_node_with_edges_async(
-        exp, recipe_name, component_name, model_name
-    ))
+    return _run_sync(_async(exp, recipe_name, component_name, model_name, resumed_from))
 
 def create_non_base_experiment_with_chain_edge(
     exp: Experiment,
     parent_exp_id: str,
     strategy: str,
     edge_properties: dict[str, Any] | None = None,
-    parent_ckp_uri: str | None = None,
 ) -> str:
-    """Create a non-base Experiment node and connect it to its parent in a single atomic transaction.
+    """Create a non-base Experiment node and connect it to its parent atomically.
 
-    This ensures atomicity: if the parent doesn't exist or the connection fails,
-    the experiment node is not created, preventing orphaned experiments.
-
-    Args:
-        exp: The Experiment node to create (should have base=False).
-        parent_exp_id: ID of the parent experiment (must exist).
-        strategy: Edge type (DERIVED_FROM, RETRY_FROM, RESUMED_FROM, MERGED_FROM).
-        edge_properties: Optional properties for the Experiment→Experiment edge.
-        parent_ckp_uri: Optional checkpoint URI to create CKP_RESUMED_FROM edge (for RESUME strategy).
-
-    Returns:
-        The experiment ID.
-
-    Raises:
-        Exception: If parent experiment doesn't exist or database error occurs.
+    REFACTOR: removed all CKP_RESUMED_FROM logic. CKP-Experiment bridges are gone.
     """
-    async def _create_non_base_experiment_with_chain_edge_async(
+    async def _async(
         exp: Experiment,
         parent_exp_id: str,
         strategy: str,
         edge_properties: dict[str, Any] | None = None,
-        parent_ckp_uri: str | None = None,
     ) -> str:
-        """Create non-base experiment with parent edge in atomic transaction."""
         driver = await client.get_driver()
         props = exp.model_dump(mode="python")
         for key in ("created_at", "updated_at"):
@@ -199,7 +162,6 @@ def create_non_base_experiment_with_chain_edge(
         props.pop("base", None)
         props.pop("experiment_type", None)
 
-        # Build atomic transaction: create node + parent edge + optional checkpoint edge
         query = f"""
         MATCH (parent:Experiment {{id: $parent_exp_id}})
         CREATE (e:{labels_str} $exp_props)
@@ -212,14 +174,6 @@ def create_non_base_experiment_with_chain_edge(
             "edge_props": edge_properties or {},
         }
 
-        # Optional: create checkpoint edge for RESUME strategy
-        if parent_ckp_uri:
-            query += """
-        OPTIONAL MATCH (ckp:Checkpoint {uri: $ckp_uri})
-        CREATE (e)-[:CKP_RESUMED_FROM]->(ckp)
-        """
-            params["ckp_uri"] = parent_ckp_uri
-
         query += "\nRETURN e.id AS id"
 
         async with driver.session() as session:
@@ -229,20 +183,18 @@ def create_non_base_experiment_with_chain_edge(
                 raise ValueError(f"Failed to create experiment with parent_exp_id={parent_exp_id}")
             return record["id"]
 
-    return _run_sync(_create_non_base_experiment_with_chain_edge_async(
-        exp, parent_exp_id, strategy, edge_properties, parent_ckp_uri
-    ))
+    return _run_sync(_async(exp, parent_exp_id, strategy, edge_properties))
 
-def update_experiment_status(exp_id: str, status: str, exit_msg: str | None = None, metrics_uri: str | None = None) -> None:
+def update_experiment_status(
+    exp_id: str,
+    status: str,
+    exit_msg: str | None = None,
+    metrics_uri: str | None = None,
+) -> None:
     """Update experiment status in Neo4j."""
-
-    async def _update_experiment_status_async(
-        exp_id: str,
-        status: str,
-        exit_msg: str | None = None,
-        metrics_uri: str | None = None,
+    async def _async(
+        exp_id: str, status: str, exit_msg: str | None, metrics_uri: str | None
     ) -> None:
-        """Update experiment status and optional exit message."""
         driver = await client.get_driver()
         query = """
         MATCH (e:Experiment {id: $exp_id})
@@ -255,29 +207,9 @@ def update_experiment_status(exp_id: str, status: str, exit_msg: str | None = No
         async with driver.session() as session:
             await session.run(query, params)
 
-    _run_sync(_update_experiment_status_async(exp_id, status, exit_msg, metrics_uri))
+    _run_sync(_async(exp_id, status, exit_msg, metrics_uri))
 
-# ── Checkpoint operations ─────────────────────────────────────────────────────
-
-def create_ckp_derived_from_edge(base_ckp_id: str, new_ckp_id: str) -> None:
-    """Create CKP_DERIVED_FROM relationship between Checkpoints.
-    Used when a new checkpoint is derived from an existing one (e.g., during RESUME).
-    Args:
-        base_ckp_id: ID of the base checkpoint.
-        new_ckp_id: ID of the new checkpoint derived from the base.
-    """
-    async def _create_ckp_derived_from_edge_async(base_ckp_id: str, new_ckp_id: str) -> None:
-        """Create CKP_DERIVED_FROM relationship between Checkpoints."""
-        driver = await client.get_driver()
-        query = """
-        MATCH (base:Checkpoint {id: $base_ckp_id})
-        MATCH (new:Checkpoint {id: $new_ckp_id})
-        CREATE (new)-[:CKP_DERIVED_FROM]->(base)
-        """
-        async with driver.session() as session:
-            await session.run(query, {"base_ckp_id": base_ckp_id, "new_ckp_id": new_ckp_id})
-
-    _run_sync(_create_ckp_derived_from_edge_async(base_ckp_id, new_ckp_id))
+# ── Checkpoint operations ─────────────────────────────────────────────────
 
 def retrieve_ckp_by_experiment_id(exp_id: str) -> list[Checkpoint]:
     """Retrieve all Checkpoints produced by a given Experiment."""
@@ -286,12 +218,12 @@ def retrieve_ckp_by_experiment_id(exp_id: str) -> list[Checkpoint]:
     MATCH (e:Experiment {id: $exp_id})-[:PRODUCED]->(c:Checkpoint)
     RETURN c
     """
-    async def _retrieve_ckp_async() -> list[Checkpoint]:
+    async def _async() -> list[Checkpoint]:
         async with driver.session() as session:
             result = await session.run(query, {"exp_id": exp_id})
-            records = await result.data()  # Restituisce lista di dict
+            records = await result.data()
             return [Checkpoint.model_validate(record["c"]) for record in records]
-    return _run_sync(_retrieve_ckp_async())
+    return _run_sync(_async())
 
 def retrieve_ckp_id_by_ckp_uri(ckp_uri: str) -> str:
     """Retrieve the Checkpoint ID that matches a given checkpoint URI."""
@@ -301,48 +233,39 @@ def retrieve_ckp_id_by_ckp_uri(ckp_uri: str) -> str:
     RETURN c.id AS id
     LIMIT 1
     """
-    async def _retrieve_ckp_id_async() -> str:
+    async def _async() -> str:
         async with driver.session() as session:
             result = await session.run(query, {"ckp_uri": ckp_uri})
             record = await result.single()
             return record["id"]
-    return _run_sync(_retrieve_ckp_id_async())
+    return _run_sync(_async())
 
 def find_experiment_from_chain(base_exp_id: str, ckp_uri: str) -> Experiment:
-    """Find the experiment that produced a checkpoint with the given URI, starting from a base experiment.
-
-    Args:
-        base_exp_id: The ID of the base experiment to start the search from.
-        ckp_uri: The URI of the checkpoint to find.
-
-    Returns:
-        The Experiment that produced the checkpoint with the given URI.
-
-    Raises:
-        ValueError: If no experiment is found that produced the checkpoint with the given URI.
-    """
+    """Find the experiment that produced a checkpoint with the given URI."""
     driver = _run_sync(client.get_driver())
     query = """
     MATCH (base:Experiment {id: $base_exp_id})<-[:RESUMED_FROM|RETRY_FROM|DERIVED_FROM*0..]-(e:Experiment)-[:PRODUCED]->(c:Checkpoint {uri: $ckp_uri})
     RETURN e
     LIMIT 1
     """
-    async def _find_experiment_from_chain_async() -> Experiment:
+    async def _async() -> Experiment:
         async with driver.session() as session:
             result = await session.run(query, {"base_exp_id": base_exp_id, "ckp_uri": ckp_uri})
             record = await result.single()
             if record is None:
-                raise ValueError(f"No experiment found that produced checkpoint with URI '{ckp_uri}' starting from base experiment '{base_exp_id}'.\n{traceback.format_exc()}")
+                raise ValueError(
+                    f"No experiment found that produced checkpoint with URI '{ckp_uri}' "
+                    f"starting from base experiment '{base_exp_id}'.\n{traceback.format_exc()}"
+                )
             return Experiment.model_validate(record["e"])
-    
-    return _run_sync(_find_experiment_from_chain_async())
+
+    return _run_sync(_async())
 
 # ── Model operations ─────────────────────────────────────────────────────
 
 def find_model_by_name(model_name: str) -> Model | None:
     """Find a model node by its name."""
-    async def _find_model_by_name_async(model_name: str) -> Model | None:
-        """Query Neo4j for a model node by its name."""
+    async def _async(model_name: str) -> Model | None:
         driver = await client.get_driver()
         query = "MATCH (m:Model {model_name: $model_name}) RETURN m LIMIT 1"
         async with driver.session() as session:
@@ -352,7 +275,43 @@ def find_model_by_name(model_name: str) -> Model | None:
                 return None
             return Model.model_validate(record["m"])
 
-    data = _run_sync(_find_model_by_name_async(model_name))
+    data = _run_sync(_async(model_name))
     if data is None:
         return None
     return data
+
+def promote_checkpoint_to_model(
+    ckp_uri: str,
+    model_id: str,
+    model_uri: str,
+    model_name: str,
+) -> str:
+    """Promuove un Checkpoint a Model temporaneo, creando l'arco PROMOTED."""
+    async def _async():
+        driver = await client.get_driver()
+        query = """
+        MATCH (ckp:Checkpoint {uri: $ckp_uri})
+        CREATE (m:Model {
+            id: $model_id,
+            model_name: $model_name,
+            uri: $model_uri,
+            promoted_from_ckp: true,
+            created_at: datetime()
+        })
+        CREATE (ckp)-[:PROMOTED]->(m)
+        RETURN m.id AS model_id
+        """
+        params = {
+            "ckp_uri": ckp_uri,
+            "model_id": model_id,
+            "model_name": model_name,
+            "model_uri": model_uri,
+        }
+        async with driver.session() as session:
+            result = await session.run(query, params)
+            record = await result.single()
+            if record is None:
+                raise ValueError(f"Checkpoint with uri={ckp_uri} not found for promotion")
+            return record["model_id"]
+
+    return _run_sync(_async())
