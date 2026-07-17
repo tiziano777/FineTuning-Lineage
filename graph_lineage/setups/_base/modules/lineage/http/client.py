@@ -202,16 +202,14 @@ class LineageClient:
                 model_id=self._config_dict.get("experiment", {}).get("model"),
                 recipe_id=self._config_dict.get("experiment", {}).get("recipe"),
                 component_id=self._config_dict.get("experiment", {}).get("component"),
-                codebase=codebase,
-                checkpoint_resume_from=self._config_dict.get("model", {}).get("checkpoint_resume_from"),
+                codebase=codebase
             )
 
             logger.info(
-                "PRE-execution: sending request to server: exp_name: %s, exp_uri: %s, model_id: %s, base_exp_id: %s, prev_exp_id: %s, description: %s, model_uri: %s, recipe_id: %s, component_id: %s, model_id %s, component_id %s, recipe_id %s, checkpoint_resume_from: %s",
+                "PRE-execution: sending request to server: exp_name: %s, exp_uri: %s, model_id: %s, base_exp_id: %s, prev_exp_id: %s, description: %s, model_uri: %s, recipe_id: %s, component_id: %s, model_id %s, component_id %s, recipe_id %s",
                 request.experiment_name, request.experiment_uri, request.model_id, request.base_experiment_id,
                 request.previous_experiment_id, request.description, request.model_uri, request.recipe_id,
                 request.component_id, request.model_id, request.component_id, request.recipe_id,
-                request.checkpoint_resume_from,
             )
 
             # 4. Send to server (with retries)
@@ -255,7 +253,6 @@ class LineageClient:
                 extra={
                     "model_id": exp_data.get("model_id", ""),
                     "config_path": self._config_path,
-                    "checkpoint_resume_from": request.checkpoint_resume_from,
                 },
             )
 
@@ -303,7 +300,6 @@ class LineageClient:
                 exit_message=exit_message,
                 metrics_uri=metrics_uri,
                 strategy=ctx.strategy,
-                checkpoint_resume_from=ctx.extra.get("checkpoint_resume_from"),
             )
 
             connector = self._get_connector()

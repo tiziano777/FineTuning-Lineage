@@ -12,10 +12,13 @@ class Experiment(CodeRun):
     model_id: Optional[str] = Field(None, description="model_id used for entire lineage experimentations")
     model_uri: Optional[str] = Field(None, description="model_uri used for entire lineage experimentations")
 
+    recipe_id: Optional[str] = Field(None, description="recipe_id used for entire lineage experimentations")
+    metrics_uri: Optional[str] = Field(None, description="Pointer to unified training + HW metrics")
+
     # Validatori specifici per Experiment
     @field_validator('run_type', mode='before')
     @classmethod
-    def validate_run_type_experiment(cls, v):
+    def validate_run_type(cls, v):
         """Valida run_type specifico per Experiment."""
         valid_types = {"training", "evaluation", "inference", "merging"}
         
@@ -32,9 +35,9 @@ class Experiment(CodeRun):
 
     @field_validator('strategy', mode='before')
     @classmethod
-    def validate_strategy_experiment(cls, v):
+    def validate_strategy(cls, v):
         """Valida strategy specifica per Experiment."""
-        valid_strategies = {"NEW", "RESUME", "BRANCH", "RETRY"}
+        valid_strategies = {"NEW", "BRANCH", "RETRY"}
         
         if isinstance(v, Enum):
             v_str = v.value

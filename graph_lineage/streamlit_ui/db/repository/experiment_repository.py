@@ -499,7 +499,7 @@ class ExperimentRepository:
     ) -> List[Experiment]:
         """List experiments with resolved lineage resources (Model, Recipe, Component).
 
-        For each experiment, walks the DERIVED_FROM|RETRY_OF|RESUMED_FROM chain
+        For each experiment, walks the DERIVED_FROM|RETRY_OF chain
         backwards to find the nearest ancestor with USES_* relationships.
         """
         where_clauses: List[str] = []
@@ -524,7 +524,7 @@ class ExperimentRepository:
         OPTIONAL MATCH (e)-[:USES_MODEL]->(direct_model:Model)
         CALL {{
             WITH e
-            MATCH path = (e)-[:DERIVED_FROM|RETRY_OF|RESUMED_FROM*0..50]->(ancestor:Experiment)-[:USES_MODEL]->(inherited_model:Model)
+            MATCH path = (e)-[:DERIVED_FROM|RETRY_OF*0..50]->(ancestor:Experiment)-[:USES_MODEL]->(inherited_model:Model)
             RETURN inherited_model
             ORDER BY length(path) ASC
             LIMIT 1
@@ -535,7 +535,7 @@ class ExperimentRepository:
         OPTIONAL MATCH (e)-[:USES_RECIPE]->(direct_recipe:Recipe)
         CALL {{
             WITH e
-            MATCH path = (e)-[:DERIVED_FROM|RETRY_OF|RESUMED_FROM*0..50]->(ancestor:Experiment)-[:USES_RECIPE]->(inherited_recipe:Recipe)
+            MATCH path = (e)-[:DERIVED_FROM|RETRY_OF*0..50]->(ancestor:Experiment)-[:USES_RECIPE]->(inherited_recipe:Recipe)
             RETURN inherited_recipe
             ORDER BY length(path) ASC
             LIMIT 1
@@ -546,7 +546,7 @@ class ExperimentRepository:
         OPTIONAL MATCH (e)-[:USES_COMPONENT]->(direct_comp:Component)
         CALL {{
             WITH e
-            MATCH path = (e)-[:DERIVED_FROM|RETRY_OF|RESUMED_FROM*0..50]->(ancestor:Experiment)-[:USES_COMPONENT]->(inherited_comp:Component)
+            MATCH path = (e)-[:DERIVED_FROM|RETRY_OF*0..50]->(ancestor:Experiment)-[:USES_COMPONENT]->(inherited_comp:Component)
             RETURN inherited_comp
             ORDER BY length(path) ASC
             LIMIT 1

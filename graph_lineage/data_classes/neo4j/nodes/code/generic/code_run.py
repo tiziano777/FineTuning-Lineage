@@ -11,6 +11,7 @@ from ...base.enum.status_type import StatusType
 from ..enum.strategy_type import StrategyType
 from ..enum.run_type import RunType
 
+
 class CodeRun(Case):
     """CodeRun entity -- core tracking entity for a training run."""
 
@@ -18,8 +19,8 @@ class CodeRun(Case):
     base: bool = Field(True, description="True for base experiment, False for derived")
     name: str = Field("", description="Experiment name, equal between experiments in the chain")
     chain_id: int = Field(0, ge=0, description="Chain ID for derived experiments in the chain (0 for base)")
-    strategy: StrategyType = Field(..., description="NEW | RESUME | BRANCH | RETRY")
-    run_type: RunType = Field("code", description="type of execution, only general code exec for now")
+    strategy: StrategyType = Field(..., description="NEW | BRANCH | RETRY")
+    run_type: RunType = Field(..., description="type of execution, only general code exec for now")
 
 
     description: Optional[str] = Field("", description="Experiment description")
@@ -27,7 +28,6 @@ class CodeRun(Case):
     exit_status: Optional[str] = None
     exit_msg: Optional[str] = None
 
-    recipe_id: Optional[str] = Field(None, description="recipe_id used for entire lineage experimentations")
     component_id: Optional[str] = Field(None, description="component_id used for entire lineage experimentations")
 
     codebase: Dict[str, Any] = Field(..., description="base=True: full snapshot dict[str, str]; base=False: unified diff dict")

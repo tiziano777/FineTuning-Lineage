@@ -35,8 +35,6 @@ class PreRequest(BaseModel):
     component_id: Optional[str] = None
     recipe_id: Optional[str] = None
 
-    checkpoint_resume_from: Optional[str] = None  # checkpoint_id to resume from, if any
-
 
 class PreResponse(BaseModel):
     """Server response after PRE-execution processing.
@@ -65,8 +63,6 @@ class PostRequest(BaseModel):
     exit_message: Optional[str] = None
     metrics_uri: Optional[str] = None
     strategy: Optional[str] = None  # NEW, RETRY, BRANCH, RESUME, MERGE or None
-    checkpoint_resume_from: Optional[str] = None  # checkpoint_uri to resume from, if any
-
 class PostResponse(BaseModel):
     """Server acknowledgement of POST-execution update."""
 

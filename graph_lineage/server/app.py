@@ -9,7 +9,8 @@ import sys
 import json
 from fastapi import FastAPI, HTTPException
 
-from graph_lineage.data_classes.neo4j.nodes.code.training.experiment import StatusType, StrategyType
+from graph_lineage.data_classes.neo4j.nodes.base.enum.status_type import StatusType
+from graph_lineage.data_classes.neo4j.nodes.code.enum.strategy_type import StrategyType
 from graph_lineage.diff.snapshot import CodebaseSnapshot
 from graph_lineage.lineage.generic_node_ops import create_generic_edge, create_generic_graph_node
 from graph_lineage.lineage.experiment_neo4j_ops import find_experiment_by_id, update_experiment_status

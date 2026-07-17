@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pydantic import BaseModel, Field
-from graph_lineage.data_classes.neo4j.nodes.code.training.experiment import RunType
+from graph_lineage.data_classes.neo4j.nodes.code.enum.run_type import RunType
 
 # EXPERIMENT LINEAGE CONFIG FILE WRAPPER
 

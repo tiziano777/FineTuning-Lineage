@@ -7,15 +7,15 @@ def generate_description(
     strategy: str,
     changed_files: list[str] | None = None,
     exp_id: str | None = None,
-    ckp_id: str | None = None,
+    model_id: str | None = None,
 ) -> str:
     """Generate a human-readable description for an experiment.
 
     Args:
-        strategy: One of NEW, BRANCH, RETRY, RESUME, MERGE.
+        strategy: One of NEW, BRANCH, RETRY, MERGE.
         changed_files: List of filenames that changed (for BRANCH).
-        exp_id: Parent experiment ID (for RETRY/RESUME).
-        ckp_id: Checkpoint ID or model_uri (for RESUME).
+        exp_id: Parent experiment ID (for RETRY).
+        model_id: Model ID (for RESUME).
 
     Returns:
         Formatted description string.
@@ -27,11 +27,11 @@ def generate_description(
         return f"Retry of experiment {exp_id}" if exp_id else "Retry (same codebase)"
 
     if strategy == "RESUME":
-        if ckp_id and exp_id:
-            return f"Resume from checkpoint '{ckp_id}' (parent: {exp_id})"
-        if ckp_id:
-            return f"Resume from checkpoint '{ckp_id}'"
-        return "Resume from checkpoint"
+        if model_id and exp_id:
+            return f"Resume from model '{model_id}' (parent: {exp_id})"
+        if model_id:
+            return f"Resume from model '{model_id}'"
+        return "Resume from model '{model_id}'" if model_id else "Resume from model"
 
     if strategy == "MERGE":
         return f"Model merge (parent: {exp_id})" if exp_id else "Model merge"
