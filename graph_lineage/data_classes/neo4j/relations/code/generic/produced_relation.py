@@ -1,4 +1,4 @@
-# PromotedRelation — relazione generica tra RunEvent e RunResult
+# ProducedRelation — relazione generica tra CodeRun e RunResult
 from __future__ import annotations
 from typing import ClassVar, Type
 

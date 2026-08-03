@@ -4,6 +4,7 @@ class StatusType(str, Enum):
     RUNNING = "RUNNING"
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
+    WAITING = "WAITING"
 
     @classmethod
     def from_string(cls, value: str):

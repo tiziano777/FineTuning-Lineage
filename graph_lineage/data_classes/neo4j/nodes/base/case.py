@@ -4,5 +4,5 @@ from .base import BaseNode
 
 
 class Case(BaseNode):
-    """Contenitore logico di un processo dinamico non strutturato (ACM Case)."""
+    """ACM Case -- Contenitore logico di un processo dinamico non strutturato (ACM Case)."""
     pass

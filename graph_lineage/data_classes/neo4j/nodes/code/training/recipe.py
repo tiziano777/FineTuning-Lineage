@@ -35,8 +35,9 @@ class RecipeEntry(BaseModel):
         }
 
 class Recipe(Setup):
-    """Configuration for recipe/distribution Setup.
-
+    """
+    Recipe(Setup(Source)) ACM entity.
+    Configuration for recipe/distribution Setup.
     Maps dataset paths to their metadata entries with optional scope, tasks, tags, and derived_from.
     """
 

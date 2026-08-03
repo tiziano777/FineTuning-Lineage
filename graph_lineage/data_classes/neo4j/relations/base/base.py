@@ -1,8 +1,10 @@
 """base/base_relation.py — classe base per gli edge (relazioni) del grafo Neo4j."""
 from __future__ import annotations
 import re
+import uuid
+from datetime import datetime, timezone
 from typing import ClassVar, Optional, Type, Any
-from pydantic import BaseModel, Field, model_validator, ConfigDict
+from pydantic import BaseModel, Field, model_validator, ConfigDict, field_validator
 
 from ...nodes.base.base import BaseNode
 
@@ -24,6 +26,10 @@ class BaseRelation(BaseModel):
       controllo enforced a tempo di definizione classe via __init_subclass__.
     """
 
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), description="UUID primary key")
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), description="Creation timestamp")
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), description="Last update timestamp")
+    
     model_config = ConfigDict(extra="allow")
 
     source_type: ClassVar[Type[BaseNode]] = BaseNode
@@ -64,6 +70,14 @@ class BaseRelation(BaseModel):
                 f"ricevuto {type(self.target).__name__}"
             )
         return self
+
+    @field_validator('created_at', 'updated_at', mode='before')
+    @classmethod
+    def convert_neo4j_datetime(cls, v):
+        """Convert neo4j.time.DateTime to Python datetime."""
+        if hasattr(v, 'to_native') and callable(v.to_native):
+            return v.to_native()
+        return v
 
     @property
     def __label__(self) -> str:

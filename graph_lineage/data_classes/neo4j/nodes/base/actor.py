@@ -4,5 +4,5 @@ from .base import BaseNode
 
 
 class Actor(BaseNode):
-    """Entità che rappresenta un attore coinvolto in un Case (ACM Actor)."""
+    """Actor ACM -- Entità che rappresenta un attore coinvolto in un Case (ACM Actor)."""
     pass

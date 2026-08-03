@@ -1,5 +1,5 @@
 from ...base.source import Source
 
 class Setup(Source):
-    """Entità immutabile prodotta da un Case (ACM Setup)."""
+    """Setup(Source) ACM class -- Entità immutabile, input di un Run(Case) (ACM Setup(Source))."""
     pass

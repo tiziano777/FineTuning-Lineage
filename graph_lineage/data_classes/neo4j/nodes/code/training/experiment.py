@@ -7,7 +7,7 @@ from pydantic import Field, field_validator
 from ..generic.code_run import CodeRun
 
 class Experiment(CodeRun):
-    """Experiment entity -- core tracking entity for a training run."""
+    """Experiment(CodeRun(Case)) ACM entity -- core tracking entity for a training run."""
 
     model_id: Optional[str] = Field(None, description="model_id used for entire lineage experimentations")
     model_uri: Optional[str] = Field(None, description="model_uri used for entire lineage experimentations")

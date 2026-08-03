@@ -35,7 +35,7 @@ class ModelType(Enum):
     UNKNOWN = "unknown"
 
 class Model(Setup):
-    """Model entity -- base model for fine-tuning."""
+    """Model(Setup(Source)) ACM entity -- base model for fine-tuning."""
 
     model_name: str = Field(..., min_length=1, description="Unique model name")
     uri: str = Field("", description="Path or URI to model")

@@ -7,7 +7,7 @@ from ..generic.run_setup import Setup
 
 
 class Component(Setup):
-    """Component entity -- (technique, framework) pair from capability matrix.
+    """Component(Setup(Source)) ACM entity -- (technique, framework) pair from capability matrix.
 
     A Component represents a validated combination of technique + framework.
     If a (technique, framework) combo is not supported, the Component doesn't exist.

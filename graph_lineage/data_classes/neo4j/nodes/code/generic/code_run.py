@@ -13,7 +13,7 @@ from ..enum.run_type import RunType
 
 
 class CodeRun(Case):
-    """CodeRun entity -- core tracking entity for a training run."""
+    """CodeRun(Case) ACM entity -- core tracking entity for a code run."""
 
     uri: str = Field(..., description="Path scaffold on worker")
     base: bool = Field(True, description="True for base experiment, False for derived")
@@ -24,11 +24,11 @@ class CodeRun(Case):
 
 
     description: Optional[str] = Field("", description="Experiment description")
-    status: StatusType = Field("RUNNING", description="RUNNING | COMPLETED | FAILED")
+    status: StatusType = Field("RUNNING", description="RUNNING | COMPLETED | FAILED | WAITING")
     exit_status: Optional[str] = None
     exit_msg: Optional[str] = None
 
-    component_id: Optional[str] = Field(None, description="component_id used for entire lineage experimentations")
+    component_id: Optional[str] = Field(None, description="metadata used for entire lineage tracking")
 
     codebase: Dict[str, Any] = Field(..., description="base=True: full snapshot dict[str, str]; base=False: unified diff dict")
     changed_files: list[str] = Field(default_factory=list, description="List of filenames that changed (for non-base experiments)")

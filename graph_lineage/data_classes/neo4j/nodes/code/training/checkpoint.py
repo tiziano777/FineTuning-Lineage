@@ -3,10 +3,10 @@
 from __future__ import annotations
 from pydantic import Field
 from typing import Optional
-from ..generic.run_event import RunEvent
+from ..generic.run_result import RunResult
 
-class Checkpoint(RunEvent):
-    """Checkpoint entity -- core tracking entity for a training run."""
+class Checkpoint(RunResult):
+    """Checkpoint(RunResult(Artifact)) ACM entity -- core tracking entity for a training run."""
 
     name: str = Field("", description="Checkpoint name")
     derived_from: str = Field("", description="Associated Model")
