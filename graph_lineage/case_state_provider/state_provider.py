@@ -11,8 +11,8 @@ from dataclasses import dataclass, field
 from fnmatch import fnmatch
 from typing import Any
 
-from graph_lineage.diff.differ import compute_snapshot_diff
-from graph_lineage.diff.snapshot import CodebaseSnapshot
+from graph_lineage.diff_util.differ import compute_snapshot_diff
+from graph_lineage.diff_util.snapshot import CodebaseSnapshot
 
 
 @dataclass
@@ -61,7 +61,6 @@ class StateProvider(ABC):
     def snapshot(self) -> CodebaseSnapshot:
         """Cattura lo stato corrente e ritorna un CodebaseSnapshot."""
         ...
-
 
 class GitOrExplicitCodebaseProvider(StateProvider):
     """Implementazione attuale: usa i file espliciti passati dal client.

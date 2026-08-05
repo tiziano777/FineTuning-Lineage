@@ -1,82 +1,46 @@
-"""Registry and dispatch for RunTypeHandler implementations.
+"""HandlerRegistry: storage and lookup of RunCaseHandler instances.
 
-Wrappa il registry esistente in un DomainDispatcher a due livelli.
-aggiunge il livello di dominio richiesto dal refactor.
+Ogni handler e' indicizzato per (domain, run_type). La registry non
+conosce euristiche di rilevamento del dominio: quella logica vive in
+DomainDispatcher (domain_dispatcher.py).
 """
-
 from __future__ import annotations
 
-from graph_lineage.server.dispatch.domain_dispatcher import DomainDispatcher
-from graph_lineage.server.handlers.base import RunTypeHandler
-from graph_lineage.server.handlers.training_run_handler import TrainingRunHandler
+from fastapi import HTTPException
+from graph_lineage.server.handlers.run_case_handler import RunCaseHandler
+from graph_lineage.server.handlers.training_run_case_handler import TrainingRunHandler
 
-# ── Backward-compat: registry singolo-livello (AI domain) ───────────────
+class HandlerRegistry:
+    """Contenitore di RunCaseHandler, raggruppati per Actor-Domain."""
 
-_HANDLERS: dict[str, RunTypeHandler] = {}
+    def __init__(self):
+        self._handlers: dict[str, dict[str, RunCaseHandler]] = {}
+        self.register("training", TrainingRunHandler())
 
+    def register(self, domain: str, handler: RunCaseHandler) -> None:
+        """Registra un handler per il suo run_type all'interno di un dominio."""
+        self._handlers.setdefault(domain, {})[handler.user_domain] = handler
 
-def register_handler(handler: RunTypeHandler) -> None:
-    """Register a RunTypeHandler for its run_type (backward-compat, dominio AI)."""
-    _HANDLERS[handler.run_type] = handler
+    def get(self, domain: str, run_type: str) -> RunCaseHandler:
+        """Recupera l'handler per (domain, run_type).
 
+        Raises:
+            HTTPException: 422 se il dominio o il run_type non sono supportati.
+        """
+        handler = self._handlers.get(domain, {}).get(run_type)
+        if handler is None:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Domain '{domain}': unsupported run_type '{run_type}'",
+            )
+        return handler
 
-def get_handler(run_type: str) -> RunTypeHandler:
-    """Retrieve the handler for a given run_type (backward-compat, dominio AI).
+    def has_domain(self, domain: str) -> bool:
+        return domain in self._handlers
 
-    Raises:
-        HTTPException: 422 if the run_type is not supported.
-    """
-    handler = _HANDLERS.get(run_type)
-    if handler is None:
-        from fastapi import HTTPException
-        raise HTTPException(status_code=422, detail=f"Unsupported run_type '{run_type}'")
-    return handler
+    def domains(self) -> list[str]:
+        return list(self._handlers.keys())
 
-
-# Auto-register built-in handlers (backward-compat)
-register_handler(TrainingRunHandler())
-
-
-# ── Nuovo: DomainDispatcher a due livelli ───────────────────────────────
-
-# Istanza singleton del dispatcher di dominio
-domain_dispatcher = DomainDispatcher()
-
-# Registra il dominio AI con i suoi handler
-domain_dispatcher.register_domain_handler("ai", TrainingRunHandler())
-
-
-# Nuove API per il dispatch di dominio
-def resolve_handler(request) -> RunTypeHandler:
-    """Risolve l'handler dalla request usando il DomainDispatcher.
-
-    Euristiche:
-    1. Campo esplicito `domain` nella request
-    2. Campi AI-specifici (model_id, recipe_id, component_id) → dominio "ai"
-    3. Fallback → dominio "generic"
-
-    Args:
-        request: PreRequest o oggetto con attributi run_type, domain, model_id, etc.
-
-    Returns:
-        RunTypeHandler appropriato per il dominio e run_type rilevati.
-    """
-    return domain_dispatcher.resolve(request)
-
-def register_domain_handler(domain: str, handler: RunTypeHandler) -> None:
-    """Registra un handler in un dominio specifico.
-
-    Usage per futuri plugin:
-        from graph_lineage.server.dispatch.registry import register_domain_handler
-        register_domain_handler("generic", DocumentRunHandler())
-    """
-    domain_dispatcher.register_domain_handler(domain, handler)
-
-def list_domains() -> list[str]:
-    """Elenca i domini registrati."""
-    return domain_dispatcher.list_domains()
-
-def list_run_types(domain: str | None = None) -> dict[str, list[str]]:
-    """Elenca i run_type per dominio."""
-    return domain_dispatcher.list_run_types(domain)
-
+    def list(self) -> dict[str, list[str]]:
+        """Elenca i run_type registrati, per dominio."""
+        return {d: list(handlers.keys()) for d, handlers in self._handlers.items()}

@@ -5,7 +5,7 @@ import logging
 
 import streamlit as st
 
-from graph_lineage.history.repository import ExperimentRepository as HistoryRepository
+from graph_lineage.system_manager.repository import ExperimentRepository as HistoryRepository
 from graph_lineage.streamlit_ui.utils.async_helpers import run_async
 
 logger = logging.getLogger(__name__)

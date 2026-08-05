@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import Optional, List
 from enum import Enum
 from pydantic import Field, field_validator
+from ..training.enum.experiment_type import ExperimentType
 from ..generic.code_run import CodeRun
 
 class Experiment(CodeRun):
@@ -15,15 +16,14 @@ class Experiment(CodeRun):
     recipe_id: Optional[str] = Field(None, description="recipe_id used for entire lineage experimentations")
     metrics_uri: Optional[str] = Field(None, description="Pointer to unified training + HW metrics")
 
-    # REFACTOR: traccia il nome dell'esperimento precedente che ha triggerato un model switch
-    resumed_from: Optional[str] = Field(None, description="Name of the previous experiment that triggered a model switch")
+    run_type: ExperimentType = Field(..., description="training | evaluation | inference | merging")
 
     # Validatori specifici per Experiment
     @field_validator('run_type', mode='before')
     @classmethod
     def validate_run_type(cls, v):
-        """Valida run_type specifico per Experiment."""
-        valid_types = {"training", "evaluation", "inference", "merging"}
+        """Valida experiment_type specifico per Experiment."""
+        valid_types = {"training", "evaluation", "inference", "merging"}  # Questi dovrebbero corrispondere ai valori di ExperimentType
 
         if isinstance(v, Enum):
             v_str = v.value
@@ -32,7 +32,7 @@ class Experiment(CodeRun):
 
         if v_str not in valid_types:
             raise ValueError(
-                f"Experiment run_type must be one of {valid_types}, got '{v_str}'"
+                f"Experiment experiment_type must be one of {valid_types}, got '{v_str}'"
             )
         return v
 
@@ -57,7 +57,7 @@ class Experiment(CodeRun):
     @property
     def __labels__(self) ->  List[str]:
         """Genera le etichette per Neo4j. Es: ['Experiment', 'Training']"""
-        labels = ["Experiment"]
+        labels = ["Case", "Run", "Experiment"]
         if self.run_type:
             # Capitalizza per convenzione Neo4j (training -> Training)
             labels.append(self.run_type.capitalize())

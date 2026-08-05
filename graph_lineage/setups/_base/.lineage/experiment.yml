@@ -14,3 +14,7 @@ experiment:
   component: "{{COMPONENT_NAME}}"
   recipe: "{{RECIPE_NAME}}"
   model: "{{MODEL_ID}}"
+  
+  username: "{{USERNAME}}"
+  user_role: "{{USER_ROLE}}"
+  user_domain: "{{USER_DOMAIN}}"

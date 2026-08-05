@@ -1,6 +1,6 @@
 # artifact.py
 from __future__ import annotations
-from typing import Optional
+from typing import Optional, List
 from pydantic import Field
 from .source import Source
 
@@ -22,3 +22,8 @@ class Artifact(Source):
         default=None,
         description="Identificatore dell'Event Handler che ha generato questo Artifact",
     )
+    @property
+    def __labels__(self) ->  List[str]:
+        """Genera le etichette per Neo4j."""
+        labels = ["Artifact"]
+        return labels

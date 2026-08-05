@@ -16,7 +16,7 @@ from pathlib import Path
 import streamlit as st
 import yaml
 
-from graph_lineage.data_classes.neo4j.nodes.code.enum.run_type import RunType
+from graph_lineage.data_classes.neo4j.nodes.code.training.enum.experiment_type import ExperimentType
 from graph_lineage.data_classes.neo4j.nodes.code.training.component import Component
 from graph_lineage.data_classes.neo4j.nodes.code.training.model import Model
 from graph_lineage.streamlit_ui.db.repository.component_repository import ComponentRepository
@@ -40,7 +40,7 @@ _SETUPS_ROOT_DIR = Path(__file__).parent.parent.parent / "setups"
 # File visibili nel tab "Browse Templates"
 _BROWSE_ALLOWED_FILES = {"requirements.txt", "prepare.py", "train.py", "config.yml"}
  
-def _get_setups_dir(experiment_type: RunType) -> Path:
+def _get_setups_dir(experiment_type: ExperimentType) -> Path:
     """Setups directory scoped al experiment type selezionato nel wizard."""
     return _SETUPS_ROOT_DIR / experiment_type.value
  
@@ -266,7 +266,7 @@ def _generate_config_yml(selections: dict, recipe: Recipe, template_config: dict
     return yaml.dump(config, default_flow_style=False, sort_keys=False, allow_unicode=True)
 
 # STEP 2: Other manifest generation
-def _generate_experiment_yml(experiment_type: RunType, setup_name: str, selections: dict) -> str:
+def _generate_experiment_yml(experiment_type: ExperimentType, setup_name: str, selections: dict) -> str:
     """Generate .lineage/experiment.yml from template with user values."""
     template = _safe_read_file(_get_base_dir() / ".lineage" / "experiment.yml")
     content = template.replace("{{SETUP_NAME}}", setup_name)
@@ -276,9 +276,12 @@ def _generate_experiment_yml(experiment_type: RunType, setup_name: str, selectio
     content = content.replace("{{RECIPE_NAME}}", selections.get("recipe_name", "") or "")
     content = content.replace("{{MODEL_ID}}", selections.get("model_id", ""))
     content = content.replace("{{EXPERIMENT_TYPE}}", experiment_type.value)
+    content = content.replace("{{USERNAME}}", selections.get("username", ""))
+    content = content.replace("{{USER_ROLE}}", ",".join(selections.get("user_role", [])))
+    content = content.replace("{{USER_DOMAIN}}", selections.get("user_domain", ""))
     return content
 
-def _generate_server_yml(experiment_type: RunType, selections: dict) -> str:
+def _generate_server_yml(experiment_type: ExperimentType, selections: dict) -> str:
     """Generate .lineage/server.yml from template with user values."""
     template = _safe_read_file(_get_base_dir() / ".lineage" / "server.yml")
     template = template.replace("{{SERVER_URL}}", selections.get("server_url", "http://localhost:8502"))
@@ -289,7 +292,7 @@ def _generate_server_yml(experiment_type: RunType, selections: dict) -> str:
     return template
 
 # STEP 3: Zip packaging
-def _build_zip(experiment_type: RunType, component_uri: str | None, selections: dict, recipe: Recipe) -> bytes:
+def _build_zip(experiment_type: ExperimentType, component_uri: str | None, selections: dict, recipe: Recipe) -> bytes:
     """Build zip archive: template + generated configs.
     
     Packaging logic (order matters):
@@ -400,7 +403,7 @@ def run() -> None:
         _render_experiment_type_step()
         return
  
-    experiment_type: RunType = st.session_state.wizard_experiment_type
+    experiment_type: ExperimentType = st.session_state.wizard_experiment_type
  
     header_col, reset_col = st.columns([5, 1])
     with header_col:
@@ -413,13 +416,13 @@ def run() -> None:
     tab_create, tab_browse = st.tabs(["Create Setup", "Browse Templates"])
  
     with tab_create:
-        if experiment_type == RunType.TRAINING:
+        if experiment_type == ExperimentType.TRAINING:
             _render_create_form_training()
-        elif experiment_type == RunType.EVALUATION:
+        elif experiment_type == ExperimentType.EVALUATION:
             _render_create_form_evaluation()
-        elif experiment_type == RunType.INFERENCE:
+        elif experiment_type == ExperimentType.INFERENCE:
             _render_create_form_inference()
-        elif experiment_type == RunType.MERGING:
+        elif experiment_type == ExperimentType.MERGING:
             _render_create_form_merging()
  
     with tab_browse:
@@ -430,7 +433,7 @@ def _render_experiment_type_step() -> None:
     st.subheader("Step 1 — Seleziona l'Experiment Type")
     st.caption("Il passo successivo mostrerà solo i campi rilevanti per il use case scelto.")
  
-    options = list(RunType)
+    options = list(ExperimentType)
     selected = st.radio(
         "Experiment Type",
         options=options,
@@ -448,7 +451,7 @@ def _render_experiment_type_step() -> None:
  
 def _render_create_form_training() -> None:
     """Render the setup creation form — TRAINING use case."""
-    experiment_type = RunType.TRAINING
+    experiment_type = ExperimentType.TRAINING
  
     st.subheader("Configure your training setup")
  
@@ -541,7 +544,7 @@ def _render_create_form_training() -> None:
         epochs = st.number_input("Epochs", value=1.0, min_value=0.1, step=0.1)
  
     with st.expander("Hardware Configuration (optional, skypilot-based)"):
-        hw_col1, hw_col2 = st.columns(2)
+        hw_col1, hw_col2, user_col = st.columns(3)
         with hw_col1:
             gpu_type = st.text_input(
                 "GPU Type", placeholder="A100-80GB",
@@ -567,6 +570,10 @@ def _render_create_form_training() -> None:
         with hw_col2:
             cpus = st.text_input("CPUs", placeholder="128+", help="""Numero di vCPU per nodo.\nFormati accettati: \n4 — esattamente 4 vCPU \n4+ — almeno 4 vCPU (SkyPilot sceglierà l'istanza più economica con ≥ 4 vCPU)\nEsempio: 128+ significa "almeno 128 vCPU".\n DOCS URL: https://docs.skypilot.co/en/latest/reference/yaml-spec.html#resources-cpus """)
             memory = st.text_input("Memory", placeholder="216+", help="""Quantità di RAM per nodo.\nFormati accettati:\n64 — esattamente 64 GB\n64+ — almeno 64 GB\nCon unità: 1024MB, 64GB, 2TB\nUnità supportate (case-insensitive): KB, MB, GB (default), TB, PB.\nEsempio: 216+ significa "almeno 216 GB di RAM". \n DOCS URL: https://docs.skypilot.co/en/latest/reference/yaml-spec.html#resources-memory""")
+
+        with user_col:
+            username = st.text_input("Username", placeholder="your_username")
+            user_role = st.multiselect("User Role", options=["ADMIN", "OWNER", "EDITOR", "VIEWER"], placeholder="your_role")
  
     with st.expander("Server Options (optional, else default to http://localhost:8502)"):
         server_url = st.text_input("Server URL", placeholder="http://localhost:8502", help="URL of the server to connect to.")
@@ -608,6 +615,9 @@ def _render_create_form_training() -> None:
             "model_id": model_id,
             "recipe_id": recipe_id,
             "recipe_name": recipe_name,
+            "username": username,
+            "user_role": user_role,
+            "user_domain": st.session_state.wizard_experiment_type,
             "output_dir": output_dir,
             "metrics_uri": metrics_uri,
             "plot_dir": plot_dir,
@@ -645,7 +655,7 @@ def _render_create_form_training() -> None:
  
 def _render_create_form_evaluation() -> None:
     """Render the setup creation form — EVALUATION use case."""
-    experiment_type = RunType.EVALUATION
+    experiment_type = ExperimentType.EVALUATION
  
     st.subheader("Configure your evaluation setup")
  
@@ -736,7 +746,7 @@ def _render_create_form_evaluation() -> None:
         epochs = st.number_input("Epochs", value=1.0, min_value=0.1, step=0.1)
  
     with st.expander("Hardware Configuration (optional, skypilot-based)"):
-        hw_col1, hw_col2 = st.columns(2)
+        hw_col1, hw_col2, user_col = st.columns(3)
         with hw_col1:
             gpu_type = st.text_input(
                 "GPU Type", placeholder="A100-80GB",
@@ -762,6 +772,10 @@ def _render_create_form_evaluation() -> None:
         with hw_col2:
             cpus = st.text_input("CPUs", placeholder="128+", help="""Numero di vCPU per nodo.\nFormati accettati: \n4 — esattamente 4 vCPU \n4+ — almeno 4 vCPU (SkyPilot sceglierà l'istanza più economica con ≥ 4 vCPU)\nEsempio: 128+ significa "almeno 128 vCPU".\n DOCS URL: https://docs.skypilot.co/en/latest/reference/yaml-spec.html#resources-cpus """)
             memory = st.text_input("Memory", placeholder="216+", help="""Quantità di RAM per nodo.\nFormati accettati:\n64 — esattamente 64 GB\n64+ — almeno 64 GB\nCon unità: 1024MB, 64GB, 2TB\nUnità supportate (case-insensitive): KB, MB, GB (default), TB, PB.\nEsempio: 216+ significa "almeno 216 GB di RAM". \n DOCS URL: https://docs.skypilot.co/en/latest/reference/yaml-spec.html#resources-memory""")
+
+        with user_col:
+            username = st.text_input("Username", placeholder="your_username")
+            user_role = st.multiselect("User Role", options=["ADMIN", "OWNER", "EDITOR", "VIEWER"], placeholder="your_role")
  
     with st.expander("Server Options (optional)"):
         server_url = st.text_input("Server URL", placeholder="http://localhost:8502", help="URL of the server to connect to.")
@@ -803,6 +817,9 @@ def _render_create_form_evaluation() -> None:
             "model_id": model_id,
             "recipe_id": recipe_id,
             "recipe_name": recipe_name,
+            "username": username,
+            "user_role": user_role,
+            "user_domain": st.session_state.wizard_experiment_type,
             "output_dir": output_dir,
             "metrics_uri": metrics_uri,
             "plot_dir": plot_dir,
@@ -840,7 +857,7 @@ def _render_create_form_evaluation() -> None:
  
 def _render_create_form_inference() -> None:
     """Render the setup creation form — INFERENCE use case."""
-    experiment_type = RunType.INFERENCE
+    experiment_type = ExperimentType.INFERENCE
  
     st.subheader("Configure your inference setup")
  
@@ -931,7 +948,7 @@ def _render_create_form_inference() -> None:
         epochs = st.number_input("Epochs", value=1.0, min_value=0.1, step=0.1)
  
     with st.expander("Hardware Configuration (optional, skypilot-based)"):
-        hw_col1, hw_col2 = st.columns(2)
+        hw_col1, hw_col2, user_col = st.columns(3)
         with hw_col1:
             gpu_type = st.text_input(
                 "GPU Type", placeholder="A100-80GB",
@@ -957,7 +974,10 @@ def _render_create_form_inference() -> None:
         with hw_col2:
             cpus = st.text_input("CPUs", placeholder="128+", help="""Numero di vCPU per nodo.\nFormati accettati: \n4 — esattamente 4 vCPU \n4+ — almeno 4 vCPU (SkyPilot sceglierà l'istanza più economica con ≥ 4 vCPU)\nEsempio: 128+ significa "almeno 128 vCPU".\n DOCS URL: https://docs.skypilot.co/en/latest/reference/yaml-spec.html#resources-cpus """)
             memory = st.text_input("Memory", placeholder="216+", help="""Quantità di RAM per nodo.\nFormati accettati:\n64 — esattamente 64 GB\n64+ — almeno 64 GB\nCon unità: 1024MB, 64GB, 2TB\nUnità supportate (case-insensitive): KB, MB, GB (default), TB, PB.\nEsempio: 216+ significa "almeno 216 GB di RAM". \n DOCS URL: https://docs.skypilot.co/en/latest/reference/yaml-spec.html#resources-memory""")
- 
+
+        with user_col:
+            username = st.text_input("Username", placeholder="your_username")
+            user_role = st.multiselect("User Role", options=["ADMIN", "OWNER", "EDITOR", "VIEWER"], placeholder="your_role")
 
     with st.expander("Server Options (optional)"):
         server_url = st.text_input("Server URL", placeholder="http://localhost:8502", help="URL of the server to connect to.")
@@ -999,6 +1019,9 @@ def _render_create_form_inference() -> None:
             "model_id": model_id,
             "recipe_id": recipe_id,
             "recipe_name": recipe_name,
+            "username": username,
+            "user_role": user_role,
+            "user_domain": st.session_state.wizard_experiment_type,
             "output_dir": output_dir,
             "metrics_uri": metrics_uri,
             "plot_dir": plot_dir,
@@ -1036,7 +1059,7 @@ def _render_create_form_inference() -> None:
  
 def _render_create_form_merging() -> None:
     """Render the setup creation form — MERGING use case."""
-    experiment_type = RunType.MERGING
+    experiment_type = ExperimentType.MERGING
  
     st.subheader("Configure your merging setup")
  
@@ -1117,7 +1140,7 @@ def _render_create_form_merging() -> None:
         epochs = st.number_input("Epochs", value=1.0, min_value=0.1, step=0.1)
  
     with st.expander("Hardware Configuration (optional, skypilot-based)"):
-        hw_col1, hw_col2 = st.columns(2)
+        hw_col1, hw_col2, user_col = st.columns(3)
         with hw_col1:
             gpu_type = st.text_input(
                 "GPU Type", placeholder="A100-80GB",
@@ -1143,7 +1166,11 @@ def _render_create_form_merging() -> None:
         with hw_col2:
             cpus = st.text_input("CPUs", placeholder="128+", help="""Numero di vCPU per nodo.\nFormati accettati: \n4 — esattamente 4 vCPU \n4+ — almeno 4 vCPU (SkyPilot sceglierà l'istanza più economica con ≥ 4 vCPU)\nEsempio: 128+ significa "almeno 128 vCPU".\n DOCS URL: https://docs.skypilot.co/en/latest/reference/yaml-spec.html#resources-cpus """)
             memory = st.text_input("Memory", placeholder="216+", help="""Quantità di RAM per nodo.\nFormati accettati:\n64 — esattamente 64 GB\n64+ — almeno 64 GB\nCon unità: 1024MB, 64GB, 2TB\nUnità supportate (case-insensitive): KB, MB, GB (default), TB, PB.\nEsempio: 216+ significa "almeno 216 GB di RAM". \n DOCS URL: https://docs.skypilot.co/en/latest/reference/yaml-spec.html#resources-memory""")
- 
+
+        with user_col:
+            username = st.text_input("Username", placeholder="your_username")
+            user_role = st.multiselect("User Role", options=["ADMIN", "OWNER", "EDITOR", "VIEWER"], placeholder="your_role")
+
     with st.expander("Model Merging"):
         merging_enabled = st.checkbox("Enable Model Merging", value=True)
         merge_method = st.selectbox("Merge Method", ["linear", "slerp", "ties", "dare", "task_arithmetic"])
@@ -1189,6 +1216,9 @@ def _render_create_form_merging() -> None:
             "model_id": model_id,
             "recipe_id": recipe_id,
             "recipe_name": recipe_name,
+            "username": username,
+            "user_role": user_role,
+            "user_domain": st.session_state.wizard_experiment_type,
             "output_dir": output_dir,
             "metrics_uri": metrics_uri,
             "plot_dir": plot_dir,
@@ -1227,7 +1257,7 @@ def _render_create_form_merging() -> None:
 # UI — Browse templates (scoped al experiment type del wizard)
 # ---------------------------------------------------------------------------
  
-def _render_browse_templates(experiment_type: RunType) -> None:
+def _render_browse_templates(experiment_type: ExperimentType) -> None:
     """Show available templates and their contents, per experiment type."""
     st.subheader(f"Available Templates — {experiment_type.value.capitalize()}")
  

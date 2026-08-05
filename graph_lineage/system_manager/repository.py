@@ -1,13 +1,13 @@
-"""ExperimentRepository: history management and graph navigation operations."""
+"""ExperimentManager: history management and graph navigation operations."""
 
 from __future__ import annotations
 
-from typing import Any, Optional, Protocol
+from typing import Any
 
-from graph_lineage.diff.reconstructor import reconstruct_codebase
-from graph_lineage.diff.differ import compute_snapshot_diff
-from graph_lineage.diff.snapshot import CodebaseSnapshot
-from graph_lineage.history.models import (
+from graph_lineage.diff_util.reconstructor import reconstruct_codebase
+from graph_lineage.diff_util.differ import compute_snapshot_diff
+from graph_lineage.diff_util.snapshot import CodebaseSnapshot
+from graph_lineage.system_manager.models import (
     CheckpointSummary,
     ExperimentSummary,
     NavigationResult,
@@ -44,7 +44,7 @@ def _build_experiment_summary(record: dict[str, Any]) -> ExperimentSummary:
     )
 
 
-class ExperimentRepository:
+class ExperimentManager:
     """History management operations on the experiment lineage graph.
 
     All methods are async and delegate to Neo4jClient for Neo4j access.
@@ -85,12 +85,12 @@ class ExperimentRepository:
     async def preview_rollback(self, exp_id: str) -> RollbackPreview:
         """Preview what a rollback from exp_id would affect.
 
-        Finds all descendants (via DERIVED_FROM and RETRY_OF) and returns
+        Finds all descendants (via DERIVED_FROM and RETRY_FROM) and returns
         rich summaries including checkpoint metrics and URIs.
         """
         query = """
         MATCH (target:Experiment {exp_id: $exp_id})
-        OPTIONAL MATCH (desc:Experiment)-[:DERIVED_FROM|RETRY_OF*]->(target)
+        OPTIONAL MATCH (desc:Experiment)-[:DERIVED_FROM|RETRY_FROM*]->(target)
         WITH target, COLLECT(DISTINCT desc) AS descendants
         WITH [target] + descendants AS all_exps
         UNWIND all_exps AS e
@@ -116,10 +116,10 @@ class ExperimentRepository:
         # Count branches: experiments with >1 child among affected set
         branch_query = """
         MATCH (target:Experiment {exp_id: $exp_id})
-        OPTIONAL MATCH (desc:Experiment)-[:DERIVED_FROM|RETRY_OF*]->(target)
+        OPTIONAL MATCH (desc:Experiment)-[:DERIVED_FROM|RETRY_FROM*]->(target)
         WITH [target] + COLLECT(DISTINCT desc) AS all_exps
         UNWIND all_exps AS e
-        OPTIONAL MATCH (child:Experiment)-[:DERIVED_FROM|RETRY_OF]->(e)
+        OPTIONAL MATCH (child:Experiment)-[:DERIVED_FROM|RETRY_FROM]->(e)
         WHERE NOT child IN all_exps
         WITH COUNT(DISTINCT child) AS external_branches
         RETURN external_branches

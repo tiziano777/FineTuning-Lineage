@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 from pydantic import Field
-from typing import Optional
+from typing import Optional, List
 from ..generic.run_result import RunResult
 
 class Checkpoint(RunResult):
@@ -18,3 +18,11 @@ class Checkpoint(RunResult):
 
     is_merging: bool = Field(True, description="Indicates if the checkpoint is merging")
     is_usable: bool = Field(True, description="Soft-delete flag for visibility")
+
+    @property
+    def __labels__(self) ->  List[str]:
+        """Genera le etichette per Neo4j. Es: ['Experiment', 'Training']"""
+        labels = ["Artifact", "RunResult", "Checkpoint"]
+        return labels
+
+    

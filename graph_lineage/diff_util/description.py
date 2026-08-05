@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-
+# In futuro un agente potrebbe generare descrizioni più complesse, ma per ora
+# ci limitiamo a una funzione semplice che produce descrizioni leggibili.
+# agente prendera in input strategy, changed_files, risultati ottenuti, previous lessons learned
+# e genererà una descrizione più complessa e dettagliata, eventualmente con un sommario dei risultati ottenuti e delle lezioni apprese.
 def generate_description(
     strategy: str,
     changed_files: list[str] | None = None,

@@ -1,166 +1,197 @@
-# Architettura a Grafo Generalista con Wrapper Verticali
-
-## Adaptive case management:
-
-- **Case** (l'istanza operativa: pratica, cliente, task, fascicolo — qualunque "cosa" un umano stia portando avanti)
-
-- **Actor** (chi agisce: umano, ruolo, o l'LLM stesso come attore tracciato)
-
-- **Event** (qualunque cosa accada nel tempo dentro il case, senza un ordine fisso a priori — questo è il punto chiave di ACM contro BPMN: non serve definire in anticipo la sequenza) Event genera un nodo Artifact, con connessione con Case data da un nodo ad-hoc.
-
-- **Artifact** (puntatore al risultato, o direttamente al contenuto)
-
-- **Source** (riferimento a cosa ha informato una decisione: norma, dataset, documento esterno)
-
-- **Supersession** come relazione trasversale, per qualunque dominio in cui "la versione nuova non cancella la vecchia ma la scavalca"
-
-# ACM Esteso: Ontologia dei Nodi Core (classi astratte da calare per use case)
-Per supportare la complessità di multi-utenza, tracciamento di codebase, esperimenti e task quotidiane, un meta-grafo in Neo4j deve poggiare su questi sei pilastri strutturali:
-
-1. Case (Il Contenitore Dinamico)Definizione: Il nodo radice dell'unità di lavoro (un esperimento di AI, una codebase da refactorizzare, una pratica di un cliente). Non ha uno stato sequenziale fisso, ma definisce l'obiettivo di business e il perimetro di accesso.Estensione Agentica: Funge da "contesto primario". Quando l'LLM viene attivato su un caso, il sistema recupera questo nodo e la sua stella di primo livello per mappare lo spazio delle opzioni disponibili.
-
-2. Actor (L'Agente di Azione)Definizione: L'entità che compie le azioni. Può essere un essere umano, un ruolo del team (es. "Lead Data Scientist"), o un agente LLM specifico con le sue direttive di sistema (es. "Agent_Code_Optimizer").Estensione Agentica: Permette la tracciabilità delle responsabilità e la gestione della concorrenza. Se un LLM agisce per conto di un utente, il grafo registra (Actor:LLM)-[:ACTS_ON_BEHALF_OF]->(Actor:Human).
-
-3. Event (Il Battito Temporale) Definizione: Qualsiasi accadimento o macro-fase che si materializza nel ciclo di vita del caso. Non ha una sequenza rigida, ma registra pietre miliari (es. "Checkpoint_10k_Raggiunto", "Feedback_Cliente_Ricevuto").Estensione Agentica: Serve come catalizzatore per i trigger. L'evento puo non essere un passaggio bloccante, e, come agile anifesto, una notifica semantica nel grafo che gli altri agenti o sistemi possono ascoltare per reagire. GLi event non sono nodi sul grafo, ma sono degli Handler/Managers, che utilizzano DataClasses rigide. 
-
-4. Artifact (Output) Definizione: Il risultato tangibile di un'azione. È sempre e solo un puntatore leggero (un URI a un bucket S3, un path sul filesystem locale, un ID di riga in PostgreSQL, un hash di un commit Git).Estensione Agentica: Protegge la memoria del grafo. L'LLM non legge mai l'artefatto pesante direttamente dal grafo, ma ne vede la metadatazione (es. dimensione, tipo, metriche di score) per decidere se richiederne il download/lettura tramite un tool esterno.
-
-5. Source (Input/Context) Definizione: L'origine dell'informazione o del vincolo che ha guidato una scelta. Può essere un paper scientifico, una direttiva aziendale (es. nodo-regola GDPR), o un dataset di input.Estensione Agentica: Garantisce la tracciabilità e riduce le allucinazioni. Se l'LLM prende una decisione autonoma all'interno del caso, deve connettere il proprio Task di output alla Source utilizzata tramite una relazione come [:BASED_ON].
-
-6. Supersession (La Linea Temporale Dinamica tra i Cases, una specie di versioning) Definizione: La relazione trasversale [:EDGE] applicabile a qualsiasi dominio (codice, documenti, run, regole). La versione $N+1$ non cancella fisicamente la versione $N$, ma la scavalca logicamente. 
-Le supersession Operations sono gestite da un SupersessionManager, che in base allo stato t e all' azione performata, costruisce la supersession di stato t+1 e ritorna anche il. nuovo stato per il lient che. è statefull.
-  - Estensione Agentica: Consente all'LLM di ricostruire la cronologia delle decisioni. Quando l'agente interroga il grafo, ignora per default i nodi superati (velocizzando la ricerca), ma può "scendere nella tana del bianconiglio" seguendo la catena di supersessione se deve capire perché una determinata scelta è stata modificata. 
-  - Le Problematiche Architetturali ad Alto Livello e le loro Soluzioni: Spostarsi su un modello ACM così flessibile introduce sfide uniche di governance, sincronizzazione e scalabilità. Senza contare il geraph explosion, cehe richiedera un GraphManager per applicare delle compattazioni tra milestones e raggruppamenti di N supersession in una sola ove possibile e consistente.
-
-
-## Problematiche:
-
-### A: Il "Disordine da Entropia" (Il Grafo a Spaghetti)
-
-La Sfida: utenti diversi e agenti multipli che lavorano in parallelo sul Case creeranno relazioni arbitrarie, tag duplicati e ramificazioni caotiche. Il grafo rischia di diventare illeggibile sia per l'uomo che per l'LLM, inficiando la qualità del contesto.
-
-<Sequence>
-{/* Reason: Mostra come risolvere il disordine semantico attraverso l'applicazione di contratti di schema prima della scrittura nel grafo. */}
-  <Step title="1. Proposta di Modifica" subtitle="L'agente/utente richiede un'azione">
-    Un attore tenta di creare un nuovo nodo Task o una relazione nel caso.
-  </Step>
-  <Step title="2. Controllo di Conformità su use case" subtitle="Il Guardrail dello Schema">
-    Il sistema interseca la richiesta con le regole del nodo Base di dominio (es. sono ammessi solo i tipi di relazione definiti nel template di progetto).
-  </Step>
-  <Step title="3. Consolidamento Pulito, or user acceptance" subtitle="Scrittura Transazionale">
-    Se conforme, la modifica viene registrata. Se non conforme, il sistema forza l'uso di una multiselect strutturata o respinge la richiesta dell'LLM.
-  </Step>
-</Sequence>
-
-La Soluzione Concettuale: Ereditarietà dei Template di Dominio e Vincoli di Schema.
-
-I nodi Case devono ereditare regole da un "Meta-Modello di Dominio".
-Se l'utente crea un caso di tipo "Esperimento AI", il sistema impone un vocabolario controllato per le relazioni (es. puoi usare solo [:DERIVED_FROM], [:MERGED_FROM], [:USES_MODEL] ...).
-La UI non permette l'inserimento a testo libero per i collegamenti strutturali, ma offre multiselect guidate, mentre l'LLM è controllato da un validatore formale (fail-closed) a livello di API di scrittura.
-
-### Problematica B: L'Allineamento dello Stato Fisico e Logico (Il Problema dei Fantasmi)
-
-La Sfida: Gli artefatti (codebase, file pesanti) vivono nel filesystem o su repository Git esterni. Se uno sviluppatore modifica o elimina fisicamente una risorsa all'esterno della UI di ACM, il nodo Artifact nel grafo di Neo4j diventa un "fantasma" che punta al vuoto, portando l'LLM a allucinare su dati inesistenti.
-La Soluzione Concettuale: 
-OPERAZIONE BLOCANTE CON UN DEMONE, update che segue in caso di renaming o spostamento del path, oppure Riconciliazione Asincrona a Eventi (Heartbeat Semantico).Invece di tentare una sincronizzazione sincrona e bloccante (che distruggerebbe le performance), il sistema adotta un modello orientato agli eventi.
-Ogni risorsa fisica esterna è registrata con un hash univoco di integrità. Un demone di background leggero (un watcher integrato con Git o con il filesystem) esegue controlli periodici di integrità. 
-
-Se rileva una discrepanza: Non blocca l'utente. Emette un Event di tipo "Resource_Mutated" o "Resource_Missing" nel grafo. Cambia lo stato del nodo Artifact in ORPHAN o OUT_OF_SYNC.L'agente LLM, vedendo questo stato, adotta la politica predefinita (es. avvisa l'utente o propone un task di riallineamento).
-
-MIA PROPOSTA; codice avra un decorator, e avra un file di stato, sara quel file che traccera lo stato della codebase rispetto al grafo, se stato inconsistente poiche maleaguratamente modificatio (molto raro, programmatore esperto, senno file non si tocca), si potra farre load delala codebase o del file di stato al nodo a cui si desidera ricollegarsi, per i casi in cui non ci sono codebase, sempre stessa sotriia, si niizalizzaranno aree di lavoo su fs, sono proprio i demoni che tu hai proposto la soluzione, che rimanrranno confinati all' area di lavoro, magari lanciati da un file nascosto o da una routine!
-
-### Problematica C: La Saturazione Cognitiva dell'Agente (Token Overhead)
-
-La Sfida: Man mano che le run di codice avanzano e i sotto-task si moltiplicano, il sotto-grafo del Case si espande a dismisura. Se l'agente deve consultare il grafo per pianificare il lavoro, l'invio dell'intera struttura genererà latenze inaccettabili e costi di token insostenibili.
-La Soluzione Concettuale: Proiettori di Sotto-Grafi Attivi (Graph Focus Window).L'LLM non vede mai il grafo intero del caso. Il backend espone all'LLM dei tool di navigazione con "messa a fuoco" variabile:
-Vista Orizzontale (La Mappa): Mostra solo i nodi Case, Stage e i Task principali attivi (stato IN_PROGRESS o TODO), ignorando la cronologia passata e i dettagli degli artefatti.
-Vista Verticale (Il Dettaglio): Se l'LLM deve lavorare su una specifica run di codice, il tool recupera solo quel singolo nodo Task, i suoi Artifact diretti e le sue Source.Filtro di Supersessione: Per impostazione predefinita, tutte le query del database escludono i nodi che hanno una relazione entrante di tipo [:SUPERSEDES], archiviando di fatto la cronologia logica dalla memoria a breve termine dell'agente.
-Oppure posisamo inbase ai common case per dominio, definire delle regole automatiche/semiautomatche per la compattazione consistente, cosi N micostep diventano uno step macro, e N step marcro potranno essere compattati in milestones, e un cold storagee si occupera di salvare i log di quei microstep, ma solo se la compatazione ha levato qualce dettaglio, se si riesce cn poche risorse a copattare mantenedo integrità e consistenza siamo apposto.
-
-
-## Valutazione critica dell' idea
-
-Il percorso della conversazione parte da una critica al pattern "LLM Wiki" (file Markdown come knowledge base) ed evolve verso un'idea più matura: un **core a grafo (Neo4j) generico e agnostico**, sul quale si innestano **verticali operativi** (codebase runs, esperimenti LLM, knowledge management no-code) come *pacchetti di regole e schemi*, non come sistemi separati.
-
-Questo è il punto di forza reale dell'idea: **non stai costruendo tre prodotti, ne stai costruendo uno solo con tre configurazioni**. Il rischio che corri, e che va nominato esplicitamente, è che "generalista + estendibile" diventi la scusa per non decidere nulla in anticipo. Un motore che deve supportare "run di codice", "esperimenti ML" e "consulenti freelance" contemporaneamente ha vincoli di schema molto diversi tra loro; se il core è troppo permissivo, ogni verticale reinventerà le proprie convenzioni e il grafo tornerà a essere caotico quanto una cartella di file Markdown — semplicemente con un database più costoso sopra.
-
-La soluzione non è "più libertà", è **un core minimo e rigido + verticali dichiarati come schema esplicito**, esattamente come atomicstrata/llm-wiki-compiler fa con i suoi contratti fail-closed. Questo è il filo conduttore che tiene insieme tutta l'evoluzione della conversazione, e va preservato nel design finale.
+Ecco la traduzione professionale in lingua inglese del tuo documento, arricchita con un'**introduzione completamente ristrutturata** che valorizza l'architettura, spiega nel dettaglio vantaggi e svantaggi e descrive in modo chiaro il funzionamento del sistema.
 
 ---
 
-## Livello 1 — Il Core Generalista (Domain-Agnostic Graph Engine)
+# Lineage Graph Architecture with Agentic Integration
 
-Indipendentemente dal verticale, ogni istanza del sistema condivide questi elementi invarianti:
+## Introduction & System Architecture
 
-- **Nodo `Base`**: entry point di un dominio (progetto, folder, skill, task, cliente, esperimento). Ne esistono N, non uno solo — questo è il punto che rompe con l'LLM Wiki classico, dove esisteva un solo `index.md` monolitico.
-- **Struttura a stella/DAG**: da ogni `Base` si dipartono relazioni verso nodi figli. Nessun ciclo, sempre navigabile in profondità limitata.
+This architecture introduces an **Agentic Lineage System** designed to track, structure, and orchestrate the continuous evolution of enterprise workflows—ranging from codebase development to complex document creation.
 
-- **Ponti (relazioni) tipizzati**: le relazioni non sono testo libero, ma appartengono a un **set chiuso e versionato per verticale** (es. `DERIVED_FROM`, `RETRY_OF`, `RESUME_FROM`). La creazione di relazioni custom è ammessa solo come eccezione tracciata, non come default.
+Rather than relying on static logs or flat document structures, the platform models operational workflows as a **dynamic, incremental graph**. By integrating an **Agentic Adaptive Case Management (ACM)** pattern on top of a graph core (e.g., Neo4j), every interaction, decision, and output created by both human actors and LLMs becomes fully traceable and queryable.
 
-- **Doppio grafo attivo per interazione**: ad ogni query dell'agente si attivano *due* sotto-grafi — quello del contesto operativo corrente (progetto/task/esperimento) e (not yet, next phases) quello del profilo/regole dell'utente con contesto, una specie di LLM-wiki on-top (direttive, stile, vincoli). Questo è l'elemento più elegante: separa "cosa sto facendo" da "come devo comportarmi", evitando di dover reiniettare le preferenze ad ogni turno.
+### Trade-off Analysis: Strengths & Weaknesses
 
-- **Backend ibrido (variabile)**:
-  - Neo4j → relazioni e metadati strutturali (leggero, mai contenuto pesante).
-  - Postgres → contenuto, indicizzazione full-text/BM25, storicizzazione.
-  - Filesystem/S3/git → file pesanti, codebase, versioning per eventi.
-
-- **Codice di condotta come nodo, non come file**: le istruzioni agentiche (l'equivalente di `CLAUDE.md`/`AGENTS.md`) sono un nodo, un agente. è un actor, come lo user, ma con responsabilità limitate e un toolset + skill dedicate in base al tipo di nodo (esempio: Resumer, Translator, ecc..)
-
-### Regola d'oro del core
-Il core non deve necessariamente esporre all'LLM il grafo intero. Ogni accesso passa da tool di *local search* (BFS a profondità limitata, query Cypher mirate, ricerca ibrida vettoriale+BM25 su Postgres). Il grafo intero esiste solo per gli strumenti di manutenzione (linting, community detection, merge), mai per il prompt runtime.
+| Architectural Aspect | Key Advantages | Challenges & Mitigation Strategies |
+| --- | --- | --- |
+| **Traceability & Auditing** | Complete line of sight over *who* executed *what* action and *why*. Enables seamless rollback to any past consistent state ($T_n$). | Requires strict schema enforcement to prevent chaotic edge propagation. |
+| **Agent Trajectory Capture** | Transforms agent execution loops into structured datasets. Enables online model learning, RLHF alignment, and fine-tuning. | High operational overhead if agent actions generate micro-events too rapidly. |
+| **Human-AI Collaboration** | Explicitly models humans and LLM agents as equal `Actors` with distinct responsibilities and explicit approval bounds. | Risk of "Orphan Artifacts" if external storage (Git/S3) is updated outside the graph UI. |
+| **State Prediction ($T_{n+1}$)** | Allows the LLM to analyze historical inputs/outputs to predict the next logical step or execute course corrections. | **Graph & Token Explosion:** Context windows saturate quickly. *Mitigated via automated Graph Focus Windows and recursive compaction.* |
 
 ---
 
-## Livello 2 — Wrapper Verticali (Domain Packages)
+## Agentic Adaptive Case Management (ACM)
 
-Un verticale è un **pacchetto dichiarativo** che estende il core con:
-1. Sotto-tipi di nodi specifici ( Estendendo clasi astratte Case, Sources, Artifact, Event, Supersession).
-2. Un set chiuso di relazioni ammesse.
-3. Regole di validazione fail-closed specifiche del dominio.
-4. Politiche di sincronizzazione con risorse esterne (bloccante/non bloccante).
+Traditional Business Process Model and Notation (BPMN) requires rigid, predefined flowcharts. In contrast, **Adaptive Case Management (ACM)** treats workflows as event-driven, non-deterministic containers. The core abstractions include:
 
-### Verticale A — Codebase Runs [Examples]
-- Nodi: `Run`(+ Base), `RunResult`, `RunEvent`, `RunSetup` .
-- Ponti: `PRODUCED`, `DERIVED_FROM`, ...
+* **Case:** The dynamic operational container (e.g., a customer ticket, a codebase refactoring effort, an ML experiment).
+* **Actor:** The entity driving an action (e.g., a human developer, a team role, or an LLM agent instance).
+* **Event:** Non-blocking semantic markers that signal state transitions. Events are handled via strict strongly-typed `DataClasses` and trigger backend `EventHandlers` rather than littering the graph as raw structural nodes.
+* **Artifact:** Lightweight pointers (URIs, Git commit hashes, database IDs) referencing actual heavy deliverables.
+* **Source:** Upstream contextual inputs, constraints, or references (e.g., compliance policies, technical specifications, dataset schemas).
+* **Supersession:** A cross-cutting versioning relationship where state $N+1$ logically overrides state $N$ without destructive deletion.
 
-### Verticale B — Esperimenti LLM
-- Estende `Case`→`Run`→`Experiment`, con nodi aggiuntivi `Sources` → (`Model`,`Recipe`, `Component`), 
-- Ponti: `RESUME_FROM` per riprendere da un checkpoint nella stessa catena sperimentale.
-          `PROMOTED`, `PRODUCED`,`USES_RECIPE`,`USES_COMPONENT`, `USES_MODEL`, `RETRY_OF`.
+---
+
+## Extended ACM: Core Node Ontology
+
+To scale across multi-user collaboration, codebase tracking, and daily tasks, the meta-graph relies on six core structural pillars:
+
+1. **Case (The Dynamic Container):** The root node of a work unit. It defines business objectives and access perimeters.
+* *Agentic Extension:* Serves as the primary retrieval context. When an LLM initializes, the system fetches the `Case` node and its immediate neighborhood to map available operational paths.
+
+
+2. **Actor (The Execution Entity):** Represents humans, roles, or dedicated LLM agents.
+* *Agentic Extension:* Enforces accountability. When an LLM acts on behalf of a user, the system registers explicit delegation relationships:
+`(Actor:LLM)-[:ACTS_ON_BEHALF_OF]->(Actor:Human)`
+
+
+3. **Event (Triggers):** Key operational occurrences or milestones.
+* *Agentic Extension:* Acts as a catalyst for reactive execution. Events trigger background handlers that allow listening agents to respond autonomously.
+
+
+4. **Artifact (Outputs):** Tangible results of execution. Always stored as lightweight pointers (S3 URIs, Git hashes, file paths).
+* *Agentic Extension:* Protects context memory. The LLM reads artifact metadata (metrics, sizes, types) and calls external tools to fetch full payloads only when needed.
+
+
+5. **Source (Input/Context):** Directives, regulatory rules, or baseline datasets that inform decision-making.
+* *Agentic Extension:* Anchors model reasoning to verifiable evidence, minimizing hallucinations.
+
+
+6. **Supersession (The Dynamic Timeline):** Manages version updates ($N \to N+1$) across states.
+* *Agentic Extension:* Managed by a `SupersessionManager`. Allows LLMs to default to active states while retaining the ability to traverse historical decision chains when investigating past choices.
+
+
+
+> **Architectural Governance Note:** The `SystemGraphManager` operates orthogonally to `SupersessionManager` and `EventHandler`. While handlers expand the graph, the `SystemGraphManager` periodically compresses micro-steps between milestones to prevent graph explosion.
+
+---
+
+## Architectural Challenges & Mitigations
+
+### Problem A: Semantic Entropy & Schema Degradation
+
+**Challenge:** Parallel execution by multiple users and autonomous agents can lead to inconsistent tagging, redundant edges, and graph degradation.
+
+1. **1. Modification Request:** Actor initiates an operation.
+An agent or human user requests the creation of a new Task node or relationship within the active Case.
+
+
+2. **2. Compliance Check:** Guardrail Evaluation.
+The system validates the request against domain-specific Base templates and schema contracts (e.g., strict allowed relationship types).
+
+
+3. **3. Transactional Execution:** State Persistence.
+If compliant, the change is written to Neo4j. If invalid, the request is rejected or routed to a structured human UI fallback.
+
+
+**Solution:** Domain Template Inheritance & Schema Constraints. `Case` nodes inherit rules from domain meta-models. Relations are selected from closed vocabularies, and model outputs pass through fail-closed API validators.
+
+### Problem B: Physical vs. Logical State Drift (Ghost Artifacts)
+
+**Challenge:** If physical files (code, S3 objects) are modified outside the system, the corresponding `Artifact` nodes become out of sync, causing LLM hallucinations.
+
+**Solution:** Asynchronous Event Reconciliation (Semantic Heartbeat). A background watcher monitors file integrity (e.g., via Git commit hashes or file checksums). Upon detecting changes:
+
+1. It emits a `Resource_Mutated` or `Resource_Missing` event into the graph.
+2. The `Artifact` state transitions to `ORPHAN` or `OUT_OF_SYNC`.
+3. The LLM agent detects this status flag and either alerts the human operator or schedules a re-alignment task.
+
+### Problem C: Cognitive Overload & Token Overhead
+
+**Challenge:** As sub-tasks proliferate, retrieving large graph slices saturates LLM context windows, spiking latency and operational costs.
+
+**Solution:** Active Sub-Graph Projectors (Graph Focus Window). LLMs interact with bounded views exposed via specialized navigation tools:
+
+* **Horizontal View (Macro Map):** Exposes top-level `Case`, `Stage`, and active `Task` nodes (`IN_PROGRESS` or `TODO`), stripping past histories and detailed artifact metadata.
+* **Vertical View (Micro Detail):** Retrieves only the target `Task` node along with its immediate `Artifact` and `Source` connections.
+* **Cold Storage Compaction:** Automated compaction rules merge $N$ micro-steps into macro-milestones, archiving detailed logs while maintaining system integrity.
+
+---
+
+## Critical Evaluation & Product Strategy
+
+The core value proposition lies in delivering a **domain-agnostic graph engine** capable of supporting specialized operational verticals via declarative configuration packages rather than distinct codebases.
+
+```
+                           +-----------------------------------+
+                           |    DOMAIN-AGNOSTIC GRAPH ENGINE   |
+                           |   (Neo4j + Postgres + S3/Git)     |
+                           +-----------------------------------+
+                                             |
+         +-----------------------------------+-----------------------------------+
+         |                                                                       |
+         v                                                                       v
++------------------+                +------------------+                +------------------+
+|   VERTICAL A:    |--------------->|   VERTICAL B:    |                |   VERTICAL C:    |
+|  Codebase Runs   |                |  AI Experiments  |                | Team Knowledge   |
++------------------+                +------------------+                +------------------+
+
+```
+
+### Layer 1 — The Domain-Agnostic Core
+
+* **Base Case Nodes ($T_0$):** Multi-entry domain anchors (projects, folders, tasks) replacing monolithic indexes.
+* **DAG Structure:** Directed acyclic relationships with strictly bounded traversal depths.
+* **Typed Edge Contracts:** Closed, versioned relationship schemas (e.g., `[:DERIVED_FROM]`, `[:RETRY_OF]`).
+* **Dual Graph Context:** Every agent prompt dynamically composes:
+1. The **Operational Sub-graph** (the active execution context).
+2. The **Profile & Constraints Sub-graph** (user preferences, organizational standards, and rule engines).
+
+
+* **Hybrid Storage Architecture:**
+* **Neo4j:** Structural metadata and graph relationships.
+* **PostgreSQL:** Full-text/BM25 indexing, payload logs, and relational persistence.
+* **Object Storage / Git:** Large binaries, codebases, and heavy artifacts.
+
+
+
+### Layer 2 — Declarative Vertical Packages
+
+Vertical packages extend the core engine by registering custom schemas, allowed edge types, and sync policies:
+
+#### Verticalization A — Codebase Runs [Examples]
+- Nodes: 
+  - `Case` → `Run`(+ Base Label),
+  - `Artifact` →  `Result` 
+  - `Event` → `RunEvent` (dataclass For EventHandler/RunEventHAndler not a node!)
+  - `Source` →  `Setup`
+  - `Actor`  → `Coder`
+- Edges: 
+  - `Run` - [`PRODUCED`] -> `Result` (Case2Artifact Relation)
+  - `Run` - [`DERIVED_FROM`] -> `Run` (Case2Case Relation)
+  - `Run` - [`RETRY_FROM`] -> `Run`
+  - `Result` - [`FEEDS`] -> `Setup` (Output as next Input)
+  - `Run` - [`USES`] -> `Setup` (Case2Source Relation)
+
+#### Verticalization B — AI Experiements
+- Estende `Case`→`Run`→`Experiment`, con nodi aggiuntivi `Sources` → `Setup` → (`Model`,`Recipe`, `Component`), 
+- Ponti: `CasesRelation` → `RESUME_FROM` per riprendere da un Model creato nella stessa catena sperimentale.
+          `ArtifactSourceRelation`  → `PROMOTED`
+          , `PRODUCED`,`USES_RECIPE`,`USES_COMPONENT`, `USES_MODEL`, `RETRY_OF`.
 - Criticità principale: i checkpoint sono spesso multi-GB. Il nodo deve contenere solo un puntatore logico (URI S3/storage), mai transitare il binario attraverso grafo o contesto del modello.
 
-### Verticale C — Knowledge/Team No-Code (Consulente, Azienda)
-- Nodi: `Progetto`, `Skill`, `Cliente`, `Documento/Link`.
-- Ponti generati deterministicamente o semi-automaticamente (proposta LLM prompted + conferma utente in UI, mai relazione a mano libera come default).
-- Criticità principale: **ereditarietà delle regole**. Con N progetti/clienti, le regole comuni (aziendali, di sicurezza, di stile) devono propagarsi da un nodo `Base` globale ai sotto-grafi, con possibilità di override locale esplicito — altrimenti si duplica la stessa informazione in ogni progetto, vanificando il vantaggio strutturale rispetto al Markdown piatto.
+### Verticalization C — Knowledge/Team No-Code (Consulent, Company)
+- Nodes: `Project`, `Skill`, `Client`, `Document/Link`.
+- Edges generated deterministically or semi-automatically ( LLM prompted + user confirmatio in UI, never free relation as default strategy).
+- Main Risk: **Rules Ereditariety**. With N projects/clients, common rules can be propagated from a `Base` global node to sub-graphs, where override is possible — Is important avoid to store duplicated info across multiples realted domains/projects, otherwise markdown strategy wins.
+
+### Layer 3 — Enterprise Multi-Tenancy Matrix
+
+| Deployment Tier | Scope & Configuration | Operational Example |
+| --- | --- | --- |
+| **Individual** | Single-user graph with unconstrained domain selection. | Researcher tracking local ML experiment runs. |
+| **Team** | Shared Team `Base` node with rule inheritance down to member projects. | Engineering team sharing code conventions and model checkpoints. |
+| **Consultant** | Isolated Client `Base` nodes inheriting core firm directives. | Managing 50 client instances with centralized GDPR policy constraints. |
+| **Enterprise** | Federated sub-graphs with fine-grained access control (ABAC/RBAC). | R&D and Legal departments cross-referencing specific, permitted sub-graphs. |
 
 ---
 
-## Livello 3 — Adozione a Livelli Aziendali
+## Core System Risks & Mitigation Summary
 
-Lo stesso core, la stessa infrastruttura, granularità diverse di deployment:
-
-| Livello | Cosa cambia | Esempio pratico |
-|---|---|---|
-| Individuale | Un solo grafo utente, verticale libero (di solito Codebase Runs o Esperimenti) | Ricercatore che traccia i propri esperimenti ML |
-| Team | Nodo `Base` team condiviso, eredità di regole verso i progetti dei singoli membri | Team che condivide convenzioni di stile e checkpoint di modello |
-| Consulente/Cliente | Un `Base` per cliente, isolato ma con eredità da un `Base` "Studio/Azienda" | Consulente con 50 progetti, regole GDPR ereditate ovunque |
-| Dipartimento/Azienda | Federazione di grafi (skill, progetti, compliance) con controllo accessi per sotto-grafo | Reparto R&D + reparto legale con visibilità incrociata solo su nodi specifici |
-
-Il punto critico qui non è tecnico ma di governance: più si sale di livello, più serve un **controllo di accesso a grana fine sui sotto-grafi**, non solo sui nodi. Questo non era ancora emerso in conversazione ed è un rischio concreto in contesto aziendale (un consulente non deve poter navigare il sotto-grafo compliance di un altro cliente solo perché entrambi ereditano dallo stesso `Base` Studio).
-
----
-
-## Rischi Trasversali (validi per ogni verticale)
-
-1. **Grafo a spaghetti**: relazioni libere non tipizzate degradano la qualità del grafo esattamente come i wikilink liberi degradavano il Markdown. Mitigazione: set chiuso di relazioni per verticale, estensioni solo tracciate.
-2. **Disallineamento grafo/risorsa esterna**: se un file o URI referenziato cambia fuori dal sistema, serve un watcher/trigger reale (non solo teorico) con politica esplicita di aggiornamento (bloccante vs asincrono).
-3. **Cold start / disuso**: se la creazione dei ponti richiede troppo sforzo manuale, l'utente abbandona il sistema. La UI deve proporre, non richiedere, ogni collegamento.
-4. **Fusione/summarization distruttiva**: qualunque operazione di merge o riassunto di nodi deve mantenere un puntatore ai nodi di dettaglio originali (struttura multi-risoluzione), mai sostituirli.
-5. **Query dell'intero grafo nel prompt**: va vietato per policy di sistema, non lasciato alla disciplina dello sviluppatore del verticale.
-
----
-
-## Sintesi
-
-È un motore a grafo minimale, con contratti di relazione rigidi, su cui si innestano verticali dichiarativi che ne specializzano nodi, relazioni e politiche di sincronizzazione — mantenendo sempre la separazione netta tra *contenuto pesante* (file/Git/Postgres) e *struttura relazionale* (Neo4j), e tra *contesto operativo* e *regole del profilo utente* come doppio grafo attivato ad ogni interazione.
+1. **Unconstrained Graph Drift:** Loose, untyped edges degrade retrieval quality. *Mitigation: Fail-closed relationship schemas per vertical.*
+2. **Storage Desynchronization:** External resource mutation invalidates node metadata. *Mitigation: Event-driven background watchers and integrity heartbeats.*
+3. **Adoption Friction:** Manual edge creation causes user fatigue. *Mitigation: Semi-automated relationship suggestions within the user interface.*
+4. **Destructive Aggregation:** Summarization operations risk losing operational detail. *Mitigation: Multi-resolution summaries with persistent links to underlying micro-nodes.*
+5. **Full-Graph Retrieval Leakage:** Unbounded graph injection leads to context failure and high latency. *Mitigation: Enforced local search tools (bounded BFS, Cypher queries, hybrid vector+BM25 retrieval).*

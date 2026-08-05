@@ -463,7 +463,7 @@ class ExperimentRepository:
         OPTIONAL MATCH (e)-[:PRODUCED]->(cp:Checkpoint)
         OPTIONAL MATCH (e)-[:DERIVED_FROM]->(e2:Experiment)
         OPTIONAL MATCH (e)-[:STARTED_FROM]->(cp2:Checkpoint)
-        OPTIONAL MATCH (e)-[:RETRY_OF]->(e3:Experiment)
+        OPTIONAL MATCH (e)-[:RETRY_FROM]->(e3:Experiment)
         RETURN COUNT(DISTINCT cp) AS produced_count,
                COUNT(DISTINCT e2) AS derived_count,
                COUNT(DISTINCT cp2) AS started_from_count,
@@ -499,7 +499,7 @@ class ExperimentRepository:
     ) -> List[Experiment]:
         """List experiments with resolved lineage resources (Model, Recipe, Component).
 
-        For each experiment, walks the DERIVED_FROM|RETRY_OF chain
+        For each experiment, walks the DERIVED_FROM|RETRY_FROM chain
         backwards to find the nearest ancestor with USES_* relationships.
         """
         where_clauses: List[str] = []
@@ -524,7 +524,7 @@ class ExperimentRepository:
         OPTIONAL MATCH (e)-[:USES_MODEL]->(direct_model:Model)
         CALL {{
             WITH e
-            MATCH path = (e)-[:DERIVED_FROM|RETRY_OF*0..50]->(ancestor:Experiment)-[:USES_MODEL]->(inherited_model:Model)
+            MATCH path = (e)-[:DERIVED_FROM|RETRY_FROM*0..50]->(ancestor:Experiment)-[:USES_MODEL]->(inherited_model:Model)
             RETURN inherited_model
             ORDER BY length(path) ASC
             LIMIT 1
@@ -535,7 +535,7 @@ class ExperimentRepository:
         OPTIONAL MATCH (e)-[:USES_RECIPE]->(direct_recipe:Recipe)
         CALL {{
             WITH e
-            MATCH path = (e)-[:DERIVED_FROM|RETRY_OF*0..50]->(ancestor:Experiment)-[:USES_RECIPE]->(inherited_recipe:Recipe)
+            MATCH path = (e)-[:DERIVED_FROM|RETRY_FROM*0..50]->(ancestor:Experiment)-[:USES_RECIPE]->(inherited_recipe:Recipe)
             RETURN inherited_recipe
             ORDER BY length(path) ASC
             LIMIT 1
@@ -546,7 +546,7 @@ class ExperimentRepository:
         OPTIONAL MATCH (e)-[:USES_COMPONENT]->(direct_comp:Component)
         CALL {{
             WITH e
-            MATCH path = (e)-[:DERIVED_FROM|RETRY_OF*0..50]->(ancestor:Experiment)-[:USES_COMPONENT]->(inherited_comp:Component)
+            MATCH path = (e)-[:DERIVED_FROM|RETRY_FROM*0..50]->(ancestor:Experiment)-[:USES_COMPONENT]->(inherited_comp:Component)
             RETURN inherited_comp
             ORDER BY length(path) ASC
             LIMIT 1

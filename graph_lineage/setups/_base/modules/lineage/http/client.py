@@ -181,6 +181,10 @@ class LineageClient:
                 recipe_id=self._config_dict.get("experiment", {}).get("recipe"),
                 component_id=self._config_dict.get("experiment", {}).get("component"),
                 codebase=codebase,
+                username=exp_data.get("username"),
+                job_title=exp_data.get("job_title"),
+                user_role=exp_data.get("user_role"),
+                user_domain=exp_data.get("user_domain"),
                 blocking=blocking,
             )
 
@@ -197,11 +201,7 @@ class LineageClient:
 
             response: PreResponse = self._retry(lambda: connector.send_pre(request))
 
-            logger.info(
-                "Received PRE response from server: exp_id: %s, base %s, base_exp_id: %s, strategy: %s, previous_exp_id: %s",
-                response.experiment_id, response.base, response.base_experiment_id, response.strategy,
-                response.previous_experiment_id,
-            )
+            logger.info("Received PRE response from server")
 
             # 5. Update local .lineage/experiment.yml
             base_exp_data = _load_experiment_data(self._project_root)
@@ -229,6 +229,10 @@ class LineageClient:
                 strategy=response.strategy,
                 project_root=self._project_root,
                 server_config=self.server_config,
+                user_domain=exp_data.get("user_domain"),
+                job_title=exp_data.get("job_title"),
+                user_role=exp_data.get("user_role"),
+                username=exp_data.get("username"),
                 extra={
                     "model_id": exp_data.get("model_id", ""),
                     "config_path": self._config_path,
@@ -273,12 +277,19 @@ class LineageClient:
     ) -> None:
         """Execute POST phase: report final status to server."""
         try:
+            logger.info("POST-execution: sending status update to server: exp_id: %s, status: %s, exit_message: %s, metrics_uri: %s, strategy: %s, user_domain: %s",
+                ctx.experiment_id, status, exit_message, metrics_uri, ctx.strategy, ctx.user_domain
+            )
             request = PostRequest(
                 experiment_id=ctx.experiment_id,
                 status=status,
                 exit_message=exit_message,
                 metrics_uri=metrics_uri,
                 strategy=ctx.strategy,
+                user_domain=ctx.user_domain,
+                username=ctx.username,
+                job_title=ctx.job_title,
+                user_role=ctx.user_role,
             )
 
             connector = self._get_connector()

@@ -212,7 +212,7 @@ def lineage_tracker(
             if ctx is not None and getattr(ctx, 'base', False) and getattr(ctx, 'base_experiment_id', None):
                 _update_local_base_state(cp, ctx)
 
-            # 4. Non-blocking mode: server unreachable — run without tracking
+            # 4. Non-  mode: server unreachable — run without tracking
             if ctx is None:
                 logger.warning("Lineage server unreachable, running without tracking")
                 result = fn(*args, **kwargs)

@@ -106,3 +106,9 @@ class Recipe(Setup):
             )
 
         self.name = extracted_name
+
+    @property
+    def __labels__(self) ->  List[str]:
+        """Genera le etichette per Neo4j. Es: ['Experiment', 'Training']"""
+        labels = ["Source", "Setup", "Recipe"]
+        return labels

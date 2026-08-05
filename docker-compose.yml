@@ -33,8 +33,8 @@ services:
       NEO4J_USER: neo4j
       NEO4J_PASSWORD: envelope_dev
     command: >
-      sh -c "pip install --no-cache-dir neo4j==5.24.0 &&
-             python /scripts/init_db.py"
+      sh -c "pip install --no-cache-dir neo4j==5.24.0 && python /scripts/init_db.py"
+
   # ─── SERVER API (SULLA 8502) ───
   api:
     build:
@@ -48,17 +48,15 @@ services:
       NEO4J_URI: bolt://neo4j:7687
       NEO4J_USER: neo4j
       NEO4J_PASSWORD: envelope_dev
+      PYTHONPATH: /app
+    volumes:
+      - .:/app
+    command: uvicorn graph_lineage.server.app:app --host 0.0.0.0 --port 8502 --reload
     depends_on:
       neo4j:
         condition: service_started
-    # healthcheck disabled for Community Edition
-    # healthcheck:
-    #   test: ["CMD", "curl", "-f", "http://localhost:8502/health"]
-    #   interval: 10s
-    #   timeout: 5s
-    #   retries: 5
-    #   start_period: 10s
-  
+
+  # ─── STREAMLIT UI ───
   streamlit:
     build:
       context: .
@@ -67,6 +65,9 @@ services:
     restart: unless-stopped
     ports:
       - "8501:8501" 
+    volumes:
+      - ./graph_lineage/streamlit_ui:/app
+    command: streamlit run app.py --server.port=8501 --server.address=0.0.0.0
     environment:
       NEO4J_URI: bolt://neo4j:7687
       NEO4J_USER: neo4j

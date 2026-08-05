@@ -3,6 +3,7 @@
 from __future__ import annotations
 from typing import Optional
 from pydantic import Field
+from typing import List
 from ..generic.run_setup import Setup 
 
 
@@ -26,4 +27,10 @@ class Component(Setup):
     opt_code: Optional[str] = Field("", description="Optimization code, Lora, Qlora, etc")
 
     docs_url: Optional[str] = Field("", description="Documentation URL")
+
+    @property
+    def __labels__(self) ->  List[str]:
+        """Genera le etichette per Neo4j. Es: ['Experiment', 'Training']"""
+        labels = ["Source", "Setup", "Component"]
+        return labels
     

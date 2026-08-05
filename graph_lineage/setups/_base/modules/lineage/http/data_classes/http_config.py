@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from typing import Any, Optional
-from pydantic import BaseModel, ConfigDict, Field, model_validator
-from modules.lineage.http.data_classes.run_type import RunType
+from modules.lineage.http.data_classes.experiment_type import ExperimentType
+from modules.lineage.http.data_classes.job_title import JobTitle
+from modules.lineage.http.data_classes.user_role import Role
+from pydantic import BaseModel, ConfigDict, model_validator
 import json
 import uuid
 
@@ -26,7 +28,6 @@ class PreRequest(BaseModel):
     base_experiment_id: Optional[str] = None
     previous_experiment_id: Optional[str] = None
     description: Optional[str] = None
-    run_type: RunType = Field(alias="experiment_type")
     merging: bool = False
     codebase: str  # JSON string of {relative_path: content}
 
@@ -35,6 +36,11 @@ class PreRequest(BaseModel):
     model_uri: Optional[str] = None
     component_id: Optional[str] = None
     recipe_id: Optional[str] = None
+
+    username: str 
+    job_title: JobTitle
+    user_role: Role 
+    user_domain: ExperimentType 
 
     # Flag per decidere il comportamento in caso di model mismatch
     blocking: bool = False
@@ -68,6 +74,10 @@ class PostRequest(BaseModel):
     exit_message: Optional[str] = None
     metrics_uri: Optional[str] = None
     strategy: Optional[str] = None  # NEW, RETRY, BRANCH, RESUME, MERGE
+    username: str
+    user_domain: ExperimentType
+    user_role: Role
+    job_title: JobTitle
 
 class PostResponse(BaseModel):
     """Server acknowledgement of POST-execution update."""

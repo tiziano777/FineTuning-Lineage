@@ -8,8 +8,8 @@ import json
 from ...base.case import Case
 from typing import Dict, Any
 from ...base.enum.status_type import StatusType
-from ..enum.strategy_type import StrategyType
-from ..enum.run_type import RunType
+from .enum.strategy_type import StrategyType
+from .enum.run_type import RunType
 
 
 class CodeRun(Case):
@@ -129,4 +129,5 @@ class CodeRun(Case):
             except json.JSONDecodeError:
                 return {}
         return v
+    
     

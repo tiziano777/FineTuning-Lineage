@@ -1,4 +1,4 @@
-from ....relations.code.generic.based_on import FeedsRelation
+from ..generic.feeds import FeedsRelation
 from typing import ClassVar, Type
 from ....nodes.code.training.checkpoint import Checkpoint
 from ....nodes.code.training.model import Model

@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from typing import Any, Optional
 from pydantic import BaseModel, ConfigDict, Field, model_validator
-from graph_lineage.data_classes.neo4j.nodes.code.enum.run_type import RunType
+from graph_lineage.data_classes.neo4j.nodes.code.training.enum.experiment_type import ExperimentType
+from graph_lineage.data_classes.neo4j.nodes.base.enum.role import Role
+from graph_lineage.data_classes.neo4j.nodes.base.enum.job_title import JobTitle
 
 import json
 import uuid
@@ -27,7 +29,6 @@ class PreRequest(BaseModel):
     base_experiment_id: Optional[str] = None
     previous_experiment_id: Optional[str] = None
     description: Optional[str] = None
-    run_type: RunType = Field(alias="experiment_type")
     merging: bool = False
     codebase: str  # JSON string of {relative_path: content}
 
@@ -36,6 +37,10 @@ class PreRequest(BaseModel):
     model_uri: Optional[str] = None
     component_id: Optional[str] = None
     recipe_id: Optional[str] = None
+
+    username: str
+    user_role: str
+    user_domain: ExperimentType
 
     # Flag per decidere il comportamento in caso di model mismatch
     blocking: bool = False
@@ -54,7 +59,7 @@ class PreResponse(BaseModel):
     description: str
     base_experiment_id: Optional[str] = None
     previous_experiment_id: Optional[str] = None
-    resumed_from: Optional[str] = None
+    user_domain: ExperimentType
 
 
 # ─── POST-EXECUTION ───────────────────────────────────────────────────────────
@@ -70,6 +75,11 @@ class PostRequest(BaseModel):
     exit_message: Optional[str] = None
     metrics_uri: Optional[str] = None
     strategy: Optional[str] = None  # NEW, RETRY, BRANCH, RESUME, MERGE
+    username: str
+    user_domain: ExperimentType
+    user_role: Role
+    job_title: JobTitle
+
 
 class PostResponse(BaseModel):
     """Server acknowledgement of POST-execution update."""

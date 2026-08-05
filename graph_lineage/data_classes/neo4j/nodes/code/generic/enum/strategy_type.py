@@ -16,3 +16,4 @@ class StrategyType(str, Enum):
                 if member.value.lower() == value.lower():
                     return member
             raise ValueError(f"'{value}' is not a valid StrategyType")
+

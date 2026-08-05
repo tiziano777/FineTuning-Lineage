@@ -26,7 +26,7 @@ _SECONDARY_COLOR = "#E8E8E0"
 _EDGE_LABELS = {
     "DERIVED_FROM": "derived",
     "RETRY_FROM": "retry",
-    "RETRY_OF": "retry",
+    "RETRY_FROM": "retry",
     "STARTED_FROM": "resumed",
     "PRODUCED_BY": "produced",
     "MERGED_FROM": "merged",

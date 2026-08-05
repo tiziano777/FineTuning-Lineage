@@ -1,11 +1,7 @@
 """Rich summary models for history navigation and rollback previews."""
-
 from __future__ import annotations
-
 from typing import Any, Optional
-
 from pydantic import BaseModel, Field
-
 
 class CheckpointSummary(BaseModel):
     """Content projection of Checkpoint for preview/navigation."""
@@ -18,7 +14,6 @@ class CheckpointSummary(BaseModel):
     metrics: dict[str, Any] = Field(default_factory=dict)
     is_merging: bool = False
     is_usable: bool = True
-
 
 class ExperimentSummary(BaseModel):
     """Compact view of an experiment for preview/navigation."""
@@ -33,7 +28,6 @@ class ExperimentSummary(BaseModel):
     checkpoint_count: int = 0
     checkpoints: list[CheckpointSummary] = Field(default_factory=list)
 
-
 class RollbackPreview(BaseModel):
     """What would be affected by a rollback -- rich info for human review."""
 
@@ -43,7 +37,6 @@ class RollbackPreview(BaseModel):
     total_experiments: int = 0
     total_checkpoints: int = 0
     warning: Optional[str] = None
-
 
 class NavigationResult(BaseModel):
     """Result of a graph navigation operation."""

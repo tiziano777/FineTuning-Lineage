@@ -1,7 +1,7 @@
 """Pydantic models for Model entity."""
 
 from __future__ import annotations
-from typing import Optional
+from typing import Optional, List
 from pydantic import Field
 from ..generic.run_setup import Setup 
 from enum import Enum
@@ -47,4 +47,9 @@ class Model(Setup):
     kind: ModelType = Field(ModelType.UNKNOWN, description="Model Type (foundational, instruct, domain_specific, etc.)")
     architecture_info_ref: Optional[str] = Field("", description="Reference to architecture document")
 
+    @property
+    def __labels__(self) ->  List[str]:
+        """Genera le etichette per Neo4j. Es: ['Experiment', 'Training']"""
+        labels = ["Source", "Setup", "Model"]
+        return labels
   

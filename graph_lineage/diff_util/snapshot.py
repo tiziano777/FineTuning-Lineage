@@ -1,4 +1,4 @@
-"""CodebaseSnapshot: frozen Pydantic model capturing project files for lineage tracking.
+"""CodebaseSnapshot: Pydantic model capturing project files for lineage tracking.
 
 Scan rules:
 - Root level: *.py, *.txt, *.yml, *.yaml
@@ -40,11 +40,8 @@ class FileTooLargeError(Exception):
             f"(e.g., .data/) to exclude them from lineage tracking."
         )
 
-
 class CodebaseSnapshot(BaseModel):
-    """Immutable snapshot of project codebase files."""
-
-    model_config = {"frozen": True}
+    """Snapshot of project codebase files."""
 
     files: dict[str, str] = Field(default_factory=dict)
 
@@ -89,7 +86,7 @@ def _read_file_safe(filepath: Path) -> str:
     return filepath.read_text(encoding="utf-8", errors="replace")
 
 def capture_snapshot(codebase_root: Path) -> CodebaseSnapshot:
-    """Scan project and capture all tracked files into a frozen snapshot.
+    """Scan project and capture all tracked files into a snapshot.
 
     Scan rules:
     1. Root level: files matching _ROOT_EXTENSIONS (*.py, *.txt, *.yml, *.yaml)
